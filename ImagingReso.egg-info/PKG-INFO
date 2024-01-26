@@ -1,0 +1,16 @@
+Metadata-Version: 1.1
+Name: ImagingReso
+Version: 1.0.0
+Summary: resonance imaging neutron data
+Home-page: https://github.com/ornlneutronimaging/ImagingReso
+Author: Yuxuan (Shawn) Zhang, Jean Bilheux
+Author-email: zhangy6@ornl.gov, bilheuxjm@ornl.gov
+License: BSD
+Description: UNKNOWN
+Keywords: neutron resonance imaging
+Platform: UNKNOWN
+Classifier: Development Status :: 3 - Alpha
+Classifier: Topic :: Scientific/Engineering :: Physics
+Classifier: Intended Audience :: Developers
+Classifier: Programming Language :: Python :: 2.7
+Classifier: Programming Language :: Python :: 3.5

@@ -1,0 +1,6 @@
+numpy
+pyfits
+pillow
+pathlib
+astropy
+scipy

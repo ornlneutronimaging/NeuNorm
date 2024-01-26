@@ -1,0 +1,7 @@
+numpy~=1.26.2
+pathlib~=1.0.1
+astropy~=6.0.0
+pillow~=10.2.0
+scipy~=1.11.4
+NeuNorm~=1.6.3
+setuptools~=60.2.0

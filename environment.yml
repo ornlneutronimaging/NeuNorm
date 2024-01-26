@@ -1,0 +1,23 @@
+name: NeuNorm
+channels:
+  - conda-forge
+dependencies:
+  # base
+  - python
+  - setuptools
+  - pip
+  # compute
+  - astropy
+  - numpy
+  - scipy
+  - ipython
+  #
+  - pathlib
+  - tqdm
+  # tests
+  - pytest
+  # doc
+  - sphinx
+  - sphinx_rtd_theme
+  - nbsphinx
+  

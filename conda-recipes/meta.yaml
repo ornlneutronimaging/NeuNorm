@@ -1,0 +1,42 @@
+{% set name = "NeuNorm" %}
+{% set version = "1.4.5" %}
+{% set git_rev = "1.4.5" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  git_rev: {{ git_rev }}
+  git_url: https://github.com/scikit-beam/NeuNorm
+
+build:
+  number: 0
+  script: python setup.py install --single-version-externally-managed --record record.txt
+  noarch: python
+
+requirements:
+  build:
+    - python {{ python }}
+    - setuptools
+  run:
+    - python
+    - pillow
+    - numpy
+    - scipy
+    - pathlib
+    - astropy
+
+test:
+  imports:
+    - NeuNorm
+
+about:
+  home: https://github.com/scikit-beam/NeuNorm
+  license: BSD 3-Clause
+  license_file: LICENSE.txt
+  summary: Neutron imaging normalization tool
+
+extra:
+  recipe-maintainers:
+    - jeanbilheux
