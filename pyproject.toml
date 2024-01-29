@@ -1,7 +1,6 @@
 [project]
 name = "NeuNorm"
 description = "neutron normalization data"
-long-description = "See the README.md file on GitHub for more information"
 keywords = ["neutron", "normalization", "imaging"]
 dynamic = ["version"]
 requires-python = ">=3.10"
@@ -41,7 +40,7 @@ method = "git"
 default-tag = "0.0.1"
 
 [tool.versioningit.next-version]
-method = "minor"
+method = "smallest"
 
 [tool.versioningit.format]
 distance = "{next_version}.dev{distance}"
