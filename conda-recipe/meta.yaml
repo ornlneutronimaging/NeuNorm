@@ -1,24 +1,38 @@
-{% set name = "NeuNorm" %}
-{% set version = "1.4.5" %}
-{% set git_rev = "1.4.5" %}
+# load information from pyproject.toml
+{% set pyproject = load_file_data('pyproject.toml') %}
+{% set project = pyproject.get('project', {}) %}
+{% set license = project.get('license').get('text') %}
+{% set description = project.get('description') %}
+{% set project_url = pyproject.get('project', {}).get('urls') %}
+{% set url = project_url.get('homepage') %}
+# this will get the version set by environment variable
+{% set version = environ.get('VERSION') %}
+{% set version_number = environ.get('GIT_DESCRIBE_NUMBER', '0') | string %}
+
 
 package:
-  name: {{ name|lower }}
-  version: {{ version }}
+  name: neunorm
+  version: {{ version_number }}
 
 source:
-  git_rev: {{ git_rev }}
-  git_url: https://github.com/scikit-beam/NeuNorm
+  path: ..
 
 build:
-  number: 0
-  script: python setup.py install --single-version-externally-managed --record record.txt
   noarch: python
+  number: {{ version_number }}
+  string: py{{py}}
+  script: {{ PYTHON }} -m pip install . --no-deps --ignore-installed -vvv
 
 requirements:
+  host:
+    - python
+    - versioningit
+
   build:
-    - python {{ python }}
+    - python
+    - versioningit
     - setuptools
+
   run:
     - python
     - pillow
@@ -32,11 +46,13 @@ test:
     - NeuNorm
 
 about:
-  home: https://github.com/scikit-beam/NeuNorm
-  license: BSD 3-Clause
-  license_file: LICENSE.txt
-  summary: Neutron imaging normalization tool
+  home: {{ url }}
+  license: {{ license }}
+  license_family: GPL
+  license_file: ../LICENSE
+  summary: {{ description }}
 
 extra:
   recipe-maintainers:
     - jeanbilheux
+    - kedokudo
