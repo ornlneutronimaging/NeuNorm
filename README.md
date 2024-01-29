@@ -15,7 +15,9 @@ In order to cancel detector electronic noises, source beam fluctuations and othe
 
 which is defined by the following equation
 
-![](documentation/source/_static/normalization_equation.png)
+$$
+I_{n}(i, j) = \frac{I(i,j) - DF(i,j)}{OB(i,j) - DF(i,j)}
+$$
 
 where In is the image normalized, I the raw image, DF the dark field, OB the open beam and i and j the x and y-pixels along the images.
 
