@@ -2,7 +2,7 @@
 Cropping Data
 *************
 
-You have the option to crop the data but if you do, this must be done after running the normalization. 
+You have the option to crop the data but if you do, this must be done after running the normalization.
 The algorithm only cropped the normalized sample and ob data
 
 - the 4 corners of the region of interest (ROI)

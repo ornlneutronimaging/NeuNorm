@@ -5,7 +5,6 @@ from NeuNorm.roi import ROI
 
 
 class TestRoi(unittest.TestCase):
-
     def test_setting_roi_x0_y0_x1_y1(self):
         """assert roi are correctly defined using x0, y0, x1 and y1"""
         x0 = 1
@@ -16,7 +15,7 @@ class TestRoi(unittest.TestCase):
         _expected = [x0, y0, x1, y1]
         _returned = [_roi.x0, _roi.y0, _roi.x1, _roi.y1]
         self.assertTrue(_expected == _returned)
-        
+
     def test_setting_roi_x0_y0_width_height(self):
         """assert roi are correctly defined using x0, y0, width and height"""
         x0 = 1
@@ -24,10 +23,10 @@ class TestRoi(unittest.TestCase):
         width = 4
         height = 9
         _roi = ROI(x0=x0, y0=y0, width=width, height=height)
-        _expected = [x0, y0, x0 + width, y0+height]
+        _expected = [x0, y0, x0 + width, y0 + height]
         _returned = [_roi.x0, _roi.y0, _roi.x1, _roi.y1]
-        self.assertTrue(_expected == _returned)        
-        
+        self.assertTrue(_expected == _returned)
+
     def test_error_raised_when_x0_or_y0_not_provided(self):
         """assert error is raised when either x0 or y0 are not provided"""
         y0 = 1
@@ -62,7 +61,7 @@ class TestRoi(unittest.TestCase):
         _x0_expected = 1
         _x0_returned = _roi.x0
         self.assertTrue(_x0_expected == _x0_returned)
-        
+
         x0 = 1
         y0 = 1
         width = 5
@@ -71,7 +70,7 @@ class TestRoi(unittest.TestCase):
         _x0_expected = 1
         _x0_returned = _roi.x0
         self.assertTrue(_x0_expected == _x0_returned)
-        
+
         x0 = 5
         y0 = 1
         x1 = 1
@@ -79,8 +78,8 @@ class TestRoi(unittest.TestCase):
         _roi = ROI(x0=x0, y0=y0, x1=x1, y1=y1)
         _x0_expected = 1
         _x0_returned = _roi.x0
-        self.assertTrue(_x0_expected == _x0_returned)        
-        
+        self.assertTrue(_x0_expected == _x0_returned)
+
         x0 = 5
         y0 = 1
         x1 = 1
@@ -88,8 +87,8 @@ class TestRoi(unittest.TestCase):
         _roi = ROI(x0=x0, y0=y0, x1=x1, y1=y1)
         _y0_expected = 1
         _y0_returned = _roi.y0
-        self.assertTrue(_y0_expected == _y0_returned)             
-        
+        self.assertTrue(_y0_expected == _y0_returned)
+
         x0 = 5
         y0 = 10
         x1 = 1
@@ -97,8 +96,8 @@ class TestRoi(unittest.TestCase):
         _roi = ROI(x0=x0, y0=y0, x1=x1, y1=y1)
         _y0_expected = 1
         _y0_returned = _roi.y0
-        self.assertTrue(_y0_expected == _y0_returned)            
-        
+        self.assertTrue(_y0_expected == _y0_returned)
+
         x0 = 1
         y0 = 1
         width = 5
@@ -107,4 +106,3 @@ class TestRoi(unittest.TestCase):
         _y0_expected = 1
         _y0_returned = _roi.y0
         self.assertTrue(_y0_expected == _y0_returned)
-        

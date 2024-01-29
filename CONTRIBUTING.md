@@ -13,6 +13,5 @@ Thanks for your interest in contributing code to NeuNorm!
 We are currently working on new features such as:
  - use of a mask to block pixels and not allow normalization of those pixels
  - speed up loading of data by working in parallel
- 
-For any contribution you would like to add, please fork the NeuNorm project and use the pull request to bring them back to master.
 
+For any contribution you would like to add, please fork the NeuNorm project and use the pull request to bring them back to master.
