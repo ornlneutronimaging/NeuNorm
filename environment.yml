@@ -18,6 +18,7 @@ dependencies:
   - tqdm
   - pre-commit
   # conda packaging
+  - anaconda-client  # for uploading to anaconda
   - boa
   - conda-build
   - conda-verify
