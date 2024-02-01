@@ -9,7 +9,7 @@ Welcome to Normalization's documentation!
 .. toctree::
    :maxdepth: 2
    :caption: Contents
-   
+
    installation
    loading
    dark_field_correction

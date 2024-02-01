@@ -4,20 +4,29 @@ channels:
 dependencies:
   # base
   - python
-  - setuptools
-  - pip
+  - versioningit
+  - toml
   # compute
   - astropy
   - numpy
   - scipy
   - ipython
-  #
-  - pathlib
+  - h5py
+  # visualization
+  - pillow
+  # utils
   - tqdm
+  - pre-commit
+  # conda packaging
+  - boa
+  - conda-build
+  - conda-verify
+  - python-build
   # tests
   - pytest
   # doc
   - sphinx
   - sphinx_rtd_theme
   - nbsphinx
-  
+  # pip
+  - pip
