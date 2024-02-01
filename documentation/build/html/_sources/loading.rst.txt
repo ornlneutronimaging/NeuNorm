@@ -12,8 +12,8 @@ You can load your data into the library using different methods:
 
 Loading via folders
 ###################
-  
-Let's pretend that our images are in the folder **/Users/me/sample/** and named 
+
+Let's pretend that our images are in the folder **/Users/me/sample/** and named
 
 - image001.fits
 - image002.fits
@@ -47,7 +47,7 @@ again, all the data can be retrieved as followed
 >>> ob1 = o_norm.data['ob']['data'][0]
 >>> ob2_file_name = o_norm.data['ob']['file_name'][1]
 
-For this library, DF are optional but for the sake of this exercise, let's load them 
+For this library, DF are optional but for the sake of this exercise, let's load them
 
 >>> o_norm.load(folder='/Users/me/df', data_type='df')
 
@@ -72,8 +72,8 @@ counts of the entire image. The threshold value can be change by doing
 
 Loading via individual file name
 ################################
-  
-Let's pretend that our images are in the folder **/Users/me/sample/** and named 
+
+Let's pretend that our images are in the folder **/Users/me/sample/** and named
 
 - image001.fits
 - image002.fits
@@ -110,7 +110,7 @@ again, all the data can be retrieved as followed
 >>> ob1 = o_norm.data['ob']['data'][0]
 >>> ob2_file_name = o_norm.data['ob']['file_name'][1]
 
-For this library, DF are optional but for the sake of this exercise, let's load them 
+For this library, DF are optional but for the sake of this exercise, let's load them
 
 - df001.fits
 - df002.fits
@@ -132,7 +132,7 @@ counts of the entire image. The threshold value can be change by doing
 **WARNING:**
 #1 From this point, any operation on your data will overwrite the inital data loaded. Those
 data can be retrieved at any point by doing
-#2 The program won't let you run the same algorithm twice (normalization, df_correction, 
+#2 The program won't let you run the same algorithm twice (normalization, df_correction,
 oscillation, rebin). But it's possible to overwrite this option by making a flag **force**
 equal to True. Use this feature at your own risk!
 
@@ -141,8 +141,8 @@ equal to True. Use this feature at your own risk!
 
 Loading via list file names
 ###########################
-  
-Let's pretend that our images are in the folder **/Users/me/sample/** and named 
+
+Let's pretend that our images are in the folder **/Users/me/sample/** and named
 
 - image001.fits
 - image002.fits
@@ -179,7 +179,7 @@ again, all the data can be retrieved as followed
 >>> ob1 = o_norm.data['ob']['data'][0]
 >>> ob2_file_name = o_norm.data['ob']['file_name'][1]
 
-For this library, DF are optional but for the sake of this exercise, let's load them 
+For this library, DF are optional but for the sake of this exercise, let's load them
 
 - df001.fits
 - df002.fits
@@ -201,7 +201,7 @@ counts of the entire image. The threshold value can be change by doing
 **WARNING:**
 #1 From this point, any operation on your data will overwrite the inital data loaded. Those
 data can be retrieved at any point by doing
-#2 The program won't let you run the same algorithm twice (normalization, df_correction, 
+#2 The program won't let you run the same algorithm twice (normalization, df_correction,
 oscillation, rebin). But it's possible to overwrite this option by making a flag **force**
 equal to True. Use this feature at your own risk!
 
@@ -210,8 +210,8 @@ equal to True. Use this feature at your own risk!
 
 Loading via arrays
 ##################
-  
-Let's pretend that our images are in the folder **/Users/me/sample/** and named 
+
+Let's pretend that our images are in the folder **/Users/me/sample/** and named
 
 - image001.tif
 - image002.tif
@@ -262,7 +262,7 @@ again, all the data can be retrieved as followed
 >>> ob1 = o_norm.data['ob']['data'][0]
 >>> ob2_file_name = o_norm.data['ob']['file_name'][1]
 
-For this library, DF are optional but for the sake of this exercise, let's load them 
+For this library, DF are optional but for the sake of this exercise, let's load them
 
 - df001.tif
 - df002.tif
@@ -286,7 +286,7 @@ counts of the entire image. The threshold value can be change by doing
 **WARNING:**
 #1 From this point, any operation on your data will overwrite the inital data loaded. Those
 data can be retrieved at any point by doing
-#2 The program won't let you run the same algorithm twice (normalization, df_correction, 
+#2 The program won't let you run the same algorithm twice (normalization, df_correction,
 oscillation, rebin). But it's possible to overwrite this option by making a flag **force**
 equal to True. Use this feature at your own risk!
 
