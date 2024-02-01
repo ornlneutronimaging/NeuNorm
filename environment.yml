@@ -15,7 +15,6 @@ dependencies:
   # visualization
   - pillow
   # utils
-  - pathlib
   - tqdm
   - pre-commit
   # conda packaging
