@@ -2,7 +2,7 @@
 Using library from a Notebook
 *****************************
 
-If you run the library from a notebook, you have the option to display a progress bar showing you the progress 
+If you run the library from a notebook, you have the option to display a progress bar showing you the progress
 of the loading or normalization processes (NB: progress bar will not show up when loading one file at a time)
 
 >>> sample_folder = '/Users/me/sample/'
