@@ -35,6 +35,9 @@ for Efficient Numerical Computation, Computing in Science \& Engineering. Volume
 [2 SciPy python library. Travis E. Oliphant, SciPy: Open source scientific tools for Python,
 Computing in Science and Engineering, Volume 9, (10-20) 2007
 
+Installation
+------------
+$ conda install -c neutronimaging neunorm
 
 Meta
 ----
