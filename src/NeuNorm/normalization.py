@@ -312,9 +312,13 @@ class Normalization:
         # we may be dealing with a float time, that means it does not need any gamma filtering
 
         try:
-            max = np.iinfo(data.dtype).max
-        except Exception as e:
-            logging.warning(f"Use default max value for data type: {e}")
+            data_type = data.dtype
+            if data_type in [float, 'float32']:
+                max = np.finfo(data_type).max
+            else:
+                max = np.iinfo(data.dtype).max
+        except Exception as error:
+            logging.warning(f"Use default max value for data type: {error}")
             return data
 
         manual_gamma_threshold = max - 5
