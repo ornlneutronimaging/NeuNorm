@@ -313,7 +313,7 @@ class Normalization:
 
         try:
             data_type = data.dtype
-            if data_type in [float, 'float32']:
+            if data_type in [float, "float32"]:
                 max = np.finfo(data_type).max
             else:
                 max = np.iinfo(data.dtype).max
