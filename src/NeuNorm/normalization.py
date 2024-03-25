@@ -1,4 +1,5 @@
 """Normalization module for NeuNorm"""
+
 #!/usr/bin/env python
 from pathlib import Path
 import numpy as np
