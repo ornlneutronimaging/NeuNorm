@@ -32,7 +32,7 @@ class TestRoi(unittest.TestCase):
         y0 = 1
         x1 = 2
         y1 = 3
-        self.assertRaises(ValueError, ROI, np.NaN, y0, x1, y1)
+        self.assertRaises(ValueError, ROI, np.nan, y0, x1, y1)
 
         x0 = 1
         x1 = 2
@@ -44,12 +44,12 @@ class TestRoi(unittest.TestCase):
         x0 = 1
         y0 = 1
         y1 = 2
-        self.assertRaises(ValueError, ROI, x0, y0, np.NaN, y1)
+        self.assertRaises(ValueError, ROI, x0, y0, np.nan, y1)
 
         x0 = 1
         y0 = 2
         x1 = 3
-        self.assertRaises(ValueError, ROI, x0, y0, x1, np.NaN)
+        self.assertRaises(ValueError, ROI, x0, y0, x1, np.nan)
 
     def test_x_and_y_correctly_sorted(self):
         """assert x0 and y0 are always the smallest of the x and y values"""
