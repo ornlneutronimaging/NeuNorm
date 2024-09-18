@@ -4,13 +4,13 @@ import numpy as np
 class ROI(object):
     """class that list the type of ROI available"""
 
-    x0 = np.NaN
-    y0 = np.NaN
-    x1 = np.NaN
-    y1 = np.NaN
+    x0 = np.nan
+    y0 = np.nan
+    x1 = np.nan
+    y1 = np.nan
 
     def __init__(
-        self, x0=np.NaN, y0=np.NaN, x1=np.NaN, y1=np.NaN, width=np.NaN, height=np.NaN
+        self, x0=np.nan, y0=np.nan, x1=np.nan, y1=np.nan, width=np.nan, height=np.nan
     ):
         if np.isnan(x0) or np.isnan(y0):
             raise ValueError("x0 and y0 must be provided!")

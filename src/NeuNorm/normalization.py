@@ -19,7 +19,7 @@ class Normalization:
     working_data_type = np.float32
 
     def __init__(self):
-        self.shape = {"width": np.NaN, "height": np.NaN}
+        self.shape = {"width": np.nan, "height": np.nan}
         self.dict_image = {
             "data": None,
             "oscilation": None,
@@ -43,7 +43,7 @@ class Normalization:
             "shape": copy.deepcopy(self.shape),
         }
 
-        __roi_dict = {"x0": np.NaN, "x1": np.NaN, "y0": np.NaN, "y1": np.NaN}
+        __roi_dict = {"x0": np.nan, "x1": np.nan, "y0": np.nan, "y1": np.nan}
         self.roi = {
             "normalization": copy.deepcopy(__roi_dict),
             "crop": copy.deepcopy(__roi_dict),
@@ -511,7 +511,7 @@ class Normalization:
 
                 self.data["ob"]["data_mean"] = _ob_corrected_normalized
                 _working_ob = copy.deepcopy(_ob_corrected_normalized)
-                _working_ob[_working_ob == 0] = np.NaN
+                _working_ob[_working_ob == 0] = np.nan
 
                 if notebook:
                     # turn on progress bar
@@ -556,7 +556,7 @@ class Normalization:
                 normalized_data = []
                 for _index, [_sample, _ob] in enumerate(sample_ob):
                     _working_ob = copy.deepcopy(_ob)
-                    _working_ob[_working_ob == 0] = np.NaN
+                    _working_ob[_working_ob == 0] = np.nan
                     _norm = np.divide(_sample, _working_ob)
                     _norm[np.isnan(_norm)] = 0
                     _norm[np.isinf(_norm)] = 0
