@@ -142,7 +142,7 @@ class Normalization:
                 )
 
         elif data is not None:
-            self.load_data(data=data, data_type=data_type)
+            self.load_data(data=data, data_type=data_type, notebook=notebook)
 
     def calculate_how_long_its_going_to_take(
         self, index_we_are=-1, time_it_took_so_far=0, total_number_of_loop=1
