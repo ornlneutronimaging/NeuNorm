@@ -130,16 +130,30 @@ class Normalization:
             # load all files from folder
             list_images = get_sorted_list_images(folder=folder)
             # use tqdm to handle the progress bar
-            for _image in tqdm(list_images, desc=f"Loading {data_type}", leave=False):
-                full_path_image = os.path.join(folder, _image)
-                self.load_file(
-                    file=full_path_image,
-                    data_type=data_type,
-                    auto_gamma_filter=auto_gamma_filter,
-                    manual_gamma_filter=manual_gamma_filter,
-                    manual_gamma_threshold=manual_gamma_threshold,
-                    check_shape=check_shape,
-                )
+            if notebook:
+                for _image in tqdm(
+                    list_images, desc=f"Loading {data_type}", leave=False
+                ):
+                    full_path_image = os.path.join(folder, _image)
+                    self.load_file(
+                        file=full_path_image,
+                        data_type=data_type,
+                        auto_gamma_filter=auto_gamma_filter,
+                        manual_gamma_filter=manual_gamma_filter,
+                        manual_gamma_threshold=manual_gamma_threshold,
+                        check_shape=check_shape,
+                    )
+            else:
+                for _image in list_images:
+                    full_path_image = os.path.join(folder, _image)
+                    self.load_file(
+                        file=full_path_image,
+                        data_type=data_type,
+                        auto_gamma_filter=auto_gamma_filter,
+                        manual_gamma_filter=manual_gamma_filter,
+                        manual_gamma_threshold=manual_gamma_threshold,
+                        check_shape=check_shape,
+                    )
 
         elif data is not None:
             self.load_data(data=data, data_type=data_type, notebook=notebook)
