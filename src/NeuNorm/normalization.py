@@ -116,15 +116,26 @@ class Normalization:
                 )
             elif isinstance(file, list):
                 # use tqdm to handle the progress bar
-                for _file in tqdm(file, desc=f"Loading {data_type}", leave=False):
-                    self.load_file(
-                        file=_file,
-                        data_type=data_type,
-                        auto_gamma_filter=auto_gamma_filter,
-                        manual_gamma_filter=manual_gamma_filter,
-                        manual_gamma_threshold=manual_gamma_threshold,
-                        check_shape=check_shape,
-                    )
+                if notebook:
+                    for _file in tqdm(file, desc=f"Loading {data_type}", leave=False):
+                        self.load_file(
+                            file=_file,
+                            data_type=data_type,
+                            auto_gamma_filter=auto_gamma_filter,
+                            manual_gamma_filter=manual_gamma_filter,
+                            manual_gamma_threshold=manual_gamma_threshold,
+                            check_shape=check_shape,
+                        )
+                else:
+                    for _file in file:
+                        self.load_file(
+                            file=_file,
+                            data_type=data_type,
+                            auto_gamma_filter=auto_gamma_filter,
+                            manual_gamma_filter=manual_gamma_filter,
+                            manual_gamma_threshold=manual_gamma_threshold,
+                            check_shape=check_shape,
+                        )
 
         elif not folder == "":
             # load all files from folder
