@@ -185,9 +185,14 @@ class Normalization:
         """
         if len(np.shape(data)) > 2:
             # use tqdm to handle the progress bar
-            for _data in tqdm(data, desc=f"Loading {data_type}", leave=False):
-                _data = _data.astype(self.working_data_type)
-                self.__load_individual_data(data=_data, data_type=data_type)
+            if notebook:
+                for _data in tqdm(data, desc=f"Loading {data_type}", leave=False):
+                    _data = _data.astype(self.working_data_type)
+                    self.__load_individual_data(data=_data, data_type=data_type)
+            else:
+                for _data in data:
+                    _data = _data.astype(self.working_data_type)
+                    self.__load_individual_data(data=_data, data_type=data_type)
 
         else:
             data = data.astype(self.working_data_type)
@@ -232,7 +237,7 @@ class Normalization:
             data_type: string - 'sample', 'df' or 'ob' (default 'sample')
             manual_gamma_filter: boolean  - apply or not gamma filtering (default False)
             manual_gamma_threshold: float (between 0 and 1) - manual gamma threshold
-            auto_gamma_filter: boolean - flag to turn on or off the auto gamma fitering (default True)
+            auto_gamma_filter: boolean - flag to turn on or off the auto gamma filering (default True)
 
         Raises:
             OSError: if file does not exist
