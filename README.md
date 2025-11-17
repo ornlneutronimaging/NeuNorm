@@ -1,11 +1,58 @@
+# NeuNorm 2.0 (Alpha) - Modern Neutron Imaging Data Processing
+
+> **⚠️ DEVELOPMENT BRANCH**: This is the NeuNorm 2.0 development branch featuring a complete architectural rewrite. For the stable NeuNorm 1.x release, see the [`main` branch](https://github.com/neutrons/NeuNorm/tree/main).
+
 [![PyPI version](https://badge.fury.io/py/NeuNorm.svg)](https://badge.fury.io/py/NeuNorm)
 [![Anaconda-Server Badge](https://anaconda.org/neutronimaging/neunorm/badges/version.svg)](https://anaconda.org/neutronimaging/neunorm)
-[![codecov](https://codecov.io/gh/scikit-beam/NeuNorm/branch/master/graph/badge.svg)](https://codecov.io/gh/scikit-beam/NeuNorm)
+[![codecov](https://codecov.io/gh/neutrons/NeuNorm/branch/next/graph/badge.svg)](https://codecov.io/gh/neutrons/NeuNorm)
 [![Documentation Status](https://readthedocs.org/projects/neunorm/badge/?version=latest)](http://neunorm.readthedocs.io/en/latest/?badge=latest)
 [![DOI](https://zenodo.org/badge/97755175.svg)](https://zenodo.org/badge/latestdoi/97755175)
 [![DOI](http://joss.theoj.org/papers/10.21105/joss.00815/status.svg)](https://doi.org/10.21105/joss.00815)
 
-Abstract
+## What's New in 2.0
+
+NeuNorm 2.0 is a ground-up rewrite designed for modern neutron imaging workflows at ORNL facilities (MARS at HFIR and VENUS at SNS):
+
+- **Time-of-Flight (TOF) Support**: Full 4D data processing (energy, time, x, y)
+- **Event-Mode Data**: Direct TPX3/TPX4 event processing with chunked loading
+- **In-Situ Workflows**: Time-resolved phase evolution tracking
+- **Modern Architecture**: Pydantic data models, scipp-based processing
+- **Dual-Facility Support**: Unified workflows for both MARS and VENUS
+- **Phase Decomposition**: NMF with Beer-Lambert constraints
+- **Resonance/Bragg Edge Detection**: Automated feature detection
+
+### Installation (2.0 Alpha)
+
+```bash
+# Using pixi (recommended for development)
+git clone https://github.com/neutrons/NeuNorm.git
+cd NeuNorm
+git checkout neunorm-2.0-base
+pixi install
+
+# Using conda (when released)
+conda install -c neutrons -c conda-forge neunorm=2.0.0a0
+
+# Using pip (when released)
+pip install NeuNorm==2.0.0a0
+```
+
+### Quick Start (2.0)
+
+```python
+import neunorm
+print(neunorm.__version__)  # 2.0.0a0
+```
+
+**Full documentation coming soon!**
+
+---
+
+## NeuNorm 1.x Documentation (Legacy)
+
+For users of NeuNorm 1.x, see the [archived documentation](archive/neunorm-1.x/README.md).
+
+### Abstract (1.x)
 --------
 
 NeuNorm is an open-source Python library that normalized neutron imaging measurements.

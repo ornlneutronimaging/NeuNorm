@@ -1,77 +1,290 @@
+########################
+### Project Metadata ###
+########################
 [project]
 name = "NeuNorm"
-description = "neutron normalization data"
-keywords = ["neutron", "normalization", "imaging"]
+description = "Neutron imaging normalization and TOF data processing for ORNL facilities"
 dynamic = ["version"]
-requires-python = ">=3.10"
-dependencies = [
-  "numpy",
-  "pillow",
-  "pathlib",
-  "astropy",
-  "scipy",
-]
-license = { text = "BSD-3-Clause license" }
+requires-python = ">=3.11"
+license = { text = "BSD-3-Clause" }
+keywords = ["neutron", "imaging", "normalization", "TOF", "ORNL", "VENUS", "MARS"]
+readme = "README.md"
 authors = [
-  { name = "Jean Bilheux", email = "bilheuxjm@ornl.gov"},
+    { name = "Jean Bilheux", email = "bilheuxjm@ornl.gov" },
+    { name = "Chen Zhang", email = "zhangc@ornl.gov" },
 ]
 maintainers = [
-  { name = "Jean Bilheux", email = "bilheuxjm@ornl.gov"},
-  { name = "Chen Zhang", email="zhangc@ornl.gov"},
+    { name = "Jean Bilheux", email = "bilheuxjm@ornl.gov" },
+    { name = "Chen Zhang", email = "zhangc@ornl.gov" },
 ]
+
+dependencies = [
+    # Core scientific stack
+    "numpy>=2.0,<3",
+    "scipy>=1.11",
+    # Scipp for labeled multi-dimensional data
+    "scipp>=25.8.0",
+    # Data I/O
+    "h5py>=3.0",
+    "pillow",  # TIFF I/O
+    "astropy",  # FITS I/O
+    # Data validation and configuration
+    "pydantic>=2.0",
+    # Logging
+    "loguru>=0.7",
+    # Progress bars
+    "tqdm",
+]
+
+[project.optional-dependencies]
+docs = ["sphinx", "sphinx_rtd_theme", "versioningit", "myst_parser", "nbsphinx"]
+viz = ["plopp>=25.10.0", "matplotlib"]
 
 [project.urls]
-homepage = "https://github.com/neutrons/python_project_template/"  # if no homepage, use repo url
+homepage = "https://github.com/neutrons/NeuNorm"
+repository = "https://github.com/neutrons/NeuNorm"
+documentation = "https://neunorm.readthedocs.io"
+issues = "https://github.com/neutrons/NeuNorm/issues"
+
+####################
+### Build config ###
+####################
 
 [build-system]
-requires = [
-  "setuptools >= 40.6.0",
-  "wheel",
-  "toml",
-  "versioningit"
-]
-build-backend = "setuptools.build_meta"
+build-backend = "hatchling.build"
+requires = ["hatchling", "versioningit"]
 
-[tool.black]
-line-length = 119
+[tool.hatch.version]
+source = "versioningit"
+
+[tool.hatch.build.hooks.versioningit-onbuild]
+source-file = "src/neunorm/_version.py"
+build-file = "neunorm/_version.py"
+
+[tool.hatch.build]
+artifacts = [
+    "src/neunorm/_version.py",
+    "src/neunorm/**/*.yml",
+    "src/neunorm/**/*.yaml",
+    "src/neunorm/**/*.ini",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/neunorm"]
 
 [tool.versioningit.vcs]
 method = "git"
-default-tag = "0.0.1"
+default-tag = "2.0.0a0"
 
 [tool.versioningit.next-version]
-method = "smallest"
+method = "minor"
 
 [tool.versioningit.format]
 distance = "{next_version}.dev{distance}"
-dirty = "{version}+d{build_date:%Y%m%d}"
-distance-dirty = "{next_version}.dev{distance}+d{build_date:%Y%m%d%H%M}"
+# Ignore uncommitted changes for pixi build compatibility
+dirty = "{version}"
+distance-dirty = "{next_version}.dev{distance}"
 
 [tool.versioningit.write]
-file = "src/NeuNorm/_version.py"
+file = "src/neunorm/_version.py"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-exclude = ["tests*", "scripts*", "docs*", "notebooks*"]
+###################
+### Pixi config ###
+###################
 
-[tool.setuptools.package-data]
-"*" = ["*.yml","*.yaml","*.ini"]
+[tool.pixi.workspace]
+preview = ["pixi-build"]  # Required until the build feature becomes stable
+channels = [
+    "conda-forge",
+    "https://prefix.dev/pixi-build-backends",  # Required for pixi build
+]
+platforms = ["linux-64", "osx-arm64"]  # Add additional platforms as needed
+# If you don't need to map PyPI dependencies to conda, you can remove the `conda-pypi-map` section
+conda-pypi-map = { "conda-forge" = "pixi-mapping.json" }
+
+## Dependency tables - https://pixi.sh/latest/reference/pixi_manifest/#the-dependencies-tables
+## These tables override the dependencies listed in the [project] section
+
+[tool.pixi.dependencies]
+# Core scientific stack
+python = ">=3.11,<3.14"
+numpy = ">=2.0,<3"
+scipy = ">=1.11"
+# Scipp for labeled data
+scipp = ">=25.8.0"
+plopp = ">=25.10.0"  # Scipp visualization
+# Data I/O
+h5py = ">=3.0"
+pillow = "*"
+astropy = "*"
+# Data validation
+pydantic = ">=2.0"
+# Logging
+loguru = ">=0.7"
+# Progress bars
+tqdm = "*"
+
+[tool.pixi.pypi-dependencies]
+# PyPI dependencies, including this package to allow local editable installs
+NeuNorm = { path = ".", editable = true }
+
+# Pixi Build configuration - https://pixi.sh/latest/reference/pixi_manifest/#pixi-build
+
+[tool.pixi.package.host-dependencies]
+hatchling = "*"
+versioningit = "*"
+
+[tool.pixi.package.run-dependencies]
+python = ">=3.11"
+numpy = ">=2.0,<3"
+scipy = ">=1.11"
+scipp = ">=25.8.0"
+h5py = ">=3.0"
+pillow = "*"
+astropy = "*"
+pydantic = ">=2.0"
+loguru = ">=0.7"
+tqdm = "*"
+
+[tool.pixi.package]
+name = "NeuNorm"
+version = "2.0.0a0"  # placeholder, overwritten by sync-version
+
+[tool.pixi.package.build]
+backend = { name = "pixi-build-python", version = "0.1.*" }
+
+# Environments and Features
+
+[tool.pixi.environments]
+default = { features = [
+    "docs",
+    "developer",
+    "package",
+    "test",
+    "viz",
+], solve-group = "default" }
+jupyter = { features = ["developer", "jupyter", "viz"], solve-group = "jupyter" }
+
+[tool.pixi.feature.test.dependencies]
+pytest = ">=6.2.4,<9.0.0"
+pytest-cov = "*"
+pytest-repeat = "*"
+pytest-xdist = "*"
+
+[tool.pixi.feature.package.dependencies]
+anaconda-client = ">=1.13.0,<2"
+twine = ">=6.1.0,<7"
+versioningit = "*"
+hatch = "*"
+
+[tool.pixi.feature.package.pypi-dependencies]
+toml-cli = "*"
+
+[tool.pixi.feature.developer.dependencies]
+pip = ">=25.3"
+pip-audit = "*"
+pre-commit = "*"
+ruff = "*"
+versioningit = "*"
+
+[tool.pixi.feature.docs.dependencies]
+sphinx = "*"
+sphinx_rtd_theme = "*"
+myst-parser = "*"
+nbsphinx = "*"
+
+[tool.pixi.feature.viz.dependencies]
+matplotlib = "*"
+ipympl = "*"
+
+[tool.pixi.feature.jupyter.dependencies]
+jupyterlab = "*"
+ipympl = "*"
+ipywidgets = "*"
+
+[tool.pixi.tasks]
+# Documentation
+build-docs = { cmd = 'sphinx-build -b html docs docs/_build', description = "Build documentation" }
+test-docs = { cmd = "sphinx-build -M doctest docs docs/_build", description = "Test building the documentation" }
+# Testing
+test = { description = "Run the test suite", cmd = "pytest" }
+# Packaging
+pypi-sdist = { cmd = "hatch build -t sdist", description = "Build the source distribution (tar.gz)" }
+pypi-wheel = { cmd = "hatch build -t wheel", description = "Build the wheel distribution" }
+pypi-build = { description = "Build the packages for PyPI", depends-on = [
+    "pypi-sdist",
+    "pypi-wheel",
+] }
+pypi-publish = { cmd = "twine upload dist/*", description = "Publish the package to PyPI", depends-on = [
+    "pypi-build",
+] }
+pypi-publish-test = { cmd = "twine upload --repository testpypi dist/*", description = "Publish the package to TestPyPI", depends-on = [
+    "pypi-build",
+] }
+conda-build-command = { cmd = "pixi build", description = "Build the conda package command" }
+conda-build = { description = "Build the conda package", depends-on = [
+    "backup-toml",
+    "sync-version",
+    "conda-build-command",
+    "reset-toml",
+] }
+conda-publish = { cmd = "anaconda upload *.conda", description = "Publish the .conda package to anaconda.org", depends-on = [
+    "conda-build",
+] }
+# Misc
+audit-deps = { cmd = "pip-audit --local -s osv", description = "Audit the package dependencies for vulnerabilities" }
+# Cleaning
+clean = { cmd = 'rm -rf .pytest_cache .ruff_cache **/*.egg-info **/dist **/__pycache__', description = "Clean up various caches and build artifacts" }
+clean-conda = { cmd = "rm -f *.conda", description = "Clean the local .conda build artifacts" }
+clean-docs = { cmd = "rm -rf docs/_build", description = "Clean up documentation build artifacts" }
+clean-pypi = { cmd = "rm -rf dist", description = "Clean the PyPI build artifacts" }
+clean-all = { description = "Clean all artifacts", depends-on = [
+    "clean",
+    "clean-conda",
+    "clean-docs",
+    "clean-pypi",
+] }
+# workaround for dynamic versioning
+sync-version = { cmd = 'version=$(python -m versioningit); toml set tool.pixi.package.version "$version" --toml-path pyproject.toml', description = "Sync pyproject.toml version with Git version" }
+backup-toml = { cmd = "cp pyproject.toml pyproject.toml.bak", description = "Backup the pyproject.toml file" }
+reset-toml = { cmd = "cp pyproject.toml.bak pyproject.toml; rm pyproject.toml.bak", description = "Reset the pyproject.toml file to the original state" }
+
+##############
+### Pytest ###
+##############
 
 [tool.pytest.ini_options]
-pythonpath = [
-  ".", "src", "scripts"
-]
+addopts = "-v --cov=neunorm --cov-report=term-missing"
+pythonpath = [".", "src"]
 testpaths = ["tests"]
 python_files = ["test*.py"]
-norecursedirs = [".git", "tmp*", "_tmp*", "__pycache__", "*dataset*", "*data_set*"]
-
-[tool.pylint]
-max-line-length = 120
-disable = ["too-many-locals",
-           "too-many-statements",
-           "too-many-instance-attributes",
-           "too-many-arguments",
-           "duplicate-code"
+norecursedirs = [
+    ".git",
+    "tmp*",
+    "_tmp*",
+    "__pycache__",
+    "*dataset*",
+    "*data_set*",
+    "archive",
 ]
 
-# Add additional 3rd party tool configuration here as needed
+############
+### Ruff ###
+############
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+exclude = ["notebooks/**", "**/*.ipynb", "archive/**"]
+
+[tool.ruff.lint]
+select = ["A", "ARG", "ASYNC", "BLE", "C90", "E", "F", "I", "N", "UP032", "W"]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["neunorm"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
