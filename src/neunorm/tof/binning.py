@@ -35,6 +35,11 @@ def tof_to_energy(tof: sc.Variable, flight_path: sc.Variable) -> sc.Variable:
     sc.Variable
         Neutron energy with unit 'eV'
 
+    Raises
+    ------
+    ValueError
+        If TOF is zero or negative
+
     Notes
     -----
     Uses scipy.constants.m_n for neutron mass (no hardcoded values).
@@ -47,8 +52,13 @@ def tof_to_energy(tof: sc.Variable, flight_path: sc.Variable) -> sc.Variable:
     >>> energy = tof_to_energy(tof, L)
     >>> print(energy)  # ~5.2 eV
     """
+    # Check for zero or negative TOF
+    tof_seconds = tof.to(unit="s")
+    if sc.any(tof_seconds <= sc.scalar(0.0, unit="s")).value:
+        raise ValueError(f"TOF must be positive for energy conversion, got TOF with min={sc.min(tof_seconds)}")
+
     # Velocity: v = L / t
-    velocity = flight_path / tof.to(unit="s")
+    velocity = flight_path / tof_seconds
 
     # Kinetic energy: E = (1/2) * m_n * v²
     energy_j = 0.5 * sc_const.m_n * velocity**2
@@ -155,6 +165,11 @@ def energy_to_wavelength(energy: sc.Variable) -> sc.Variable:
     sc.Variable
         Wavelength with unit 'angstrom'
 
+    Raises
+    ------
+    ValueError
+        If energy is zero or negative
+
     Notes
     -----
     Uses scipy.constants (no hardcoded values).
@@ -166,6 +181,10 @@ def energy_to_wavelength(energy: sc.Variable) -> sc.Variable:
     >>> print(wl)  # ~1.8 Å
     """
     energy_j = energy.to(unit="J")
+
+    # Check for zero or negative energy
+    if sc.any(energy_j <= sc.scalar(0.0, unit="J")).value:
+        raise ValueError(f"Energy must be positive for wavelength conversion, got energy with min={sc.min(energy_j)}")
 
     # λ = h / sqrt(2 * m_n * E)
     wavelength_m = sc_const.h / sc.sqrt(2 * sc_const.m_n * energy_j)

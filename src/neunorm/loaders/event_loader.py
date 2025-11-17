@@ -94,11 +94,8 @@ def load_event_data(
     logger.info(f"  X range: [{x.min()}, {x.max()}]")
     logger.info(f"  Y range: [{y.min()}, {y.max()}]")
 
-    # Create EventData model
+    # Create EventData model (validation runs automatically via model_validator)
     events = EventData(tof=tof_ns, x=x, y=y, file_path=file_path, total_events=n_events, tof_clock=tof_clock)
-
-    # Validate arrays have consistent lengths
-    events.validate_lengths()
 
     logger.success(f"✓ Loaded {events.total_events:,} events from {file_path.name}")
 

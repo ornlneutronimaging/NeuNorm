@@ -7,7 +7,7 @@ Pydantic models for event data, histogram data, and processing results.
 from pathlib import Path
 
 import numpy as np
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class EventData(BaseModel):
@@ -88,12 +88,9 @@ class EventData(BaseModel):
             v = Path(v)
         return v
 
-    def __len__(self):
-        """Return number of events in this dataset"""
-        return len(self.tof)
-
+    @model_validator(mode="after")
     def validate_lengths(self):
-        """Validate all arrays have same length"""
+        """Validate all arrays have same length (runs automatically)"""
         n_tof = len(self.tof)
         n_x = len(self.x)
         n_y = len(self.y)
@@ -105,6 +102,12 @@ class EventData(BaseModel):
 
         if n_tof != self.total_events:
             raise ValueError(f"total_events ({self.total_events}) doesn't match array length ({n_tof})")
+
+        return self
+
+    def __len__(self):
+        """Return number of events in this dataset"""
+        return len(self.tof)
 
     def __repr__(self):
         return (

@@ -154,33 +154,33 @@ def test_event_data_model_validation():
 
 def test_event_data_model_length_mismatch():
     """Test EventData validation catches length mismatch"""
+    from pydantic import ValidationError
+
     from neunorm.data_models.core import EventData
 
-    # Mismatched array lengths
-    events = EventData(
-        tof=np.array([1000, 2000, 3000], dtype=np.int64),  # 3 events
-        x=np.array([100, 200], dtype=np.int32),  # 2 events - mismatch!
-        y=np.array([300, 400], dtype=np.int32),
-        file_path=Path("test.h5"),
-        total_events=2,
-    )
-
-    # Should raise when validating
-    with pytest.raises(ValueError, match="Array length mismatch"):
-        events.validate_lengths()
+    # Mismatched array lengths - should raise during creation (auto-validation)
+    with pytest.raises(ValidationError, match="Array length mismatch"):
+        EventData(
+            tof=np.array([1000, 2000, 3000], dtype=np.int64),  # 3 events
+            x=np.array([100, 200], dtype=np.int32),  # 2 events - mismatch!
+            y=np.array([300, 400], dtype=np.int32),
+            file_path=Path("test.h5"),
+            total_events=2,
+        )
 
 
 def test_event_data_model_total_events_mismatch():
     """Test validation catches total_events mismatch"""
+    from pydantic import ValidationError
+
     from neunorm.data_models.core import EventData
 
-    events = EventData(
-        tof=np.array([1000, 2000], dtype=np.int64),
-        x=np.array([100, 200], dtype=np.int32),
-        y=np.array([300, 400], dtype=np.int32),
-        file_path=Path("test.h5"),
-        total_events=5,  # Wrong! Arrays have 2 events
-    )
-
-    with pytest.raises(ValueError, match="total_events.*doesn't match array length"):
-        events.validate_lengths()
+    # total_events mismatch - should raise during creation (auto-validation)
+    with pytest.raises(ValidationError, match="total_events.*doesn't match"):
+        EventData(
+            tof=np.array([1000, 2000], dtype=np.int64),
+            x=np.array([100, 200], dtype=np.int32),
+            y=np.array([300, 400], dtype=np.int32),
+            file_path=Path("test.h5"),
+            total_events=5,  # Wrong! Arrays have 2 events
+        )
