@@ -1,4 +1,5 @@
 """Test package version and basic imports"""
+
 from neunorm import __version__
 
 

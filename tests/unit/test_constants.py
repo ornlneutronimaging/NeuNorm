@@ -4,19 +4,16 @@ Unit tests for physics constants module.
 Verifies all constants use scipy.constants (no hardcoded values).
 """
 
-import pytest
 import scipy.constants as scipy_const
-import numpy as np
 
 
 def test_constants_module_imports():
     """Test that constants module can be imported"""
-    from neunorm.utils import constants
 
 
 def test_fundamental_constants_use_scipy():
     """Verify fundamental constants come from scipy.constants"""
-    from neunorm.utils.constants import M_N, H, E_CHARGE
+    from neunorm.utils.constants import E_CHARGE, M_N, H
 
     # Must exactly match scipy values (no rounding, no hardcoding)
     assert M_N == scipy_const.m_n
@@ -65,10 +62,11 @@ def test_tpx3_clock_is_documented():
 
     # Verify docstring exists and contains source
     import neunorm.utils.constants as const_module
-    docstring = const_module.__dict__.get('__doc__', '')
+
+    docstring = const_module.__dict__.get("__doc__", "")
 
     # Module docstring should mention scipy.constants
-    assert 'scipy.constants' in docstring.lower() or 'scipy' in docstring.lower()
+    assert "scipy.constants" in docstring.lower() or "scipy" in docstring.lower()
 
 
 def test_venus_flight_path_is_documented():
@@ -81,7 +79,7 @@ def test_venus_flight_path_is_documented():
 
 def test_constants_are_immutable():
     """Constants should be simple values (not mutable objects)"""
-    from neunorm.utils.constants import M_N, H, E_CHARGE, H_OVER_MN
+    from neunorm.utils.constants import E_CHARGE, H_OVER_MN, M_N, H
 
     # All should be float or int (immutable)
     assert isinstance(M_N, float)
@@ -92,12 +90,7 @@ def test_constants_are_immutable():
 
 def test_conversion_helpers_exist():
     """Test helper functions for common conversions"""
-    from neunorm.utils.constants import (
-        ev_to_joule,
-        joule_to_ev,
-        angstrom_to_meter,
-        meter_to_angstrom
-    )
+    from neunorm.utils.constants import angstrom_to_meter, ev_to_joule, joule_to_ev, meter_to_angstrom
 
     # Test roundtrip conversions
     energy_ev = 10.0
@@ -113,8 +106,9 @@ def test_conversion_helpers_exist():
 
 def test_ev_to_joule_uses_scipy():
     """Verify eV→Joule conversion uses scipy.constants.e"""
-    from neunorm.utils.constants import ev_to_joule
     import scipy.constants as const
+
+    from neunorm.utils.constants import ev_to_joule
 
     energy_ev = 42.0
     energy_j = ev_to_joule(energy_ev)

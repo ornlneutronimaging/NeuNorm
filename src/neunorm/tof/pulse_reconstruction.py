@@ -358,8 +358,6 @@ def _reconstruct_pulse_ids_single_chip(
     coarse_pulse_ids = _coarse_pulse_assignment(cleaned_rollover_mask, len(tof))
 
     # Pass 3: Refine rollover regions
-    final_pulse_ids = _refine_rollover_boundaries(
-        tof, coarse_pulse_ids, cleaned_rollover_mask, window, late_margin
-    )
+    final_pulse_ids = _refine_rollover_boundaries(tof, coarse_pulse_ids, cleaned_rollover_mask, window, late_margin)
 
     return final_pulse_ids
