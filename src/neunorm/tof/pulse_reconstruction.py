@@ -23,6 +23,86 @@ from loguru import logger
 from neunorm.utils._numba_compat import njit
 
 
+@njit(cache=True)
+def _assign_pulse_ids_single_pass(
+    pulse_ids: np.ndarray,
+    rollover_indices: np.ndarray,
+) -> None:
+    """
+    Assign pulse IDs in a single O(N) pass.
+
+    This is the JIT-compiled helper for _coarse_pulse_assignment.
+    Instead of O(N*R) slice assignments, this does O(N) single-pass assignment.
+
+    Parameters
+    ----------
+    pulse_ids : np.ndarray
+        Output array (int32), modified in-place. Should be initialized to zeros.
+    rollover_indices : np.ndarray
+        Sorted array of rollover positions (int64 from np.where)
+    """
+    if len(rollover_indices) == 0:
+        return
+
+    n = len(pulse_ids)
+    n_rollovers = len(rollover_indices)
+    rollover_ptr = 0
+    current_pulse = 0
+
+    for i in range(n):
+        # Check if we've reached the next rollover
+        while rollover_ptr < n_rollovers and i >= rollover_indices[rollover_ptr]:
+            current_pulse = rollover_ptr + 1
+            rollover_ptr += 1
+        pulse_ids[i] = current_pulse
+
+
+@njit(cache=True)
+def _cluster_rollovers(
+    rollover_indices: np.ndarray,
+    cluster_threshold: float,
+) -> np.ndarray:
+    """
+    Identify first rollover in each cluster.
+
+    This is the JIT-compiled helper for _clean_clustered_rollovers.
+    Returns an array of indices (into rollover_indices) that should be kept.
+
+    Parameters
+    ----------
+    rollover_indices : np.ndarray
+        Array of rollover positions (int64 from np.where)
+    cluster_threshold : float
+        Maximum spacing to consider rollovers as clustered
+
+    Returns
+    -------
+    np.ndarray
+        Boolean mask over rollover_indices indicating which to keep
+    """
+    n = len(rollover_indices)
+    keep_mask = np.zeros(n, dtype=np.bool_)
+
+    if n == 0:
+        return keep_mask
+
+    i = 0
+    while i < n:
+        # Keep first rollover in cluster
+        keep_mask[i] = True
+
+        # Skip subsequent rollovers in this cluster
+        j = i + 1
+        while j < n:
+            if rollover_indices[j] - rollover_indices[j - 1] < cluster_threshold:
+                j += 1
+            else:
+                break
+        i = j
+
+    return keep_mask
+
+
 def _detect_rollovers(tof: np.ndarray, threshold: float = -10.0) -> np.ndarray:
     """
     Detect suspected rollovers using vectorized diff operation.
@@ -79,25 +159,16 @@ def _clean_clustered_rollovers(rollover_mask: np.ndarray) -> np.ndarray:
     # Use 75th percentile for robust clustering
     # Assumes most rollovers are true pulses with large spacing,
     # only a few are clustered false positives with small spacing
+    # Note: np.percentile is not Numba-compatible, so computed outside JIT helper
     percentile_spacing = np.percentile(spacing, 75)
     cluster_threshold = 0.5 * percentile_spacing
 
-    # Keep only first rollover in each cluster
+    # Use JIT-compiled helper for clustering loop
+    keep_mask = _cluster_rollovers(rollover_indices, cluster_threshold)
+
+    # Build output mask
     cleaned_mask = np.zeros_like(rollover_mask, dtype=bool)
-
-    i = 0
-    while i < len(rollover_indices):
-        cleaned_mask[rollover_indices[i]] = True
-
-        # Skip subsequent rollovers in this cluster
-        j = i + 1
-        while j < len(rollover_indices):
-            if rollover_indices[j] - rollover_indices[j - 1] < cluster_threshold:
-                j += 1
-            else:
-                break
-
-        i = j
+    cleaned_mask[rollover_indices[keep_mask]] = True
 
     return cleaned_mask
 
@@ -108,6 +179,8 @@ def _coarse_pulse_assignment(rollover_mask: np.ndarray, data_length: int) -> np.
 
     Everything before the first rollover belongs to pulse 0.
     Everything from rollover[i] onwards belongs to pulse i+1.
+
+    Uses Numba JIT compilation for O(N) single-pass assignment when available.
 
     Parameters
     ----------
@@ -127,8 +200,8 @@ def _coarse_pulse_assignment(rollover_mask: np.ndarray, data_length: int) -> np.
     if len(rollover_indices) == 0:
         return pulse_ids
 
-    for i, rollover_idx in enumerate(rollover_indices):
-        pulse_ids[rollover_idx:] = i + 1
+    # Use JIT-compiled single-pass assignment (O(N) instead of O(N*R))
+    _assign_pulse_ids_single_pass(pulse_ids, rollover_indices)
 
     return pulse_ids
 
