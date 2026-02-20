@@ -8,7 +8,7 @@ on:
     tags: ["v*"]
 
 env:
-  PKG_NAME: NeuNorm
+  PKG_NAME: neunorm
   MODULE_NAME: neunorm
 
 jobs:
