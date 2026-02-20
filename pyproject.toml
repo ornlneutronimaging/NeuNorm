@@ -124,8 +124,9 @@ scipp = ">=25.8.0"
 plopp = ">=25.10.0" # Scipp visualization
 # Data I/O
 h5py = ">=3.0"
-pillow = "*"
+pillow = ">=12.1.1"
 astropy = "*"
+aiohttp = ">=3.13.3" # required by astropy, setting minimum to avoid vulnerabilities
 # Data validation
 pydantic = ">=2.0"
 # Logging
@@ -149,7 +150,7 @@ numpy = ">=2.0,<3"
 scipy = ">=1.11"
 scipp = ">=25.8.0"
 h5py = ">=3.0"
-pillow = "*"
+pillow = ">=12.1.1"
 astropy = "*"
 pydantic = ">=2.0"
 loguru = ">=0.7"
@@ -190,14 +191,20 @@ anaconda-client = ">=1.13.0,<2"
 twine = ">=6.1.0,<7"
 versioningit = "*"
 hatch = "*"
+cryptography = ">=46.0.5"       # required by twine and hatch, setting minimum to avoid vulnerabilities
+"jaraco.context" = ">=6.1.0"    # required by twine and hatch, setting minimum to avoid vulnerabilities
+filelock = ">=3.20.1"           # required by hatch, setting minimum to avoid vulnerabilities
+urllib3 = ">=2.6.3"             # required by twine, setting minimum to avoid vulnerabilities
 
 [tool.pixi.feature.package.pypi-dependencies]
 toml-cli = "*"
 
 [tool.pixi.feature.developer.dependencies]
-pip = ">=25.3"
+pip = ">=26.0"
+wheel = ">=0.46.2"       # required by pip, setting minimum to avoid vulnerabilities
 pip-audit = "*"
 pre-commit = "*"
+virtualenv = ">=20.36.1" # required by pre-commit, setting minimum to avoid vulnerabilities
 ruff = "*"
 versioningit = "*"
 
@@ -206,9 +213,11 @@ sphinx = "*"
 sphinx_rtd_theme = "*"
 myst-parser = "*"
 nbsphinx = "*"
+nbconvert = ">=7.17.0" # required by nbsphinx, setting minimum to avoid vulnerabilities
 
 [tool.pixi.feature.viz.dependencies]
 matplotlib = "*"
+fonttools = ">=4.60.2" # required by matplotlib, setting minimum to avoid vulnerabilities
 ipympl = "*"
 
 [tool.pixi.feature.jupyter.dependencies]
