@@ -374,7 +374,7 @@ def _process_chip_worker(
     return _reconstruct_pulse_ids_single_chip(chip_tof, threshold, window, late_margin)
 
 
-def reconstruct_pulse_ids(
+def reconstruct_pulse_ids(  # noqa: C901
     tof: np.ndarray,
     chip_id: np.ndarray | None = None,
     threshold: float = -10.0,
