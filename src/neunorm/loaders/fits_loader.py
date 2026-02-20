@@ -26,8 +26,9 @@ def load_fits_stack(paths: List[Path], tof_edges: Optional[np.ndarray] = None) -
     paths : List[Path]
         List of paths to FITS files
     tof_edges : Optional[np.ndarray]
-        Time-of-flight bin edges (N+1) or bin centers (N).
-        If provided, adds 'tof' coordinate to the first dimension.
+        Time-of-flight values for the first dimension.
+        Accepts either bin edges (N+1) or bin centers (N), where N is the
+        number of images in the loaded stack.
 
     Returns
     -------
@@ -86,12 +87,17 @@ def load_fits_stack(paths: List[Path], tof_edges: Optional[np.ndarray] = None) -
 
     # Add TOF coordinate if provided
     if tof_edges is not None:
-        if len(tof_edges) == n_images + 1:
-            da.coords[dim_name] = sc.array(dims=[dim_name], values=tof_edges, unit=sc.units.us)
+        tof_values = np.asarray(tof_edges)
+        if tof_values.ndim != 1:
+            raise ValueError(f"tof_edges must be a 1D array, got shape {tof_values.shape}")
+
+        if tof_values.size in (n_images, n_images + 1):
+            da.coords[dim_name] = sc.array(dims=[dim_name], values=tof_values, unit=sc.units.us)
         else:
             raise ValueError(
-                "Length of tof_edges must be number of images + 1 for bin edges, "
-                f"got {len(tof_edges)} with {n_images} images"
+                "Length of tof_edges must be number of images (bin centers) "
+                f"or number of images + 1 (bin edges), got {tof_values.size} "
+                f"with {n_images} images"
             )
 
     # Process header

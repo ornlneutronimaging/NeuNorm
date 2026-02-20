@@ -61,6 +61,21 @@ def test_load_fits_stack_tof_edges():
     assert da.variances.max() == 5
 
 
+def test_load_fits_stack_tof_centers():
+    """Test loading FITS stack with TOF centers"""
+    from neunorm.loaders.fits_loader import load_fits_stack
+
+    fits_dir = Path(__file__).parent.parent / "data" / "fits" / "sample"
+    paths = sorted(fits_dir.glob("image00*.fits"))
+
+    da = load_fits_stack(paths, tof_edges=np.array([1000, 1500, 2000]))
+
+    assert da.dims == ("TOF", "y", "x")
+    assert "TOF" in da.coords
+    assert da.coords["TOF"].values.shape == (3,)
+    np.testing.assert_equal(da.coords["TOF"].values, (1000, 1500, 2000))
+
+
 def test_load_single_fit():
     """Test loading a single FITS file"""
     from neunorm.loaders.fits_loader import load_fits_stack
