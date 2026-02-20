@@ -6,6 +6,8 @@ environments:
     - url: https://prefix.dev/pixi-build-backends/
     indexes:
     - https://pypi.org/simple
+    options:
+      pypi-prerelease-mode: if-necessary-or-explicit
     packages:
       linux-64:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/_libgcc_mutex-0.1-conda_forge.tar.bz2
@@ -855,6 +857,8 @@ environments:
     - url: https://prefix.dev/pixi-build-backends/
     indexes:
     - https://pypi.org/simple
+    options:
+      pypi-prerelease-mode: if-necessary-or-explicit
     packages:
       linux-64:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/_libgcc_mutex-0.1-conda_forge.tar.bz2
@@ -7931,7 +7935,7 @@ packages:
 - pypi: ./
   name: neunorm
   version: 1.7.0.dev52
-  sha256: 5e22a6a5267a7f29ae7db9551b17d06c15d2ce06599e176bbe98f32da2842cbb
+  sha256: a187bf6ca1be0a9ae7100fa5386a3810792a67dd4309182809a9d35e60ca505a
   requires_dist:
   - astropy
   - h5py>=3.0
@@ -7951,7 +7955,6 @@ packages:
   - matplotlib ; extra == 'viz'
   - plopp>=25.10.0 ; extra == 'viz'
   requires_python: '>=3.11'
-  editable: true
 - conda: https://conda.anaconda.org/conda-forge/linux-64/nh3-0.3.2-py310h1570de5_0.conda
   noarch: python
   sha256: f6095c759df15baa9cccc20394b21667f4d0440f3c432e07539c3b47ef195c0b
