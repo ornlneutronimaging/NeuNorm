@@ -519,9 +519,7 @@ def reconstruct_pulse_ids(
             chip_mask = chip_id == chip
             n_events = chip_mask.sum()
             logger.info(f"  Chip {chip}: {n_events:,} events")
-            pulse_ids[chip_mask] = _reconstruct_pulse_ids_single_chip(
-                tof[chip_mask], threshold, window, late_margin
-            )
+            pulse_ids[chip_mask] = _reconstruct_pulse_ids_single_chip(tof[chip_mask], threshold, window, late_margin)
     else:
         # Parallel processing
         logger.info(f"  Using parallel processing with {effective_n_jobs} workers")
