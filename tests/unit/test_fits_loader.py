@@ -53,6 +53,7 @@ def test_load_fits_stack_tof_edges():
     assert "TOF" in da.coords
     assert da.coords["y"].values.shape == (5,)
     assert da.coords["x"].values.shape == (5,)
+    assert da.coords.is_edges("TOF")
     assert da.coords["TOF"].values.shape == (4,)
     np.testing.assert_equal(da.coords["TOF"].values, (1000, 1500, 2000, 2500))
 
@@ -73,6 +74,7 @@ def test_load_fits_stack_tof_centers():
 
     assert da.dims == ("TOF", "y", "x")
     assert "TOF" in da.coords
+    assert not da.coords.is_edges("TOF")
     assert da.coords["TOF"].values.shape == (3,)
     np.testing.assert_equal(da.coords["TOF"].values, (1000, 1500, 2000))
 
