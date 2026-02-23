@@ -200,9 +200,7 @@ class TestParallelSequentialEquivalence:
             result_seq = reconstruct_pulse_ids(tof, chip_id=chip_id, n_jobs=1)
             result_par = reconstruct_pulse_ids(tof, chip_id=chip_id, n_jobs=-1)
 
-            np.testing.assert_array_equal(
-                result_seq, result_par, err_msg=f"Results differ for base_seed={base_seed}"
-            )
+            np.testing.assert_array_equal(result_seq, result_par, err_msg=f"Results differ for base_seed={base_seed}")
 
 
 # =============================================================================
@@ -841,9 +839,7 @@ class TestOutputOrdering:
             chip_tof = tof[mask]
             expected = reconstruct_pulse_ids(chip_tof, chip_id=None, n_jobs=1)
 
-            np.testing.assert_array_equal(
-                chip_result, expected, err_msg=f"Chip {chip} ordering mismatch"
-            )
+            np.testing.assert_array_equal(chip_result, expected, err_msg=f"Chip {chip} ordering mismatch")
 
     def test_parallel_output_indices_match_input(self):
         """Verify output indices correspond correctly to input indices."""

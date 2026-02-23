@@ -8,7 +8,7 @@ on:
     tags: ["v*"]
 
 env:
-  PKG_NAME: NeuNorm
+  PKG_NAME: neunorm
   MODULE_NAME: neunorm
 
 jobs:
@@ -23,10 +23,11 @@ jobs:
           fetch-tags: true
 
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@v0.9.3
+        uses: prefix-dev/setup-pixi@v0.9.4
         with:
-          pixi-version: v0.50.2
+          pixi-version: v0.63.2
           manifest-path: pyproject.toml
+          frozen: true
 
       - name: Run unit tests
         run: pixi run test
@@ -52,10 +53,11 @@ jobs:
           fetch-tags: true
 
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@v0.9.3
+        uses: prefix-dev/setup-pixi@v0.9.4
         with:
-          pixi-version: v0.50.2
+          pixi-version: v0.63.2
           manifest-path: pyproject.toml
+          frozen: true
 
       - name: Build conda package
         run: |
@@ -69,6 +71,7 @@ jobs:
           package-name: ${{ env.PKG_NAME }}
           module-name: ${{ env.MODULE_NAME }}
           local-channel: /tmp/local-channel
+          python-version: "3.11"
 
       - name: Upload conda package as artifact
         uses: actions/upload-artifact@v5
@@ -89,10 +92,11 @@ jobs:
           fetch-tags: true
 
       - name: Setup Pixi
-        uses: prefix-dev/setup-pixi@v0.9.3
+        uses: prefix-dev/setup-pixi@v0.9.4
         with:
-          pixi-version: v0.50.2
+          pixi-version: v0.63.2
           manifest-path: pyproject.toml
+          frozen: true
 
       - name: Download conda package artifact
         uses: actions/download-artifact@v6
@@ -125,10 +129,11 @@ jobs:
           fetch-tags: true
 
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@v0.9.3
+        uses: prefix-dev/setup-pixi@v0.9.4
         with:
-          pixi-version: v0.50.2
+          pixi-version: v0.63.2
           manifest-path: pyproject.toml
+          frozen: true
 
       - name: Build pypi package
         run: |
