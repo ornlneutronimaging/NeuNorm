@@ -1,7 +1,8 @@
 """
-Unit tests for event data loader.
+Unit tests for the FITS data loader.
 
-Tests HDF5 event file loading for TPX3/TPX4 detectors.
+These tests verify loading FITS image stacks and single FITS files,
+including variants with time-of-flight (TOF) binning.
 """
 
 from pathlib import Path
@@ -80,8 +81,8 @@ def test_load_single_fit():
     """Test loading a single FITS file"""
     from neunorm.loaders.fits_loader import load_fits_stack
 
-    # Load FITS stack
-    path = Path(__file__).parent.parent / "data" / "fits" / "sample" / "image001.fits"
+    # Load FITS stack. Test with str instead of Path to check both types are accepted.
+    path = str(Path(__file__).parent.parent / "data" / "fits" / "sample" / "image001.fits")
 
     da = load_fits_stack([path])
 

@@ -4,8 +4,9 @@ FITS loader for NeuNorm based on astropy.
 Loads FITS files into scipp DataArrays.
 """
 
+import io
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional, Sequence
 
 import numpy as np
 import scipp as sc
@@ -13,7 +14,7 @@ from astropy.io import fits
 from loguru import logger
 
 
-def load_fits_stack(paths: List[Path], tof_edges: Optional[np.ndarray] = None) -> sc.DataArray:  # noqa: C901
+def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray] = None) -> sc.DataArray:  # noqa: C901
     """
     Load FITS stack as scipp DataArray with metadata and optional TOF coordinates.
 
@@ -23,7 +24,7 @@ def load_fits_stack(paths: List[Path], tof_edges: Optional[np.ndarray] = None) -
 
     Parameters
     ----------
-    paths : List[Path]
+    paths : Sequence[str | Path]
         List of paths to FITS files
     tof_edges : Optional[np.ndarray]
         Time-of-flight values for the first dimension.
@@ -50,7 +51,10 @@ def load_fits_stack(paths: List[Path], tof_edges: Optional[np.ndarray] = None) -
         # Load all files
         for path in paths:
             with fits.open(path) as hdul:
-                logger.debug(hdul.info())
+                info_buf = io.StringIO()
+                hdul.info(output=info_buf)
+                logger.debug("FITS info for {}:\n{}", path, info_buf.getvalue().rstrip())
+
                 # Assume data is in primary HDU
                 arr = hdul[0].data.astype(np.float64)
                 data_list.append(arr)
@@ -117,9 +121,9 @@ def load_fits_stack(paths: List[Path], tof_edges: Optional[np.ndarray] = None) -
                 if len(set(str(v) for v in values)) == 1:
                     # If all values are the same, store as scalar
                     da.coords[key] = sc.scalar(value=values[0], unit=None)
-                    da.coords.set_aligned(key, False)
                 else:
                     # Values differ across files, store as array with dimension of the stack
                     da.coords[key] = sc.array(dims=[dim_name], values=values, unit=None)
+                da.coords.set_aligned(key, False)
 
     return da
