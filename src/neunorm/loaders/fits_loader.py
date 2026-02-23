@@ -78,10 +78,17 @@ def load_fits_stack(paths: List[Path], tof_edges: Optional[np.ndarray] = None) -
     dim_name = "TOF" if tof_edges is not None else "N_image"
     dims = [dim_name, "y", "x"]
 
+    # Validate data for Poisson statistics: counts must be non-negative.
+    if np.any(full_data < 0):
+        raise ValueError(
+            "Loaded FITS data contains negative counts; cannot attach Poisson "
+            "variances (variance = counts) to negative data."
+        )
+
     # Create DataArray
     # Assuming variance = counts (Poisson) if not provided.
     da = sc.DataArray(
-        data=sc.array(dims=dims, values=full_data, unit=sc.units.counts, variances=np.abs(full_data)),
+        data=sc.array(dims=dims, values=full_data, unit=sc.units.counts, variances=full_data.copy()),
         coords={"y": sc.arange("y", ny, unit=None), "x": sc.arange("x", nx, unit=None)},
     )
 
