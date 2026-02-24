@@ -24,7 +24,7 @@ def test_apply_gamma_filter_3d():
     # Should still be in counts
     assert corrected.unit == sc.units.counts
 
-    # Values should be 100
+    # Values should be 10
     np.testing.assert_allclose(corrected.values, 10.0)
 
     # Variance should be updated to local median variance.
@@ -53,7 +53,7 @@ def test_apply_gamma_filter_high_threshold():
 
 
 def test_apply_gamma_filter_basic_3d_preserve_variance():
-    """Test basic gamma filtering on 3D data without variance propagation."""
+    """Test gamma filtering on 3D data with variance preservation (preserve_variance=True)."""
     from neunorm.filters.gamma_filter import apply_gamma_filter
 
     # Create simple sample data
@@ -70,7 +70,7 @@ def test_apply_gamma_filter_basic_3d_preserve_variance():
     # Should still be in counts
     assert corrected.unit == sc.units.counts
 
-    # Values should be 100
+    # Values should be 10
     np.testing.assert_allclose(corrected.values, 10.0)
 
     # Variance should be preserved.
@@ -97,7 +97,7 @@ def test_apply_gamma_filter_basic_2d():
     # Should still be in counts
     assert corrected.unit == sc.units.counts
 
-    # Values should be 100
+    # Values should be 10
     np.testing.assert_allclose(corrected.values, 10.0)
 
     # Variance should be propagated.

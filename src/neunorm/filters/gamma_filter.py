@@ -43,7 +43,7 @@ def apply_gamma_filter(
         Gamma-filtered data with propagated variance if requested.
     """
     if kernel_size < 3 or kernel_size % 2 == 0:
-        raise ValueError("kernel_size must be a positive odd integer.")
+        raise ValueError("kernel_size must be an odd integer >= 3.")
     if threshold_sigma < 0:
         raise ValueError("threshold_sigma must be >= 0.")
 
@@ -87,7 +87,7 @@ def apply_gamma_filter(
         local_var = ndi.median_filter(filtered_variances, footprint=footprint, mode="nearest")
         filtered_variances[outlier_mask] = local_var[outlier_mask]
 
-    out = data.copy(deep=True)
+    out = data.copy(deep=False)
     out.data = sc.array(
         dims=dims,
         values=filtered_values,
