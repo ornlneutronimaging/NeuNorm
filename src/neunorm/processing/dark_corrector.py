@@ -45,8 +45,15 @@ def subtract_dark(data: sc.DataArray, dark: sc.DataArray, clip_negative: bool = 
         if len(dim_name) != 1:
             raise ValueError("Data has multiple dimensions not in dark, cannot determine which to repeat along")
         dim_name = dim_name.pop()
-        dark_expanded = sc.concat([dark] * data.sizes[dim_name], dim=dim_name)
-        corr = data - dark_expanded
+        # Broadcast dark to match data dimensions.
+        # Can't use sc.broadcast directly because it doesn't handle variances, so we need to do it manually.
+        dark_copy = dark.copy()
+        var = dark_copy.variances.copy() if dark_copy.variances is not None else None
+        dark_copy.variances = None
+        corr = data - dark_copy
+        if var is not None and data.variances is not None:
+            # Let numpy handle variance broadcasting
+            corr.variances = data.variances + var
     else:
         raise ValueError("Dark current dimensions are incompatible with data dimensions")
 
