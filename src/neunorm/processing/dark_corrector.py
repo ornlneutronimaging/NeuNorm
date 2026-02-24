@@ -47,9 +47,10 @@ def subtract_dark(data: sc.DataArray, dark: sc.DataArray, clip_negative: bool = 
         dim_name = dim_name.pop()
         # Broadcast dark to match data dimensions.
         # Can't use sc.broadcast directly because it doesn't handle variances, so we need to do it manually.
-        var = dark.variances.copy() if dark.variances is not None else None
-        dark.variances = None
-        corr = data - dark
+        dark_copy = dark.copy()
+        var = dark_copy.variances.copy() if dark_copy.variances is not None else None
+        dark_copy.variances = None
+        corr = data - dark_copy
         if var is not None:
             # Let numpy handle variance broadcasting
             corr.variances = data.variances + var
