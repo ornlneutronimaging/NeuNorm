@@ -65,8 +65,18 @@ def apply_gamma_filter(
 
     # calculate local median and std using scipy filters
     values = data.data.values
-    local_std = ndi.generic_filter(values, np.std, footprint=footprint, mode="nearest")
+    # Compute local standard deviation using convolution to avoid per-pixel Python callbacks.
+    # Equivalent to local_std = ndi.generic_filter(values, np.std, footprint=footprint, mode="nearest")
+    kernel = footprint.astype(float)
+    count = kernel.sum()
+    local_mean = ndi.convolve(values, kernel, mode="nearest") / count
+    local_mean_sq = ndi.convolve(values**2, kernel, mode="nearest") / count
+    # Numerical guard: clip small negative variances due to floating point
+    local_var = np.clip(local_mean_sq - local_mean**2, 0, None)
+    local_std = np.sqrt(local_var)
+    # Calculate local median using scipy's median filter
     local_median = ndi.median_filter(values, footprint=footprint, mode="nearest")
+    # Calculate threshold for outlier detection
     local_threshold = local_median + threshold_sigma * local_std
 
     # Identify outliers
