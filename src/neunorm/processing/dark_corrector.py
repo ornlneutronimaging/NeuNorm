@@ -51,7 +51,7 @@ def subtract_dark(data: sc.DataArray, dark: sc.DataArray, clip_negative: bool = 
         var = dark_copy.variances.copy() if dark_copy.variances is not None else None
         dark_copy.variances = None
         corr = data - dark_copy
-        if var is not None:
+        if var is not None and data.variances is not None:
             # Let numpy handle variance broadcasting
             corr.variances = data.variances + var
     else:
