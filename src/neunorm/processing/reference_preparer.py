@@ -12,17 +12,18 @@ def median_with_variance(data: sc.DataArray, dim: str, n_samples: int = 100_000)
         raise ValueError(f"Assuming dimension '{dim}' is first dimension of the input data.")
 
     values = data.values
-    stds = np.sqrt(data.variances)
+    variance = data.variances
 
     nz, ny, nx = values.shape
     median_variance = np.empty((ny, nx), dtype=np.float64)
 
+    rng = np.random.default_rng()
+
     for iy in range(ny):
         for ix in range(nx):
             # only allocates (n_samples, frame) for one pixel
-            sims = np.random.normal(
-                loc=values[:, iy, ix],
-                scale=stds[:, iy, ix],
+            sims = rng.poisson(
+                lam=variance[:, iy, ix],
                 size=(n_samples, nz),
             )
             medians = np.median(sims, axis=1)
