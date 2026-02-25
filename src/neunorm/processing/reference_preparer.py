@@ -14,9 +14,19 @@ def median_with_variance(data: sc.DataArray, dim: str, n_samples: int = 100_000)
     values = data.values
     stds = np.sqrt(data.variances)
 
-    sims = np.random.normal(loc=values, scale=stds, size=(n_samples,) + values.shape)
-    medians = np.median(sims, axis=1)
-    median_variance = np.var(medians, ddof=1, axis=0)
+    nz, ny, nx = values.shape
+    median_variance = np.empty((ny, nx), dtype=np.float64)
+
+    for iy in range(ny):
+        for ix in range(nx):
+            # only allocates (n_samples, frame) for one pixel
+            sims = np.random.normal(
+                loc=values[:, iy, ix],
+                scale=stds[:, iy, ix],
+                size=(n_samples, nz),
+            )
+            medians = np.median(sims, axis=1)
+            median_variance[iy, ix] = np.var(medians, ddof=1)
 
     return sc.DataArray(
         data=sc.array(dims=data.dims[1:], values=np.median(values, axis=0), unit=data.unit, variances=median_variance)
