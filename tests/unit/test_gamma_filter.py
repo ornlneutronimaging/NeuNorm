@@ -12,6 +12,7 @@ def test_apply_gamma_filter_3d():
 
     # Create simple sample data
     sample_data = np.full((10, 5, 5), 10.0)
+    sample_data[5][1] = 11.0  # Add some small difference so that the std is non-zero
     sample_data[5, 2, 2] = 100.0  # Add a gamma spike, should be replaced by median of 10
 
     sample = sc.DataArray(
@@ -24,11 +25,18 @@ def test_apply_gamma_filter_3d():
     # Should still be in counts
     assert corrected.unit == sc.units.counts
 
-    # Values should be 10
-    np.testing.assert_allclose(corrected.values, 10.0)
+    # Values should be 10 except for one row of 11. But the 100 should be replaced by 10.
+    expected_values = np.full((10, 5, 5), 10.0)
+    expected_values[5][1] = 11.0
+    np.testing.assert_allclose(corrected.values, expected_values)
 
     # Variance should be updated to local median variance.
-    np.testing.assert_allclose(corrected.variances, 10.0)
+    expected_variance = np.full((10, 5, 5), 10.0)
+    expected_variance[5][1] = 11.0  # This pixel is not an outlier, so variance should be unchanged.
+    # This pixel is an outlier. Variance will be small because it is replaced by the median of multiple samples.
+    expected_variance[5, 2, 2] = 1.75
+
+    np.testing.assert_allclose(corrected.variances, expected_variance, rtol=0.02)
 
 
 def test_apply_gamma_filter_high_threshold():
@@ -101,4 +109,7 @@ def test_apply_gamma_filter_basic_2d():
     np.testing.assert_allclose(corrected.values, 10.0)
 
     # Variance should be propagated.
-    np.testing.assert_allclose(corrected.variances, 10.0)
+    expected_variance = np.full((5, 5), 10.0)
+    # This pixel is an outlier. Variance will be small because it is replaced by the median of multiple samples
+    expected_variance[2, 2] = 1.68
+    np.testing.assert_allclose(corrected.variances, expected_variance, rtol=0.02)
