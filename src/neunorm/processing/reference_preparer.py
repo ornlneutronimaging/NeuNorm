@@ -7,30 +7,42 @@ import scipp as sc
 
 
 def median_with_variance(data: sc.DataArray, dim: str, n_samples: int = 100_000) -> sc.DataArray:
-    """Compute the median and an estimate of the propagation of variance."""
-    if data.dims.index(dim) != 0:
-        raise ValueError(f"Assuming dimension '{dim}' is first dimension of the input data.")
+    """Compute the median and an estimate of the propagation of variance.
 
+    This is an approximation that uses a Monte Carlo approach to estimate the variance of the median.
+    For each pixel, we generate n_samples Poisson random samples based on the input data values,
+    compute the median for each sample, and then calculate the variance of those medians to estimate
+    the variance of the median.
+
+    Parameters
+    ----------
+    data : sc.DataArray
+        Input data with Poisson statistics.
+    dim : str
+        Dimension along which to compute the median.
+    n_samples : int
+        Number of Monte Carlo samples to generate for variance estimation.
+
+    Returns
+    -------
+    sc.DataArray        DataArray containing the median values and their estimated variances.
+    """
     values = data.values
-    variance = data.variances
-
-    nz, ny, nx = values.shape
-    median_variance = np.empty((ny, nx), dtype=np.float64)
+    axis = data.dims.index(dim)
+    out_dims = tuple(d for d in data.dims if d != dim)
 
     rng = np.random.default_rng()
-
-    for iy in range(ny):
-        for ix in range(nx):
-            # only allocates (n_samples, frame) for one pixel
-            sims = rng.poisson(
-                lam=variance[:, iy, ix],
-                size=(n_samples, nz),
-            )
-            medians = np.median(sims, axis=1)
-            median_variance[iy, ix] = np.var(medians, ddof=1)
+    samples = rng.poisson(lam=values, size=(n_samples,) + values.shape)
+    medians = np.median(samples, axis=axis + 1)  # +1 because of leading sample axis
+    median_variance = np.var(medians, axis=0, ddof=1)
 
     return sc.DataArray(
-        data=sc.array(dims=data.dims[1:], values=np.median(values, axis=0), unit=data.unit, variances=median_variance)
+        data=sc.array(
+            dims=out_dims,
+            values=np.median(values, axis=axis),
+            unit=data.unit,
+            variances=median_variance,
+        )
     )
 
 

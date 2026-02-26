@@ -3,6 +3,7 @@ Unit tests for reference_preparer
 """
 
 import numpy as np
+import pytest
 import scipp as sc
 
 
@@ -24,6 +25,9 @@ def test_prepare_reference_mean():
 
     # Should still be in counts
     assert prepared.unit == sc.units.counts
+
+    # dims should be (x, y)
+    assert prepared.dims == ("x", "y")
 
     # Values should be 50 and 102
     expected_values = np.tile([50.0, 102.0], (4, 2)).T
@@ -53,6 +57,9 @@ def test_prepare_reference_median():
     # Should still be in counts
     assert prepared.unit == sc.units.counts
 
+    # dims should be (x, y)
+    assert prepared.dims == ("x", "y")
+
     # Values should be 40 and 102
     expected_values = np.tile([40.0, 102.0], (4, 2)).T
     np.testing.assert_allclose(prepared.values, expected_values)
@@ -78,6 +85,9 @@ def test_prepare_reference_median_no_variance():
     # Should still be in counts
     assert prepared.unit == sc.units.counts
 
+    # dims should be (x, y)
+    assert prepared.dims == ("x", "y")
+
     # Values should be 40
     np.testing.assert_allclose(prepared.values, 40.0)
 
@@ -97,3 +107,71 @@ def test_prepare_reference_2d():
     prepared = prepare_reference(data, method="mean", dim="N_image")
 
     assert data is prepared  # Should be the same object
+
+
+def test_prepare_reference_3d_single_frame_mean():
+    """Test that 3D input with N_image=1 is returned as 2D."""
+    from neunorm.processing.reference_preparer import prepare_reference
+
+    data = sc.DataArray(
+        data=sc.array(dims=["N_image", "x", "y"], values=np.full((1, 5, 5), 42.0), unit="counts", dtype="float64"),
+    )
+    data.variances = data.values.copy()  # Poisson
+
+    assert data.dims == ("N_image", "x", "y")
+
+    prepared = prepare_reference(data, method="mean", dim="N_image")
+
+    # dims should be (x, y)
+    assert prepared.dims == ("x", "y")
+
+    # Values and variances should be 42
+    np.testing.assert_allclose(prepared.values, 42.0)
+    np.testing.assert_allclose(prepared.variances, 42.0)
+
+
+def test_prepare_reference_3d_single_frame_median():
+    """Test that 3D input with N_image=1 is returned as 2D."""
+    from neunorm.processing.reference_preparer import prepare_reference
+
+    data = sc.DataArray(
+        data=sc.array(dims=["N_image", "x", "y"], values=np.full((1, 5, 5), 42.0), unit="counts", dtype="float64"),
+    )
+    data.variances = data.values.copy()  # Poisson
+
+    assert data.dims == ("N_image", "x", "y")
+
+    prepared = prepare_reference(data, method="median", dim="N_image")
+
+    # dims should be (x, y)
+    assert prepared.dims == ("x", "y")
+
+    # Values and variances should be 42
+    np.testing.assert_allclose(prepared.values, 42.0)
+    np.testing.assert_allclose(prepared.variances, 42.0, atol=1)
+
+
+def test_wrong_dim():
+    """Test that wrong dimension raises error."""
+    from neunorm.processing.reference_preparer import prepare_reference
+
+    data = sc.DataArray(
+        data=sc.array(dims=["N_image", "x", "y"], values=np.full((3, 5, 5), 42.0), unit="counts", dtype="float64"),
+    )
+    data.variances = data.values.copy()  # Poisson
+
+    with pytest.raises(ValueError, match="Dimension 'wrong_dim' not found in input data"):
+        prepare_reference(data, method="mean", dim="wrong_dim")
+
+
+def test_wrong_method():
+    """Test that wrong method raises error."""
+    from neunorm.processing.reference_preparer import prepare_reference
+
+    data = sc.DataArray(
+        data=sc.array(dims=["N_image", "x", "y"], values=np.full((3, 5, 5), 42.0), unit="counts", dtype="float64"),
+    )
+    data.variances = data.values.copy()  # Poisson
+
+    with pytest.raises(ValueError, match="Unsupported method 'wrong_method'"):
+        prepare_reference(data, method="wrong_method", dim="N_image")
