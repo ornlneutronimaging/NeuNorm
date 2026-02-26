@@ -10,14 +10,14 @@ def median_with_variance(data: sc.DataArray, dim: str, n_samples: int = 100_000)
     """Compute the median and an estimate of the propagation of variance.
 
     This is an approximation that uses a Monte Carlo approach to estimate the variance of the median.
-    For each pixel, we generate n_samples Poisson random samples based on the input data values,
+    For each pixel, we generate n_samples random samples based on the input data values and their variances,
     compute the median for each sample, and then calculate the variance of those medians to estimate
     the variance of the median.
 
     Parameters
     ----------
     data : sc.DataArray
-        Input data with Poisson statistics.
+        Input data with associated variances.
     dim : str
         Dimension along which to compute the median.
     n_samples : int
@@ -25,15 +25,22 @@ def median_with_variance(data: sc.DataArray, dim: str, n_samples: int = 100_000)
 
     Returns
     -------
-    sc.DataArray        DataArray containing the median values and their estimated variances.
+    sc.DataArray
+        DataArray containing the median values and their estimated variances.
     """
     values = data.values
+    stds = np.sqrt(data.variances)
     axis = data.dims.index(dim)
     out_dims = tuple(d for d in data.dims if d != dim)
 
     rng = np.random.default_rng()
-    samples = rng.poisson(lam=values, size=(n_samples,) + values.shape)
-    medians = np.median(samples, axis=axis + 1)  # +1 because of leading sample axis
+    samples = rng.normal(
+        loc=values,
+        scale=stds,
+        size=(n_samples,) + values.shape,
+    )
+
+    medians = np.median(samples, axis=axis + 1)  # +1 for leading MC axis
     median_variance = np.var(medians, axis=0, ddof=1)
 
     return sc.DataArray(
