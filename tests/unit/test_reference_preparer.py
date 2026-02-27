@@ -64,9 +64,9 @@ def test_prepare_reference_median():
     expected_values = np.tile([40.0, 102.0], (4, 2)).T
     np.testing.assert_allclose(prepared.values, expected_values)
 
-    # Variance should be propagated. It's an approximation but should be around 40 and 46
-    expected_variance = np.tile([40.0, 46.0], (4, 2)).T
-    np.testing.assert_allclose(prepared.variances, expected_variance, atol=1)
+    # Variance should be propagated. Variance should be approximately (π/2) * (the variance from the mean calculation).
+    expected_variance = np.tile([np.pi / 2 * 150 / 9, np.pi / 2 * 34], (4, 2)).T
+    np.testing.assert_allclose(prepared.variances, expected_variance)
 
 
 def test_prepare_reference_median_no_variance():
@@ -146,9 +146,9 @@ def test_prepare_reference_3d_single_frame_median():
     # dims should be (x, y)
     assert prepared.dims == ("x", "y")
 
-    # Values and variances should be 42
+    # Values should be 42. Variance should be approximately (π/2) * 42.
     np.testing.assert_allclose(prepared.values, 42.0)
-    np.testing.assert_allclose(prepared.variances, 42.0, atol=1)
+    np.testing.assert_allclose(prepared.variances, 42.0 * np.pi / 2, atol=1)
 
 
 def test_wrong_dim():
@@ -175,3 +175,27 @@ def test_wrong_method():
 
     with pytest.raises(ValueError, match="Unsupported method 'wrong_method'"):
         prepare_reference(data, method="wrong_method", dim="N_image")
+
+
+def test_prepare_reference_different_variances():
+    """Test that returns different variances for different input variances. Same values."""
+    from neunorm.processing.reference_preparer import prepare_reference
+
+    data = sc.DataArray(
+        data=sc.array(dims=["N_image", "x", "y"], values=np.full((3, 2, 2), 42.0), unit="counts", dtype="float64"),
+    )
+    # Create different variances for (x, y)
+    variances = np.tile([[10, 20], [30, 40]], (3, 1, 1))  # this creates an array with shape (N_image=3, y=2, x=2)
+    data.variances = variances
+
+    prepared_mean = prepare_reference(data, method="mean", dim="N_image")
+    prepared_median = prepare_reference(data, method="median", dim="N_image")
+
+    # values should be the same
+    np.testing.assert_allclose(prepared_mean.values, 42.0)
+    np.testing.assert_allclose(prepared_median.values, 42.0)
+
+    # variances should be different
+    expected_mean_variance = variances.sum(axis=0) / 9  # mean variance along N_image
+    np.testing.assert_allclose(prepared_mean.variances, expected_mean_variance)
+    np.testing.assert_allclose(prepared_median.variances, expected_mean_variance * np.pi / 2)

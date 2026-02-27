@@ -6,13 +6,12 @@ import numpy as np
 import scipp as sc
 
 
-def median_with_variance(data: sc.DataArray, dim: str, n_samples: int = 100_000) -> sc.DataArray:
-    """Compute the median and an estimate of the propagation of variance.
+def median_with_variance(data: sc.DataArray, dim: str) -> sc.DataArray:
+    """Compute the median and an approximation of the propagation of variance.
 
-    This is an approximation that uses a Monte Carlo approach to estimate the variance of the median.
-    For each pixel, we generate n_samples random samples based on the input data values and their variances,
-    compute the median for each sample, and then calculate the variance of those medians to estimate
-    the variance of the median.
+    Use the approximation of
+
+    Var(median) ≈ (π / (2n)) * mean_variance
 
     Parameters
     ----------
@@ -20,33 +19,23 @@ def median_with_variance(data: sc.DataArray, dim: str, n_samples: int = 100_000)
         Input data with associated variances.
     dim : str
         Dimension along which to compute the median.
-    n_samples : int
-        Number of Monte Carlo samples to generate for variance estimation.
 
     Returns
     -------
     sc.DataArray
         DataArray containing the median values and their estimated variances.
     """
-    values = data.values
-    stds = np.sqrt(data.variances)
     axis = data.dims.index(dim)
     out_dims = tuple(d for d in data.dims if d != dim)
 
-    rng = np.random.default_rng()
-    samples = rng.normal(
-        loc=values,
-        scale=stds,
-        size=(n_samples,) + values.shape,
-    )
-
-    medians = np.median(samples, axis=axis + 1)  # +1 for leading MC axis
-    median_variance = np.var(medians, axis=0, ddof=1)
+    # Calculate mean variance along the specified dimension
+    mean_variance = data.variances.mean(axis=axis)
+    median_variance = (np.pi / (2 * data.sizes[dim])) * mean_variance
 
     return sc.DataArray(
         data=sc.array(
             dims=out_dims,
-            values=np.median(values, axis=axis),
+            values=np.median(data.values, axis=axis),
             unit=data.unit,
             variances=median_variance,
         )
