@@ -94,10 +94,9 @@ def apply_gamma_filter(
     filtered_variances = input_variances.copy() if input_variances is not None else None
 
     if not preserve_variance and input_variances is not None and outlier_count > 0:
-        rng = np.random.default_rng()
-        # recalculate variance for outliers from local neighborhood.
-        # This is an approximation using Monte Carlo sampling of the local neighborhood
-        # to estimate the variance of the median.
+        # Recalculate variance for outliers from local neighborhood.
+        # This is an approximation of the variance of the median.
+        # Use Var(median) ≈ (π / (2n)) * mean_variance
         for idx in np.ndindex(outlier_mask.shape):
             if outlier_mask[idx]:
                 # get list of neighboring values
@@ -105,19 +104,11 @@ def apply_gamma_filter(
                     slice(max(0, i - size[d] // 2), min(s, i + size[d] // 2 + 1))
                     for d, (i, s) in enumerate(zip(idx, values.shape))
                 )
-                neighbor_values = values[neighbor_indices].flatten()
-                mid_point = len(neighbor_values) // 2
-                neighbor_values = np.delete(neighbor_values, mid_point)  # remove center pixel
-                neighbor_variances = np.delete(
-                    input_variances[neighbor_indices].flatten(), mid_point
-                )  # remove center pixel variance
-                # Generate random samples based on neighboring values and variances
-                samples = rng.normal(
-                    loc=neighbor_values, scale=np.sqrt(neighbor_variances), size=(100_000, len(neighbor_values))
-                )
-                median_samples = np.median(samples, axis=1)
-                # Update variance for this pixel to the variance of the median samples
-                filtered_variances[idx] = np.var(median_samples, ddof=1)
+                neighbor_variances = input_variances[neighbor_indices].flatten()
+                mid_point = len(neighbor_variances) // 2
+                neighbor_variances = np.delete(neighbor_variances, mid_point)  # remove center pixel variance
+                mean_variance = neighbor_variances.mean()
+                filtered_variances[idx] = (np.pi / (2 * len(neighbor_variances))) * mean_variance
                 logger.debug("Updating variance for outlier at index {} to {}", idx, filtered_variances[idx])
 
     out = data.copy(deep=False)

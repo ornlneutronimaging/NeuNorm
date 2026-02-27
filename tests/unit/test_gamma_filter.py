@@ -33,9 +33,10 @@ def test_apply_gamma_filter_3d():
     # Variance should be updated to local median variance.
     expected_variance = np.full((10, 5, 5), 10.0)
     expected_variance[5][1] = 11.0  # This pixel is not an outlier, so variance should be unchanged.
-    # This pixel is an outlier. Variance will be small because it is replaced by the median of multiple samples.
-    expected_variance[5, 2, 2] = 1.75
-
+    # This pixel is an outlier. 8 neighbuts, 5 with variance 10, 3 with variance 11.
+    # So mean variance is (10*5 + 11*3) / 8.
+    # Variance of the median is approximately (π / (2n)) * mean_variance = (π / 16) * mean_variance.
+    expected_variance[5, 2, 2] = np.pi * (10 * 5 + 11 * 3) / 128
     np.testing.assert_allclose(corrected.variances, expected_variance, rtol=0.02)
 
 
@@ -110,6 +111,8 @@ def test_apply_gamma_filter_basic_2d():
 
     # Variance should be propagated.
     expected_variance = np.full((5, 5), 10.0)
-    # This pixel is an outlier. Variance will be small because it is replaced by the median of multiple samples
-    expected_variance[2, 2] = 1.68
+    # This pixel is an outlier. Variance will be updated to the local median variance.
+    # 8 neighbors with variance 10, so median variance is 10.
+    # Variance of the median is approximately (π / (2n)) * mean_variance = (π / 16) * 10.
+    expected_variance[2, 2] = 10.0 * np.pi / 16
     np.testing.assert_allclose(corrected.variances, expected_variance, rtol=0.02)
