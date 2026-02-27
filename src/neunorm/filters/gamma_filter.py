@@ -97,16 +97,16 @@ def apply_gamma_filter(
         # Recalculate variance for outliers from local neighborhood.
         # This is an approximation of the variance of the median.
         # Use Var(median) ≈ (π / (2n)) * mean_variance
+
+        # Pad input variances to handle edge cases when extracting neighborhood.
+        # Matching the 'nearest' mode used in the filters.
+        input_variances_padded = np.pad(input_variances, [(s // 2, s // 2) for s in size], mode="edge")
+
         for idx in np.ndindex(outlier_mask.shape):
             if outlier_mask[idx]:
-                # get list of neighboring values
-                neighbor_indices = tuple(
-                    slice(max(0, i - size[d] // 2), min(s, i + size[d] // 2 + 1))
-                    for d, (i, s) in enumerate(zip(idx, values.shape))
-                )
-                neighbor_variances = input_variances[neighbor_indices].flatten()
-                mid_point = len(neighbor_variances) // 2
-                neighbor_variances = np.delete(neighbor_variances, mid_point)  # remove center pixel variance
+                neighbor_indices = tuple(slice(i, i + s) for i, s in zip(idx, size))
+                # extract variances of the neighbors using the same footprint as the median filter
+                neighbor_variances = input_variances_padded[neighbor_indices][footprint]
                 mean_variance = neighbor_variances.mean()
                 filtered_variances[idx] = (np.pi / (2 * len(neighbor_variances))) * mean_variance
                 logger.debug("Updating variance for outlier at index {} to {}", idx, filtered_variances[idx])
