@@ -81,8 +81,9 @@ def apply_gamma_filter(
 
     # Identify outliers
     outlier_mask = values > local_threshold
+    outlier_count = np.sum(outlier_mask)
 
-    logger.debug("Identified {} outliers in data of shape {}", outlier_mask.sum(), values.shape)
+    logger.debug("Identified {} outliers in data of shape {}", outlier_count, values.shape)
 
     # Replace outliers with local median
     filtered_values = values.copy()
@@ -92,10 +93,23 @@ def apply_gamma_filter(
     input_variances = data.data.variances
     filtered_variances = input_variances.copy() if input_variances is not None else None
 
-    if not preserve_variance and input_variances is not None:
-        # Local variance estimate from existing per-pixel variances
-        local_var = ndi.median_filter(filtered_variances, footprint=footprint, mode="nearest")
-        filtered_variances[outlier_mask] = local_var[outlier_mask]
+    if not preserve_variance and input_variances is not None and outlier_count > 0:
+        # Recalculate variance for outliers from local neighborhood.
+        # This is an approximation of the variance of the median.
+        # Use Var(median) ≈ (π / (2n)) * mean_variance
+
+        # Pad input variances to handle edge cases when extracting neighborhood.
+        # Matching the 'nearest' mode used in the filters.
+        input_variances_padded = np.pad(input_variances, [(s // 2, s // 2) for s in size], mode="edge")
+
+        for idx in np.ndindex(outlier_mask.shape):
+            if outlier_mask[idx]:
+                neighbor_indices = tuple(slice(i, i + s) for i, s in zip(idx, size))
+                # extract variances of the neighbors using the same footprint as the median filter
+                neighbor_variances = input_variances_padded[neighbor_indices][footprint]
+                mean_variance = neighbor_variances.mean()
+                filtered_variances[idx] = (np.pi / (2 * len(neighbor_variances))) * mean_variance
+                logger.debug("Updating variance for outlier at index {} to {}", idx, filtered_variances[idx])
 
     out = data.copy(deep=False)
     out.data = sc.array(
