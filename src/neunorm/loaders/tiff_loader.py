@@ -10,7 +10,7 @@ from typing import Optional, Sequence
 import numpy as np
 import scipp as sc
 from loguru import logger
-from PIL import Image
+from PIL import ExifTags, Image
 
 
 def load_tiff_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray] = None) -> sc.DataArray:  # noqa: C901
@@ -101,14 +101,28 @@ def load_tiff_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
         # Process metadata and add as coordinates
         # Assuming all images have the same metadata keys.
         for key in metadata_list[0]:
-            values = [metadata_list[i][key] for i in range(n_images)]
-            key_str = str(key)
-            if len(set(str(v) for v in values)) == 1:
-                # If all values are the same, store as scalar
-                da.coords[key_str] = sc.scalar(value=values[0], unit=None)
+            if (key_name := ExifTags.TAGS.get(key)) is not None:
+                values = [metadata_list[i][key] for i in range(n_images)]
             else:
-                # Values differ across files, store as array with dimension of the stack
-                da.coords[key_str] = sc.array(dims=[dim_name], values=values, unit=None)
-            da.coords.set_aligned(key_str, False)
+                # Check if value is a key value pair separated by a column, e.g. "ExposureTime:0.01"
+                try:
+                    key_name = str(metadata_list[0][key]).split(":")[0]
+                    values = [str(metadata_list[i][key]).split(":")[1] for i in range(n_images)]
+                except IndexError:
+                    key_name = str(key)
+                    values = [str(metadata_list[i][key]) for i in range(n_images)]
+
+            # Try converting to float if possible, otherwise keep as string
+            try:
+                values = [float(v) for v in values]
+                da.coords[key_name] = sc.array(dims=[dim_name], values=values, unit=None)
+            except (ValueError, TypeError):
+                if len(set(v for v in values)) == 1:
+                    # If all values are the same string, store as scalar
+                    da.coords[key_name] = sc.scalar(value=values[0], unit=None)
+                else:
+                    # Values differ across files, store as array with dimension of the stack
+                    da.coords[key_name] = sc.array(dims=[dim_name], values=values, unit=None)
+            da.coords.set_aligned(key_name, False)
 
     return da

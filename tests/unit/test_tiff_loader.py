@@ -32,9 +32,14 @@ def test_load_tiff_stack():
     assert da.variances.max() == 5
 
     assert len(da.coords) == 15
-    assert "1" in da.coords
-    assert len(da.coords["1"]) == 3
-    assert da.coords["1"].values[0] == "this is metadata of image001.tif"
+
+    assert "SampleFormat" in da.coords
+    assert len(da.coords["SampleFormat"].values) == 1
+    assert da.coords["SampleFormat"].values[0] == 3
+
+    assert "InteropIndex" in da.coords
+    assert len(da.coords["InteropIndex"]) == 3
+    assert da.coords["InteropIndex"].values[0] == "this is metadata of image001.tif"
 
 
 def test_load_tiff_stack_tof_edges():
