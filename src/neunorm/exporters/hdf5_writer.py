@@ -2,6 +2,7 @@
 HDF5 writer for Neunorm outputs, including provenance metadata.
 """
 
+import os
 from pathlib import Path
 from typing import Optional, Union
 
@@ -60,6 +61,9 @@ def write_hdf5(
     # Ensure output directory exists
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Check if path is writeable
+    if not os.access(output_path.parent, os.W_OK):
+        raise PermissionError(f"No write permission for directory: {output_path.parent}")
 
     with h5py.File(output_path, "w") as f:
         # Write transmission data and unit
