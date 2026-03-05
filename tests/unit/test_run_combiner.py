@@ -174,3 +174,78 @@ def test_combine_runs_missing_metadata_key():
 
     with pytest.raises(ValueError, match="Metadata key 'p_charge' not found in all runs for summation"):
         combine_runs([run1, run2], metadata_keys_to_sum=["p_charge"])
+
+
+def test_combine_runs_no_metadata_keys_to_sum():
+    """Test that combining runs with no metadata keys to sum works correctly."""
+    from neunorm.processing.run_combiner import combine_runs
+
+    run1 = sc.DataArray(
+        data=sc.array(dims=["tof_edges", "x", "y"], values=np.zeros((10, 5, 5)), unit="counts"),
+        coords={"tof_edges": sc.linspace("tof_edges", 1, 100, num=11, unit="us")},
+    )
+    run1.coords["p_charge"] = sc.scalar(value=10, unit="C")
+    run1.coords.set_aligned("p_charge", False)
+
+    run2 = sc.DataArray(
+        data=sc.array(dims=["tof_edges", "x", "y"], values=np.zeros((10, 5, 5)), unit="counts"),
+        coords={"tof_edges": sc.linspace("tof_edges", 1, 100, num=11, unit="us")},
+    )
+    run2.coords["p_charge"] = sc.scalar(value=40, unit="C")
+    run2.coords.set_aligned("p_charge", False)
+
+    combined = combine_runs([run1, run2], metadata_keys_to_sum=[])
+    # p_charge should not be summed since it's not in the metadata_keys_to_sum list
+    np.testing.assert_allclose(combined.coords["p_charge"].value, 10)
+    assert combined.coords["p_charge"].unit == "C"
+
+
+def test_combine_runs_more_than_two():
+    """Test that combining more than two runs works correctly."""
+    from neunorm.processing.run_combiner import combine_runs
+
+    run1 = sc.DataArray(
+        data=sc.array(dims=["tof_edges", "x", "y"], values=np.zeros((10, 5, 5)), unit="counts"),
+        coords={"tof_edges": sc.linspace("tof_edges", 1, 100, num=11, unit="us")},
+    )
+    run1.variances = run1.values.copy()
+    run1.coords["p_charge"] = sc.scalar(value=10, unit="C")
+    run1.coords.set_aligned("p_charge", False)
+    run1.coords["acquisition_time"] = sc.array(dims=["tof_edges"], values=np.linspace(2, 11, num=10), unit="s")
+    run1.coords.set_aligned("acquisition_time", False)
+
+    run2 = sc.DataArray(
+        data=sc.array(dims=["tof_edges", "x", "y"], values=np.zeros((10, 5, 5)) * 2, unit="counts"),
+        coords={"tof_edges": sc.linspace("tof_edges", 1, 100, num=11, unit="us")},
+    )
+    run2.variances = run2.values.copy()
+    run2.coords["p_charge"] = sc.scalar(value=40, unit="C")
+    run2.coords.set_aligned("p_charge", False)
+    run2.coords["acquisition_time"] = sc.array(dims=["tof_edges"], values=np.linspace(1, 10, num=10), unit="s")
+    run2.coords.set_aligned("acquisition_time", False)
+
+    run3 = sc.DataArray(
+        data=sc.array(dims=["tof_edges", "x", "y"], values=np.zeros((10, 5, 5)) * 3, unit="counts"),
+        coords={"tof_edges": sc.linspace("tof_edges", 1, 100, num=11, unit="us")},
+    )
+    run3.variances = run3.values.copy()
+    run3.coords["p_charge"] = sc.scalar(value=50, unit="C")
+    run3.coords.set_aligned("p_charge", False)
+    run3.coords["acquisition_time"] = sc.array(dims=["tof_edges"], values=np.linspace(0, 9, num=10), unit="s")
+    run3.coords.set_aligned("acquisition_time", False)
+
+    combined = combine_runs([run1, run2, run3])
+    # values should be sum of the three samples
+    expected_values = np.zeros((10, 5, 5)) * 6
+    np.testing.assert_allclose(combined.values, expected_values)
+    # Variance should be sum of the three samples
+    np.testing.assert_allclose(combined.variances, expected_values)
+    # p_charge should be sum of the three samples
+    np.testing.assert_allclose(combined.coords["p_charge"].value, 10 + 40 + 50)
+    assert combined.coords["p_charge"].unit == "C"
+    # Acquisition time should be sum of the three samples
+    np.testing.assert_allclose(
+        combined.coords["acquisition_time"].values,
+        np.linspace(2, 11, num=10) + np.linspace(1, 10, num=10) + np.linspace(0, 9, num=10),
+    )
+    assert combined.coords["acquisition_time"].unit == "s"

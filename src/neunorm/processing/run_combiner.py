@@ -59,9 +59,9 @@ def combine_runs(
     for key in metadata_keys_to_sum:
         try:
             combined.coords[key] = sc.sum(sc.concat([run.coords[key] for run in runs], dim="run"), dim="run")
-        except KeyError:
-            logger.error("Metadata key '{}' not found in all runs for summation", key)
+        except (KeyError, sc.DimensionError) as e:
+            logger.error("Metadata key '{}' not found in all runs for summation: {}", key, e)
             raise ValueError(f"Metadata key '{key}' not found in all runs for summation")
 
-    logger.info("Successfully combined {} runs", len(runs))
+    logger.success("Successfully combined {} runs", len(runs))
     return combined
