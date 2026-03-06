@@ -13,6 +13,13 @@ def combine_runs(
 ) -> sc.DataArray:
     """Combine multiple runs by summing with metadata aggregation.
 
+    - Combines a list of sc.DataArrays representing individual runs by summing their data values and variances.
+    - Masks are combined using logical OR. If a pixel is masked in any run, it will be masked in the combined result.
+      This ensures that all bad pixels are properly accounted for in the final dataset.
+    - The function also aggregates metadata by summing specified keys across runs, while retaining other metadata from
+      the first run. This allows for accurate representation of total acquisition time, proton charge, and other
+      relevant parameters in the combined dataset.
+
     Parameters
     ----------
     runs : list[sc.DataArray]

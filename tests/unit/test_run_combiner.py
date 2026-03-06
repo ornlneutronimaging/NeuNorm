@@ -24,6 +24,9 @@ def test_combine_runs():
     dead_pixel_mask = np.zeros((5, 5), dtype=bool)
     dead_pixel_mask[2, 2] = True  # Mark one pixel as dead
     run.masks["dead_pixel_mask"] = sc.array(dims=["x", "y"], values=dead_pixel_mask, dtype=bool)
+    hot_pixel_mask = np.zeros((5, 5), dtype=bool)
+    hot_pixel_mask[1, 1] = True  # Mark one pixel as hot
+    run.masks["hot_pixel_mask"] = sc.array(dims=["x", "y"], values=hot_pixel_mask, dtype=bool)
 
     run.coords["p_charge"] = sc.scalar(value=10, unit="C")
     run.coords.set_aligned("p_charge", False)
@@ -42,6 +45,9 @@ def test_combine_runs():
     dead_pixel_mask2 = np.zeros((5, 5), dtype=bool)
     dead_pixel_mask2[3, 3] = True  # Mark one pixel as dead
     run2.masks["dead_pixel_mask"] = sc.array(dims=["x", "y"], values=dead_pixel_mask2, dtype=bool)
+    hot_pixel_mask2 = np.zeros((5, 5), dtype=bool)
+    hot_pixel_mask2[1, 1] = True  # Mark the same pixel as hot
+    run2.masks["hot_pixel_mask"] = sc.array(dims=["x", "y"], values=hot_pixel_mask2, dtype=bool)
 
     run2.coords["p_charge"] = sc.scalar(value=40, unit="C")
     run2.coords.set_aligned("p_charge", False)
@@ -73,12 +79,18 @@ def test_combine_runs():
     # Variance should be sum of the two samples
     np.testing.assert_allclose(combined.variances, expected_values)
 
-    # Check mask. Both dead pixels should be masked in the combined result.
+    # Check dead pixel mask. Both dead pixels should be masked in the combined result.
     assert "dead_pixel_mask" in combined.masks
     expected_mask = np.zeros((5, 5), dtype=bool)
     expected_mask[2, 2] = True
     expected_mask[3, 3] = True
     np.testing.assert_equal(combined.masks["dead_pixel_mask"].values, expected_mask)
+
+    # Check hot pixel mask. Both hot pixels should be masked in the combined result.
+    assert "hot_pixel_mask" in combined.masks
+    expected_hot_mask = np.zeros((5, 5), dtype=bool)
+    expected_hot_mask[1, 1] = True
+    np.testing.assert_equal(combined.masks["hot_pixel_mask"].values, expected_hot_mask)
 
     # p_charge should be sum of the two samples
     np.testing.assert_allclose(combined.coords["p_charge"].value, 10 + 40)
@@ -214,6 +226,12 @@ def test_combine_runs_more_than_two():
     run1.coords["acquisition_time"] = sc.array(dims=["tof_edges"], values=np.linspace(2, 11, num=10), unit="s")
     run1.coords.set_aligned("acquisition_time", False)
 
+    # have dead pixel mask only in run1 and run3
+    dead_pixel_mask = np.zeros((5, 5), dtype=bool)
+    dead_pixel_mask[0, 1] = True
+    dead_pixel_mask[2, 2] = True
+    run1.masks["dead_pixel"] = sc.array(dims=["x", "y"], values=dead_pixel_mask, dtype=bool)
+
     run2 = sc.DataArray(
         data=sc.array(dims=["tof_edges", "x", "y"], values=np.zeros((10, 5, 5)) * 2, unit="counts"),
         coords={"tof_edges": sc.linspace("tof_edges", 1, 100, num=11, unit="us")},
@@ -223,6 +241,7 @@ def test_combine_runs_more_than_two():
     run2.coords.set_aligned("p_charge", False)
     run2.coords["acquisition_time"] = sc.array(dims=["tof_edges"], values=np.linspace(1, 10, num=10), unit="s")
     run2.coords.set_aligned("acquisition_time", False)
+    # run2 has no masks
 
     run3 = sc.DataArray(
         data=sc.array(dims=["tof_edges", "x", "y"], values=np.zeros((10, 5, 5)) * 3, unit="counts"),
@@ -234,6 +253,17 @@ def test_combine_runs_more_than_two():
     run3.coords["acquisition_time"] = sc.array(dims=["tof_edges"], values=np.linspace(0, 9, num=10), unit="s")
     run3.coords.set_aligned("acquisition_time", False)
 
+    # have dead pixel mask only in run1 and run3
+    dead_pixel_mask = np.zeros((5, 5), dtype=bool)
+    dead_pixel_mask[2, 2] = True
+    run3.masks["dead_pixel"] = sc.array(dims=["x", "y"], values=dead_pixel_mask, dtype=bool)
+
+    # have hot pixel mask only in run3
+    hot_pixel_mask = np.zeros((5, 5), dtype=bool)
+    hot_pixel_mask[2, 1] = True  # Mark one pixel as masked in all runs
+    run3.masks["host_pixel"] = sc.array(dims=["x", "y"], values=hot_pixel_mask, dtype=bool)
+
+    # Run the combiner on all three runs
     combined = combine_runs([run1, run2, run3])
     # values should be sum of the three samples
     expected_values = np.zeros((10, 5, 5)) * 6
@@ -249,3 +279,42 @@ def test_combine_runs_more_than_two():
         np.linspace(2, 11, num=10) + np.linspace(1, 10, num=10) + np.linspace(0, 9, num=10),
     )
     assert combined.coords["acquisition_time"].unit == "s"
+
+    # Check dead pixel mask. The pixel masked in run1 and run3 should be masked in the combined result.
+    assert "dead_pixel" in combined.masks
+    expected_dead_mask = np.zeros((5, 5), dtype=bool)
+    expected_dead_mask[0, 1] = True
+    expected_dead_mask[2, 2] = True
+    np.testing.assert_equal(combined.masks["dead_pixel"].values, expected_dead_mask)
+
+    # Check hot pixel mask. The pixel masked in run3 should be masked in the combined result.
+    assert "host_pixel" in combined.masks
+    expected_hot_mask = np.zeros((5, 5), dtype=bool)
+    expected_hot_mask[2, 1] = True
+    np.testing.assert_equal(combined.masks["host_pixel"].values, expected_hot_mask)
+
+
+def test_combine_runs_no_masks():
+    """Test that combining runs with no masks works correctly."""
+    from neunorm.processing.run_combiner import combine_runs
+
+    run1 = sc.DataArray(
+        data=sc.array(dims=["tof_edges", "x", "y"], values=np.zeros((10, 5, 5)), unit="counts"),
+        coords={"tof_edges": sc.linspace("tof_edges", 1, 100, num=11, unit="us")},
+    )
+    run1.variances = run1.values.copy()
+
+    run2 = sc.DataArray(
+        data=sc.array(dims=["tof_edges", "x", "y"], values=np.zeros((10, 5, 5)) * 2, unit="counts"),
+        coords={"tof_edges": sc.linspace("tof_edges", 1, 100, num=11, unit="us")},
+    )
+    run2.variances = run2.values.copy()
+
+    combined = combine_runs([run1, run2], metadata_keys_to_sum=[])
+    # values should be sum of the two samples
+    expected_values = np.zeros((10, 5, 5)) * 3
+    np.testing.assert_allclose(combined.values, expected_values)
+    # Variance should be sum of the two samples
+    np.testing.assert_allclose(combined.variances, expected_values)
+    # There should be no masks in the combined result
+    assert len(combined.masks) == 0
