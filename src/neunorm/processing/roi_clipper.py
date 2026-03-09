@@ -3,6 +3,7 @@ Function for cropping spatial dimensions to a region of interest (ROI).
 """
 
 import scipp as sc
+from loguru import logger
 
 
 def apply_roi(
@@ -29,6 +30,8 @@ def apply_roi(
         Cropped data array with updated coordinates.
     """
 
+    logger.info("Applying ROI: {}", roi)
+
     if len(roi) != 4:
         raise ValueError("ROI must be a tuple of 4 integers (x0, y0, x1, y1)")
 
@@ -54,4 +57,4 @@ def apply_roi(
     y_slice = slice(y0, y1)
 
     # Crop the DataArray
-    return data["x", x_slice]["y", y_slice]
+    return data["x", x_slice]["y", y_slice].copy()  # return a copy so it's not read-only

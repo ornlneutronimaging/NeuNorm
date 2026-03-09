@@ -4,6 +4,7 @@ Reference image preparation.
 
 import numpy as np
 import scipp as sc
+from loguru import logger
 
 
 def median_with_variance(data: sc.DataArray, dim: str) -> sc.DataArray:
@@ -63,6 +64,7 @@ def prepare_reference(
     sc.DataArray
         2D reference image (y, x) with propagated variances.
     """
+    logger.info("Preparing reference image using method '{}' along dimension '{}'", method, dim)
 
     if len(stack.dims) == 2:
         return stack

@@ -1,0 +1,101 @@
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+import scipp as sc
+from loguru import logger
+
+from neunorm import __version__
+from neunorm.exporters.hdf5_writer import write_hdf5
+from neunorm.exporters.tiff_writer import write_tiff_stack
+from neunorm.filters.gamma_filter import apply_gamma_filter
+from neunorm.loaders.tiff_loader import load_tiff_stack
+from neunorm.processing.dark_corrector import subtract_dark
+from neunorm.processing.normalizer import normalize_transmission
+from neunorm.processing.reference_preparer import prepare_reference
+from neunorm.processing.roi_clipper import apply_roi
+from neunorm.tof.pixel_detector import detect_dead_pixels
+
+
+def run_mars_ccd_pipeline(
+    sample_paths: list[Path],
+    ob_paths: list[Path],
+    dark_paths: list[Path],
+    output_path: Path,
+    roi: Optional[tuple] = None,
+    gamma_filter: bool = True,
+) -> sc.DataArray:
+    """Execute MARS CCD/CMOS normalization pipeline.
+
+    Pipeline Steps (10 total)
+    - Load TIFF/FITS (sample, OB, dark)
+    - Run combine (optional)
+    - ROI clip (optional)
+    - Average dark/OB
+    - Dead pixel detection (existing tof/pixel_detector.py)
+    - Gamma filtering (filters/gamma_filter.py)
+    - Dark correction (processing/dark_corrector.py)
+    - Normalization (existing processing/normalizer.py)
+    - Error propagation (existing processing/uncertainty_calculator.py)
+    - Output (exporters/hdf5_writer.py, exporters/tiff_writer.py)
+    """
+
+    # Load data
+    sample = load_tiff_stack(sample_paths)
+    ob = load_tiff_stack(ob_paths)
+    dark = load_tiff_stack(dark_paths)
+
+    # Apply ROI if specified
+    if roi:
+        sample = apply_roi(sample, roi)
+        ob = apply_roi(ob, roi)
+        dark = apply_roi(dark, roi)
+
+    # Average dark and OB
+    dark = prepare_reference(dark, dim="N_image")
+    ob = prepare_reference(ob, dim="N_image")
+
+    # Dead pixel detection
+    sample.masks["dead_pixels"] = detect_dead_pixels(sample)
+
+    # Gamma filtering (optional)
+    if gamma_filter:
+        sample = apply_gamma_filter(sample)
+
+    # Dark correction
+    sample_dark_corrected = subtract_dark(sample, dark)
+    ob_dark_corrected = subtract_dark(ob, dark)
+
+    # Normalization
+    transmission = normalize_transmission(sample_dark_corrected, ob_dark_corrected)
+
+    # Write output
+    metadata = {
+        "sample_paths": [str(p) for p in sample_paths],
+        "ob_paths": [str(p) for p in ob_paths],
+        "dark_paths": [str(p) for p in dark_paths],
+        "gamma_filter_applied": gamma_filter,
+        "processing_timestamp": datetime.now().isoformat(),
+        "version": __version__,
+    }
+
+    if roi:
+        metadata["roi_applied"] = roi
+
+    if output_path.suffix.lower() in (".hdf5", ".h5"):
+        write_hdf5(output_path, transmission, dead_pixel_mask="dead_pixels", metadata=metadata)
+    elif output_path.suffix.lower() in (".tiff", ".tif"):
+        rename_map = {}
+        if "N_image" in transmission.dims:
+            rename_map["N_image"] = "z"  # TIFF stacks typically use 'z' for the stack dimension
+        if "tof_bin_edges" in transmission.dims:
+            rename_map["tof_bin_edges"] = "t"  # TIFF stacks typically use 't' for the time dimension
+        if rename_map:
+            transmission = transmission.rename_dims(rename_map)
+
+        write_tiff_stack(output_path.with_suffix(".tiff"), transmission)
+    else:
+        raise ValueError(f"Unsupported output file format: {output_path.suffix}")
+
+    logger.success("MARS CCD pipeline completed successfully. Output written to {}", output_path)
+    return transmission
