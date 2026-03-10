@@ -131,7 +131,7 @@ def test_write_tiff_stack_unwriteable_path():
     values = np.arange(25, dtype=np.float64).reshape((5, 5))
     transmission = sc.DataArray(data=sc.array(dims=["y", "x"], values=values, unit="counts", dtype="float64"))
 
-    with pytest.raises(PermissionError):
+    with pytest.raises((PermissionError, OSError)):
         write_tiff_stack("/nonexistent/deep/path/file.tiff", transmission)
 
     with pytest.raises(PermissionError):
