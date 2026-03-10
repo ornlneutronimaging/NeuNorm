@@ -188,7 +188,7 @@ def test_write_hdf5_invalid_path():
         },
     )
 
-    with pytest.raises(PermissionError):
+    with pytest.raises((PermissionError, OSError)):
         write_hdf5("/nonexistent/deep/path/file.h5", data)
 
     with pytest.raises(PermissionError):

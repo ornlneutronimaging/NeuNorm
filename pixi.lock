@@ -460,6 +460,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstandard-0.25.0-py312h5253ce2_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstd-1.5.7-hb78ec9c_6.conda
       - pypi: https://files.pythonhosted.org/packages/59/3c/ea5a4687adaba5e125b9bd6190153d0037325a0ba3757cc1537cc2c8dd90/regex-2026.2.19-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/9f/47/72fd8b2e60a957c9dc1c9a6171a9b016a45120e7f258851f16b940c731a5/scitiff-26.1.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/ee/fe/80250dc06cd4a3a5afe7059875a8d53e97a78528c5dd9ea8c3f981fb897a/tifffile-2026.2.24-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d2/b8/f0b9b880c03a3db8eaff63d76ca751ac7d8e45483fb7a0bb9f8e5c6ce433/toml_cli-0.8.2-py3-none-any.whl
       - pypi: ./
       osx-arm64:
@@ -856,6 +858,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstandard-0.25.0-py313h9734d34_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hbf9d68e_6.conda
       - pypi: https://files.pythonhosted.org/packages/cd/58/714384efcc07ae6beba528a541f6e99188c5cc1bc0295337f4e8a868296d/regex-2026.2.19-cp313-cp313-macosx_11_0_arm64.whl
+      - pypi: https://files.pythonhosted.org/packages/9f/47/72fd8b2e60a957c9dc1c9a6171a9b016a45120e7f258851f16b940c731a5/scitiff-26.1.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/ee/fe/80250dc06cd4a3a5afe7059875a8d53e97a78528c5dd9ea8c3f981fb897a/tifffile-2026.2.24-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d2/b8/f0b9b880c03a3db8eaff63d76ca751ac7d8e45483fb7a0bb9f8e5c6ce433/toml_cli-0.8.2-py3-none-any.whl
       - pypi: ./
   jupyter:
@@ -1272,6 +1276,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zlib-1.3.1-hb9d3cd8_2.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zlib-ng-2.3.3-hceb46e0_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstd-1.5.7-hb78ec9c_6.conda
+      - pypi: https://files.pythonhosted.org/packages/9f/47/72fd8b2e60a957c9dc1c9a6171a9b016a45120e7f258851f16b940c731a5/scitiff-26.1.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/ee/fe/80250dc06cd4a3a5afe7059875a8d53e97a78528c5dd9ea8c3f981fb897a/tifffile-2026.2.24-py3-none-any.whl
       - pypi: ./
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/_openmp_mutex-4.5-7_kmp_llvm.conda
@@ -1625,6 +1631,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-1.3.1-h8359307_2.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-ng-2.3.3-hed4e4f5_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hbf9d68e_6.conda
+      - pypi: https://files.pythonhosted.org/packages/9f/47/72fd8b2e60a957c9dc1c9a6171a9b016a45120e7f258851f16b940c731a5/scitiff-26.1.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/ee/fe/80250dc06cd4a3a5afe7059875a8d53e97a78528c5dd9ea8c3f981fb897a/tifffile-2026.2.24-py3-none-any.whl
       - pypi: ./
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
@@ -7696,8 +7704,8 @@ packages:
   timestamp: 1733325673691
 - pypi: ./
   name: neunorm
-  version: 1.7.0.dev57
-  sha256: a187bf6ca1be0a9ae7100fa5386a3810792a67dd4309182809a9d35e60ca505a
+  version: 1.7.0.dev86
+  sha256: 6db4e567645de34280f43b6282958e2eab8f24e6ad76ec5c18dcfbc243bb7a45
   requires_dist:
   - astropy
   - h5py>=3.0
@@ -7707,6 +7715,7 @@ packages:
   - pydantic>=2.0
   - scipp>=25.8.0
   - scipy>=1.11
+  - scitiff>=26.1
   - tqdm
   - myst-parser ; extra == 'docs'
   - nbsphinx ; extra == 'docs'
@@ -9795,6 +9804,18 @@ packages:
   - pkg:pypi/scipy?source=compressed-mapping
   size: 13888560
   timestamp: 1768801587965
+- pypi: https://files.pythonhosted.org/packages/9f/47/72fd8b2e60a957c9dc1c9a6171a9b016a45120e7f258851f16b940c731a5/scitiff-26.1.0-py3-none-any.whl
+  name: scitiff
+  version: 26.1.0
+  sha256: 816ec1d90feeacc5e4ebba136c4d42833e3566a480c4d6087944381139c0cbb1
+  requires_dist:
+  - scipp>=24.11.0
+  - tifffile>=2024.7.2
+  - jsonschema>=4.23.0
+  - pydantic>=2.11
+  - pytest>=8.0 ; extra == 'test'
+  - textual ; extra == 'gui'
+  requires_python: '>=3.11'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/secretstorage-3.4.1-py312h7900ff3_0.conda
   sha256: 021c855a26b670bf0d437a9888ea8e302a454a7d1abd08d0df3b91d2b9b22769
   md5: 1b7706e1fb4e1c6cdb6eab38d69b2fc0
@@ -10129,6 +10150,44 @@ packages:
   - pkg:pypi/terminado?source=hash-mapping
   size: 24749
   timestamp: 1766513766867
+- pypi: https://files.pythonhosted.org/packages/ee/fe/80250dc06cd4a3a5afe7059875a8d53e97a78528c5dd9ea8c3f981fb897a/tifffile-2026.2.24-py3-none-any.whl
+  name: tifffile
+  version: 2026.2.24
+  sha256: 38ef6258c2bd8dd3551c7480c6d75a36c041616262e6cd55a50dd16046b71863
+  requires_dist:
+  - numpy
+  - imagecodecs>=2025.11.11 ; extra == 'codecs'
+  - defusedxml ; extra == 'xml'
+  - lxml ; extra == 'xml'
+  - zarr>=3.1.5 ; extra == 'zarr'
+  - fsspec ; extra == 'zarr'
+  - kerchunk ; extra == 'zarr'
+  - matplotlib ; extra == 'plot'
+  - imagecodecs>=2025.11.11 ; extra == 'all'
+  - matplotlib ; extra == 'all'
+  - defusedxml ; extra == 'all'
+  - lxml ; extra == 'all'
+  - zarr>=3.1.5 ; extra == 'all'
+  - fsspec ; extra == 'all'
+  - kerchunk ; extra == 'all'
+  - cmapfile ; extra == 'test'
+  - czifile ; extra == 'test'
+  - dask ; extra == 'test'
+  - defusedxml ; extra == 'test'
+  - fsspec ; extra == 'test'
+  - imagecodecs ; extra == 'test'
+  - kerchunk ; extra == 'test'
+  - lfdfiles ; extra == 'test'
+  - lxml ; extra == 'test'
+  - ndtiff ; extra == 'test'
+  - oiffile ; extra == 'test'
+  - psdtags ; extra == 'test'
+  - pytest ; extra == 'test'
+  - requests ; extra == 'test'
+  - roifile ; extra == 'test'
+  - xarray ; extra == 'test'
+  - zarr>=3.1.5 ; extra == 'test'
+  requires_python: '>=3.11'
 - conda: https://conda.anaconda.org/conda-forge/noarch/tinycss2-1.4.0-pyhd8ed1ab_0.conda
   sha256: cad582d6f978276522f84bd209a5ddac824742fe2d452af6acf900f8650a73a2
   md5: f1acf5fdefa8300de697982bcb1761c9

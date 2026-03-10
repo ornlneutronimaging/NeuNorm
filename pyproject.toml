@@ -32,6 +32,7 @@ dependencies = [
   "scipy>=1.11",
   # Scipp for labeled multi-dimensional data
   "scipp>=25.8.0",
+  "scitiff>=26.1",
   # Data I/O
   "h5py>=3.0",
   "pillow",    # TIFF I/O
