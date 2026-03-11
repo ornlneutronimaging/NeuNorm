@@ -94,8 +94,22 @@ def normalize_transmission(
     else:
         ob_corrected = ob
 
-    # Normalize (scipp auto-propagates variance)
-    transmission = sample_corrected / ob_corrected
+    # Normalize
+    if sample_corrected.dims == ob_corrected.dims:
+        transmission = sample_corrected / ob_corrected
+    else:
+        # Need to broadcast to match dimensions
+        ob_corrected_broadcast = ob_corrected.copy()
+        ob_var = ob_corrected_broadcast.variances.copy() if ob_corrected_broadcast.variances is not None else None
+        ob_corrected_broadcast.variances = None
+        transmission = sample_corrected / ob_corrected_broadcast
+        if ob_var is not None and sample_corrected.variances is not None:
+            # Var(T) = (T^2) * (Var(Sample)/Sample^2 + Var(OB)/OB^2)
+            # which is equivalent to:
+            # Var(T) = (Var(Sample) / OB^2) + (Sample^2 * Var(OB) / OB^4)
+            transmission.variances = (sample_corrected.variances / ob_corrected_broadcast.values**2) + (
+                sample_corrected.values**2 * ob_var / ob_corrected_broadcast.values**4
+            )
 
     logger.success("✓ Transmission normalized")
 

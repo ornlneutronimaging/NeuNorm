@@ -39,10 +39,12 @@ def test_normalize_transmission_basic():
     assert transmission.unit == sc.units.one
 
     # Values should be ~0.8
-    np.testing.assert_allclose(transmission.values, 0.8, rtol=0.01)
+    np.testing.assert_allclose(transmission.values, 0.8)
 
-    # Variance should be propagated
-    assert transmission.variances is not None
+    # variance should be propagated
+    # Var(T) = (T^2) * (Var(Sample)/Sample^2 + Var(OB)/OB^2)
+    # Var = (80/100)^2 * (1/80 + 1/100) = 0.0144
+    np.testing.assert_allclose(transmission.variances, 0.0144)
 
 
 def test_normalize_transmission_with_masks():
@@ -141,3 +143,36 @@ def test_normalize_transmission_with_proton_charge():
 
     # Variance should include systematic from proton charge
     assert transmission.variances is not None
+
+
+def test_normalize_transmission_2d_ob():
+    """Test basic transmission normalization: T = Sample / OB with an averaged 2D OB"""
+    from neunorm.processing.normalizer import normalize_transmission
+
+    # Create simple sample and OB histograms
+    sample_data = np.full((10, 5, 5), 80.0)  # 80% transmission
+    ob_data = np.full((5, 5), 100.0)
+
+    sample = sc.DataArray(
+        data=sc.array(dims=["energy", "x", "y"], values=sample_data, unit="counts", dtype="float64"),
+        coords={"energy": sc.linspace("energy", 1, 100, num=11, unit="eV")},
+    )
+    sample.variances = sample.values.copy()  # Poisson
+
+    ob = sc.DataArray(
+        data=sc.array(dims=["x", "y"], values=ob_data, unit="counts", dtype="float64"),
+    )
+    ob.variances = ob.values.copy()
+
+    transmission = normalize_transmission(sample, ob)
+
+    # Should be dimensionless
+    assert transmission.unit == sc.units.one
+
+    # Values should be ~0.8
+    np.testing.assert_allclose(transmission.values, 0.8)
+
+    # variance should be propagated
+    # Var(T) = (T^2) * (Var(Sample)/Sample^2 + Var(OB)/OB^2)
+    # Var = (80/100)^2 * (1/80 + 1/100) = 0.0144
+    np.testing.assert_allclose(transmission.variances, 0.0144)
