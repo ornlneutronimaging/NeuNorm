@@ -1,6 +1,6 @@
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 import scipp as sc
@@ -19,9 +19,9 @@ from neunorm.tof.pixel_detector import detect_dead_pixels
 
 
 def run_mars_ccd_pipeline(  # noqa: C901
-    sample_paths: list[Path],
-    ob_paths: list[Path],
-    dark_paths: list[Path],
+    sample_paths: Sequence[str | Path],
+    ob_paths: Sequence[str | Path],
+    dark_paths: Sequence[str | Path],
     output_path: Path,
     roi: Optional[tuple] = None,
     gamma_filter: bool = True,
@@ -117,7 +117,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
             # add combined mask back in with name "scitiff-mask"
             transmission.masks["scitiff-mask"] = sc.array(dims=transmission.dims, values=combined_mask, dtype=bool)
 
-        write_tiff_stack(output_path.with_suffix(".tiff"), transmission, metadata=metadata, daqmetadata=daqmetadata)
+        write_tiff_stack(output_path, transmission, metadata=metadata, daqmetadata=daqmetadata)
     else:
         raise ValueError(f"Unsupported output file format: {output_path.suffix}")
 

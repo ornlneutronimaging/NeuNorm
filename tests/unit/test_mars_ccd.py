@@ -22,8 +22,10 @@ class TestMarsCCDPipeline:
         cls.ob_paths = []
         cls.dark_paths = []
 
+        cls._tmpdir = tempfile.TemporaryDirectory(delete=False)
+        tmp_dir = Path(cls._tmpdir.name)
+
         # create 5 sample tiffs with values 81-85 and metadata.
-        sample_temp_name = tempfile.NamedTemporaryFile(prefix="sample_", suffix="_{:03}.tiff")
         for i in range(5):
             data = np.full((32, 32), 81 + i, dtype=np.float32)
             img = Image.fromarray(data)
@@ -31,12 +33,11 @@ class TestMarsCCDPipeline:
             exif[65027] = "ExposureTime:30.000000"
             exif[65022] = f"RunNo:{1000 + i}"
             exif[65025] = "ModelStr:DW936_BV"
-            filename = sample_temp_name.name.format(i)
+            filename = tmp_dir / f"sample_{i:03}.tiff"
             img.save(filename, exif=exif)
             cls.sample_paths.append(filename)
 
         # create 5 sample tiffs with values 81-85 and metadata. These have a dead pixel and a gamma spike.
-        sample_temp_name = tempfile.NamedTemporaryFile(prefix="sample_", suffix="_{:03}.tiff")
         for i in range(5):
             data = np.full((32, 32), 81 + i, dtype=np.float32)
             # add dead pixel at (22, 8)
@@ -48,33 +49,30 @@ class TestMarsCCDPipeline:
             exif[65027] = "ExposureTime:30.000000"
             exif[65022] = f"RunNo:{1000 + i}"
             exif[65025] = "ModelStr:DW936_BV"
-            filename = sample_temp_name.name.format(i)
+            filename = tmp_dir / f"sample_bad_{i:03}.tiff"
             img.save(filename, exif=exif)
             cls.sample_paths_bad_pixels.append(filename)
 
         # create 3 OB tiffs with values 99, 100, 101 and metadata
-        ob_temp_name = tempfile.NamedTemporaryFile(prefix="ob_", suffix="_{:03}.tiff")
         for i in range(3):
             data = np.full((32, 32), 99 + i, dtype=np.float32)
             img = Image.fromarray(data)
-            filename = ob_temp_name.name.format(i)
+            filename = tmp_dir / f"ob_{i:03}.tiff"
             img.save(filename, exif=exif)
             cls.ob_paths.append(filename)
 
         # create 2 dark tiffs with values 4 and 6 and metadata
-        dark_temp_name = tempfile.NamedTemporaryFile(prefix="dark_", suffix="_{:03}.tiff")
         for i in range(2):
             data = np.full((32, 32), 4 + 2 * i, dtype=np.float32)
             img = Image.fromarray(data)
-            filename = dark_temp_name.name.format(i)
+            filename = tmp_dir / f"dark_{i:03}.tiff"
             img.save(filename, exif=exif)
             cls.dark_paths.append(filename)
 
     @classmethod
     def teardown_class(cls):
         """Remove all temp test files after all tests in this class have run."""
-        for path in cls.sample_paths + cls.sample_paths_bad_pixels + cls.ob_paths + cls.dark_paths:
-            Path(path).unlink(missing_ok=True)
+        cls._tmpdir.cleanup()
 
     def test_mars_ccd_pipeline_hdf5(self):
         """
@@ -117,11 +115,11 @@ class TestMarsCCDPipeline:
                 np.testing.assert_equal(hf["masks/dead"], np.zeros((32, 32), dtype=bool))
                 # Check metadata
                 assert "metadata/sample_paths" in hf
-                np.testing.assert_equal(hf["metadata/sample_paths"].asstr()[:], self.sample_paths)
+                np.testing.assert_equal(hf["metadata/sample_paths"].asstr()[:], [str(p) for p in self.sample_paths])
                 assert "metadata/ob_paths" in hf
-                np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[:], self.ob_paths)
+                np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[:], [str(p) for p in self.ob_paths])
                 assert "metadata/dark_paths" in hf
-                np.testing.assert_equal(hf["metadata/dark_paths"].asstr()[:], self.dark_paths)
+                np.testing.assert_equal(hf["metadata/dark_paths"].asstr()[:], [str(p) for p in self.dark_paths])
                 assert "metadata/gamma_filter_applied" in hf
                 np.testing.assert_equal(hf["metadata/gamma_filter_applied"][()], True)
                 assert "metadata/processing_timestamp" in hf
@@ -219,10 +217,10 @@ class TestMarsCCDPipeline:
             np.testing.assert_allclose(transmission.values[i], expected_value)
 
         # check that the variances are higher for the gamma spike pixel and near zero for the dead pixel
-        approximate_varainces = np.full((5, 20, 20), 0.011)
-        approximate_varainces[:, 22 - 5, 8 - 5] = 0  # dead pixel should have almost zero variance
-        approximate_varainces[:, 7 - 5, 19 - 5] = 0.114  # gamma spike pixel should have higher variance
-        np.testing.assert_allclose(transmission.variances, approximate_varainces, atol=0.002)
+        approximate_variances = np.full((5, 20, 20), 0.011)
+        approximate_variances[:, 22 - 5, 8 - 5] = 0  # dead pixel should have almost zero variance
+        approximate_variances[:, 7 - 5, 19 - 5] = 0.114  # gamma spike pixel should have higher variance
+        np.testing.assert_allclose(transmission.variances, approximate_variances, atol=0.002)
 
         # The mask should only have the dead pixel masked
         expected_dead_pixel_mask = np.zeros((20, 20), dtype=bool)
