@@ -2,6 +2,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import scipp as sc
 from loguru import logger
 
@@ -17,7 +18,7 @@ from neunorm.processing.roi_clipper import apply_roi
 from neunorm.tof.pixel_detector import detect_dead_pixels
 
 
-def run_mars_ccd_pipeline(
+def run_mars_ccd_pipeline(  # noqa: C901
     sample_paths: list[Path],
     ob_paths: list[Path],
     dark_paths: list[Path],
@@ -88,12 +89,35 @@ def run_mars_ccd_pipeline(
         rename_map = {}
         if "N_image" in transmission.dims:
             rename_map["N_image"] = "z"  # TIFF stacks typically use 'z' for the stack dimension
-        if "tof_bin_edges" in transmission.dims:
-            rename_map["tof_bin_edges"] = "t"  # TIFF stacks typically use 't' for the time dimension
         if rename_map:
             transmission = transmission.rename_dims(rename_map)
 
-        write_tiff_stack(output_path.with_suffix(".tiff"), transmission)
+        model = "Unknown"
+        if "ModelStr" in sample.coords:
+            model = sample.coords["ModelStr"].value
+        elif "Model" in sample.coords:
+            model = sample.coords["Model"].value
+
+        daqmetadata = {
+            "facility": "HFIR",
+            "instrument": "MARS",
+            "detector_type": model,
+            "source_type": "neutron",
+        }
+
+        # Combine all masks and broadcast to the shape of the transmission data.
+        # Mask must be same shape as the image data for scitiff.
+        if transmission.masks:
+            combined_mask = np.zeros_like(transmission.values, dtype=bool)
+            for mask in transmission.masks.values():
+                combined_mask |= mask.values
+
+            # remove other masks
+            transmission.masks.clear()
+            # add combined mask back in with name "scitiff-mask"
+            transmission.masks["scitiff-mask"] = sc.array(dims=transmission.dims, values=combined_mask, dtype=bool)
+
+        write_tiff_stack(output_path.with_suffix(".tiff"), transmission, metadata=metadata, daqmetadata=daqmetadata)
     else:
         raise ValueError(f"Unsupported output file format: {output_path.suffix}")
 

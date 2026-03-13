@@ -3,103 +3,228 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import scipp as sc
 from PIL import Image
+from scitiff.io import load_scitiff
+
+from neunorm import __version__
+from neunorm.pipelines.mars_ccd import run_mars_ccd_pipeline
 
 
-def generate_test_data():
-    """Create tiff files for testing"""
-    sample_paths = []
-    ob_paths = []
-    dark_paths = []
+class TestMarsCCDPipeline:
+    """Tests for the MARS CCD pipeline."""
 
-    # create 5 sample tiffs with values 81-85 and metadata
-    sample_temp_name = tempfile.NamedTemporaryFile(prefix="sample_", suffix="_{:03}.tiff")
-    for i in range(5):
-        data = np.full((32, 32), 81 + i, dtype=np.float32)
-        img = Image.fromarray(data)
-        exif = img.getexif()
-        exif[65027] = "ExposureTime:30.000000"
-        exif[65022] = f"RunNo:{1000 + i}"
-        filename = sample_temp_name.name.format(i)
-        img.save(filename, exif=exif)
-        sample_paths.append(filename)
+    @classmethod
+    def setup_class(cls):
+        """Create tiff files for testing once for all tests in this class."""
+        cls.sample_paths = []
+        cls.sample_paths_bad_pixels = []
+        cls.ob_paths = []
+        cls.dark_paths = []
 
-    # create 3 OB tiffs with values 99,100,101 and metadata
-    ob_temp_name = tempfile.NamedTemporaryFile(prefix="ob_", suffix="_{:03}.tiff")
-    for i in range(3):
-        data = np.full((32, 32), 99 + i, dtype=np.float32)
-        img = Image.fromarray(data)
-        filename = ob_temp_name.name.format(i)
-        img.save(filename, exif=exif)
-        ob_paths.append(filename)
+        # create 5 sample tiffs with values 81-85 and metadata.
+        sample_temp_name = tempfile.NamedTemporaryFile(prefix="sample_", suffix="_{:03}.tiff")
+        for i in range(5):
+            data = np.full((32, 32), 81 + i, dtype=np.float32)
+            img = Image.fromarray(data)
+            exif = img.getexif()
+            exif[65027] = "ExposureTime:30.000000"
+            exif[65022] = f"RunNo:{1000 + i}"
+            exif[65025] = "ModelStr:DW936_BV"
+            filename = sample_temp_name.name.format(i)
+            img.save(filename, exif=exif)
+            cls.sample_paths.append(filename)
 
-    # create 2 dark tiffs with values 4 and 6 and metadata
-    dark_temp_name = tempfile.NamedTemporaryFile(prefix="dark_", suffix="_{:03}.tiff")
-    for i in range(2):
-        data = np.full((32, 32), 4 + 2 * i, dtype=np.float32)
-        img = Image.fromarray(data)
-        filename = dark_temp_name.name.format(i)
-        img.save(filename, exif=exif)
-        dark_paths.append(filename)
+        # create 5 sample tiffs with values 81-85 and metadata. These have a dead pixel and a gamma spike.
+        sample_temp_name = tempfile.NamedTemporaryFile(prefix="sample_", suffix="_{:03}.tiff")
+        for i in range(5):
+            data = np.full((32, 32), 81 + i, dtype=np.float32)
+            # add dead pixel at (22, 8)
+            data[22, 8] = 0
+            # add pixel for gamma spike at (7, 19)
+            data[7, 19] = 1000
+            img = Image.fromarray(data)
+            exif = img.getexif()
+            exif[65027] = "ExposureTime:30.000000"
+            exif[65022] = f"RunNo:{1000 + i}"
+            exif[65025] = "ModelStr:DW936_BV"
+            filename = sample_temp_name.name.format(i)
+            img.save(filename, exif=exif)
+            cls.sample_paths_bad_pixels.append(filename)
 
-    return sample_paths, ob_paths, dark_paths
+        # create 3 OB tiffs with values 99, 100, 101 and metadata
+        ob_temp_name = tempfile.NamedTemporaryFile(prefix="ob_", suffix="_{:03}.tiff")
+        for i in range(3):
+            data = np.full((32, 32), 99 + i, dtype=np.float32)
+            img = Image.fromarray(data)
+            filename = ob_temp_name.name.format(i)
+            img.save(filename, exif=exif)
+            cls.ob_paths.append(filename)
 
+        # create 2 dark tiffs with values 4 and 6 and metadata
+        dark_temp_name = tempfile.NamedTemporaryFile(prefix="dark_", suffix="_{:03}.tiff")
+        for i in range(2):
+            data = np.full((32, 32), 4 + 2 * i, dtype=np.float32)
+            img = Image.fromarray(data)
+            filename = dark_temp_name.name.format(i)
+            img.save(filename, exif=exif)
+            cls.dark_paths.append(filename)
 
-def test_mars_ccd_pipeline():
-    from neunorm import __version__
-    from neunorm.pipelines.mars_ccd import run_mars_ccd_pipeline
+    @classmethod
+    def teardown_class(cls):
+        """Remove all temp test files after all tests in this class have run."""
+        for path in cls.sample_paths + cls.sample_paths_bad_pixels + cls.ob_paths + cls.dark_paths:
+            Path(path).unlink(missing_ok=True)
 
-    sample_paths, ob_paths, dark_paths = generate_test_data()
+    def test_mars_ccd_pipeline_hdf5(self):
+        """
+        Test the MARS CCD pipeline end-to-end with HDF5 output and verify contents.
+        """
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
 
-    with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=False) as f:
-        run_mars_ccd_pipeline(
-            sample_paths=sample_paths, ob_paths=ob_paths, dark_paths=dark_paths, output_path=Path(f.name)
-        )
+            run_mars_ccd_pipeline(
+                sample_paths=self.sample_paths,
+                ob_paths=self.ob_paths,
+                dark_paths=self.dark_paths,
+                output_path=output_path,
+            )
 
-        assert Path(f.name).exists()
+            assert output_path.exists()
 
-        # Read back the file and check contents
-        with h5py.File(f.name, "r") as f:
-            # Check transmission data
-            assert "transmission" in f
-            assert f["transmission"].shape == (5, 32, 32)
-            # check that transmission values are correct based on the formula
-            # T = (S - AVERAGE(D)) / (AVERAGE(OB) - AVERAGE(D))
-            for i in range(5):
-                np.testing.assert_allclose(f["transmission"][i], (81 + i - 5) / (100 - 5))
-            assert f["transmission"].attrs["units"] == "dimensionless"
-            assert f["transmission"].dtype == np.float32
-            # Check uncertainty data exists and is reasonable
-            assert "uncertainty" in f
-            assert f["uncertainty"].dtype == np.float32
-            np.testing.assert_allclose(f["uncertainty"], 0.1, rtol=0.15)
-            # Check coordinates
-            assert "x" in f
-            np.testing.assert_equal(f["x"], np.arange(32))
-            assert "y" in f
-            np.testing.assert_equal(f["y"], np.arange(32))
-            # Check masks
-            assert "masks/dead" in f
-            np.testing.assert_equal(f["masks/dead"], np.zeros((32, 32), dtype=bool))
-            # Check metadata
-            assert "metadata/sample_paths" in f
-            np.testing.assert_equal(f["metadata/sample_paths"].asstr()[:], sample_paths)
-            assert "metadata/ob_paths" in f
-            np.testing.assert_equal(f["metadata/ob_paths"].asstr()[:], ob_paths)
-            assert "metadata/dark_paths" in f
-            np.testing.assert_equal(f["metadata/dark_paths"].asstr()[:], dark_paths)
-            assert "metadata/gamma_filter_applied" in f
-            np.testing.assert_equal(f["metadata/gamma_filter_applied"][()], True)
-            assert "metadata/processing_timestamp" in f
-            assert "metadata/version" in f
-            np.testing.assert_equal(f["metadata/version"].asstr()[()], __version__)
-            assert "metadata/roi_applied" not in f  # ROI not applied in this test
-            # check metadata from files, RunNo and ExposureTime
-            assert "RunNo" in f
-            np.testing.assert_equal(f["RunNo"][:], [1000, 1001, 1002, 1003, 1004])
-            assert "ExposureTime" in f
-            np.testing.assert_equal(f["ExposureTime"][:], [30] * 5)
+            # Read back the file and check contents
+            with h5py.File(output_path, "r") as hf:
+                # Check transmission data
+                assert "transmission" in hf
+                assert hf["transmission"].shape == (5, 32, 32)
+                # check that transmission values are correct based on the formula
+                # T = (S - AVERAGE(D)) / (AVERAGE(OB) - AVERAGE(D))
+                for i in range(5):
+                    np.testing.assert_allclose(hf["transmission"][i], (81 + i - 5) / (100 - 5))
+                assert hf["transmission"].attrs["units"] == "dimensionless"
+                assert hf["transmission"].dtype == np.float32
+                # Check uncertainty data exists and is reasonable
+                assert "uncertainty" in hf
+                assert hf["uncertainty"].dtype == np.float32
+                np.testing.assert_allclose(hf["uncertainty"], 0.1, rtol=0.15)
+                # Check coordinates
+                assert "x" in hf
+                np.testing.assert_equal(hf["x"], np.arange(32))
+                assert "y" in hf
+                np.testing.assert_equal(hf["y"], np.arange(32))
+                # Check masks
+                assert "masks/dead" in hf
+                np.testing.assert_equal(hf["masks/dead"], np.zeros((32, 32), dtype=bool))
+                # Check metadata
+                assert "metadata/sample_paths" in hf
+                np.testing.assert_equal(hf["metadata/sample_paths"].asstr()[:], self.sample_paths)
+                assert "metadata/ob_paths" in hf
+                np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[:], self.ob_paths)
+                assert "metadata/dark_paths" in hf
+                np.testing.assert_equal(hf["metadata/dark_paths"].asstr()[:], self.dark_paths)
+                assert "metadata/gamma_filter_applied" in hf
+                np.testing.assert_equal(hf["metadata/gamma_filter_applied"][()], True)
+                assert "metadata/processing_timestamp" in hf
+                assert "metadata/version" in hf
+                np.testing.assert_equal(hf["metadata/version"].asstr()[()], __version__)
+                assert "metadata/roi_applied" not in hf  # ROI not applied in this test
+                # check metadata from files, RunNo and ExposureTime
+                assert "RunNo" in hf
+                np.testing.assert_equal(hf["RunNo"][:], [1000, 1001, 1002, 1003, 1004])
+                assert "ExposureTime" in hf
+                np.testing.assert_equal(hf["ExposureTime"][:], [30] * 5)
 
-    # cleanup temp test files
-    for path in sample_paths + ob_paths + dark_paths:
-        Path(path).unlink()
+    def test_mars_ccd_pipeline_roi_and_tiff(self):
+        """
+        Test the MARS CCD pipeline with ROI applied and TIFF output, then verify contents.
+        """
+        with tempfile.NamedTemporaryFile(suffix=".tiff", delete=True) as f:
+            output_path = Path(f.name)
+
+            run_mars_ccd_pipeline(
+                sample_paths=self.sample_paths,
+                ob_paths=self.ob_paths,
+                dark_paths=self.dark_paths,
+                output_path=output_path,
+                roi=(5, 5, 25, 25),
+            )
+
+            assert output_path.exists()
+
+            # Load back the file to verify contents
+            dg = load_scitiff(output_path)
+
+        assert isinstance(dg, sc.DataGroup)
+        assert "image" in dg
+        assert "daq" in dg
+        assert "extra" in dg
+
+        # Check image data and metadata
+        image = dg["image"]
+        assert image.dtype == sc.DType.float32
+        assert image.dims == ("z", "y", "x")
+        assert image.values.shape == (5, 20, 20)
+        # check that transmission values are correct based on the formula
+        # T = (S - AVERAGE(D)) / (AVERAGE(OB) - AVERAGE(D))
+        for i in range(5):
+            np.testing.assert_allclose(image.values[i], (81 + i - 5) / (100 - 5))
+        # Check uncertainty data exists and is reasonable
+        np.testing.assert_allclose(image.variances, 0.011, rtol=0.15)
+        assert "scitiff-mask" in image.masks
+        assert image.masks["scitiff-mask"].shape == (5, 20, 20)
+        np.testing.assert_array_equal(image.masks["scitiff-mask"].values, False)
+
+        # Check DAQ metadata
+        daq = dg["daq"]  # this is type scitiff.DAQMetadata
+        assert daq.facility == "HFIR"
+        assert daq.instrument == "MARS"
+        assert daq.detector_type == "DW936_BV"
+        assert daq.source_type == "neutron"
+
+        # Check extra metadata
+        extra = dg["extra"]
+        assert len(extra["sample_paths"].values) == 5
+        assert len(extra["ob_paths"].values) == 3
+        assert len(extra["dark_paths"].values) == 2
+        assert extra["gamma_filter_applied"]
+
+        assert "processing_timestamp" in extra
+        np.testing.assert_equal(extra["roi_applied"].value, (5, 5, 25, 25))
+        assert extra["version"] == __version__
+
+    def test_mars_ccd_pipeline_dark_gamma_spike_pixels(self):
+        """Test that the dark and gamma spike pixels are correctly handled.
+
+        For this test just check the returned DataArray instead of looking at the output file.
+        """
+
+        with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+            output_path = Path(f.name)
+
+            transmission = run_mars_ccd_pipeline(
+                sample_paths=self.sample_paths_bad_pixels,
+                ob_paths=self.ob_paths,
+                dark_paths=self.dark_paths,
+                output_path=output_path,
+                roi=(5, 5, 25, 25),
+            )
+
+            assert output_path.exists()
+
+        assert transmission.shape == (5, 20, 20)
+        for i in range(5):
+            expected_value = np.full((20, 20), (81 + i - 5) / (100 - 5))
+            expected_value[22 - 5, 8 - 5] = 0  # dead pixel should be zero after dark subtraction and normalization
+            # gamma spike should be replaced with the same values from that image
+            np.testing.assert_allclose(transmission.values[i], expected_value)
+
+        # check that the variances are higher for the gamma spike pixel and near zero for the dead pixel
+        approximate_varainces = np.full((5, 20, 20), 0.011)
+        approximate_varainces[:, 22 - 5, 8 - 5] = 0  # dead pixel should have almost zero variance
+        approximate_varainces[:, 7 - 5, 19 - 5] = 0.114  # gamma spike pixel should have higher variance
+        np.testing.assert_allclose(transmission.variances, approximate_varainces, atol=0.002)
+
+        # The mask should only have the dead pixel masked
+        expected_dead_pixel_mask = np.zeros((20, 20), dtype=bool)
+        expected_dead_pixel_mask[22 - 5, 8 - 5] = True
+        np.testing.assert_array_equal(transmission.masks["dead_pixels"].values, expected_dead_pixel_mask)
