@@ -47,7 +47,7 @@ def apply_gamma_filter(
     if threshold_sigma < 0:
         raise ValueError("threshold_sigma must be >= 0.")
 
-    logger.debug("Applying gamma filter: threshold_sigma={}, kernel_size={}", threshold_sigma, kernel_size)
+    logger.info("Applying gamma filter: threshold_sigma={}, kernel_size={}", threshold_sigma, kernel_size)
 
     # Apply filter over spatial axes x/y
     ndim = data.data.ndim
@@ -83,7 +83,7 @@ def apply_gamma_filter(
     outlier_mask = values > local_threshold
     outlier_count = np.sum(outlier_mask)
 
-    logger.debug("Identified {} outliers in data of shape {}", outlier_count, values.shape)
+    logger.info("Identified {} outliers in data of shape {}", outlier_count, values.shape)
 
     # Replace outliers with local median
     filtered_values = values.copy()

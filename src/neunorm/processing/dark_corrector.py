@@ -39,15 +39,15 @@ def subtract_dark(data: sc.DataArray, dark: sc.DataArray, clip_negative: bool = 
     if dark.dims == data.dims:
         # 3D dark (per-frame)
         corr = data - dark
-    elif dark.dims == ("x", "y") and set(dark.dims).issubset(set(data.dims)):
-        # 2D dark (averaged) - need to create a 3D version by repeating missing dimension.
-        dim_name = set(data.dims) - set(dark.dims)
-        if len(dim_name) != 1:
-            raise ValueError("Data has multiple dimensions not in dark, cannot determine which to repeat along")
-        dim_name = dim_name.pop()
+    elif set(dark.dims).issubset(set(data.dims)):
         # Broadcast dark to match data dimensions.
         # Can't use sc.broadcast directly because it doesn't handle variances, so we need to do it manually.
         dark_copy = dark.copy()
+        if tuple(dark_copy.dims) != tuple(data.dims[-len(dark_copy.dims) :]):
+            raise ValueError(
+                f"Dark current dims {dark_copy.dims} do not match the trailing dims {data.dims}. "
+                "Please reorder your dark current array to match data dimensions."
+            )
         var = dark_copy.variances.copy() if dark_copy.variances is not None else None
         dark_copy.variances = None
         corr = data - dark_copy
@@ -62,5 +62,10 @@ def subtract_dark(data: sc.DataArray, dark: sc.DataArray, clip_negative: bool = 
     else:
         negative_mask = corr.values < 0
         corr.masks["negative"] = sc.array(dims=corr.dims, values=negative_mask, dtype=bool)
+
+    # copy dropped unaligned coordinates from input
+    for coord in data.coords:
+        if not data.coords[coord].aligned:
+            corr.coords[coord] = data.coords[coord]
 
     return corr

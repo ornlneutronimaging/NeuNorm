@@ -111,6 +111,11 @@ def normalize_transmission(
                 sample_corrected.values**2 * ob_var / ob_corrected_broadcast.values**4
             )
 
+    # copy dropped unaligned coordinates from input
+    for coord in sample.coords:
+        if not sample.coords[coord].aligned:
+            transmission.coords[coord] = sample.coords[coord]
+
     logger.success("✓ Transmission normalized")
 
     return transmission
