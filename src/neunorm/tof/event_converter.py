@@ -138,3 +138,37 @@ def convert_events_to_histogram(
     logger.success(f"✓ Histogram created: shape={hist_3d.shape}")
 
     return hist_3d
+
+
+def convert_events_to_2d_histogram(events: EventData, detector_shape: tuple[int, int]) -> sc.DataArray:
+    """Convert events to 2D spatial histogram (no TOF).
+
+    Parameters
+    ----------
+    events : EventData
+        Event data (tof, x, y arrays)
+    detector_shape : tuple[int, int]
+        (x_bins, y_bins) defining the spatial dimensions of the histogram
+
+    Returns
+    -------
+    sc.DataArray
+        2D histogram (x, y) with counts
+    """
+
+    x_bins, y_bins = detector_shape
+    x_edges = sc.arange("x", 0, x_bins + 1, unit=sc.units.dimensionless)
+    y_edges = sc.arange("y", 0, y_bins + 1, unit=sc.units.dimensionless)
+
+    events_2d = sc.DataArray(
+        data=sc.ones(dims=["event"], shape=[len(events)], unit="counts", dtype="float32"),
+        coords={
+            "x": sc.array(dims=["event"], values=events.x, unit=""),
+            "y": sc.array(dims=["event"], values=events.y, unit=""),
+        },
+    )
+
+    hist_2d = events_2d.hist(x=x_edges, y=y_edges)
+
+    # Attach Poisson variance
+    return attach_poisson_variance(hist_2d)

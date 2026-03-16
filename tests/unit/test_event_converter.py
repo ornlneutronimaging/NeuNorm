@@ -173,3 +173,37 @@ def test_convert_events_with_chunking():
     # Total counts should equal number of events
     total_counts = hist.values.sum()
     assert total_counts == n_events
+
+
+def test_convert_events_to_2d_histogram():
+    """Test conversion to 2D histogram. TOF information is ignored in this case."""
+    from neunorm.data_models.core import EventData
+    from neunorm.tof.event_converter import convert_events_to_2d_histogram
+
+    # Create simple EventData
+    events = EventData(
+        tof=np.array([2500, 5000, 7500] * 10, dtype=np.int64),  # This information is ignored for 2D histogram
+        x=np.array([5] * 30, dtype=np.int32),  # All at pixel (5, 5)
+        y=np.array([5] * 30, dtype=np.int32),
+        file_path=Path("test.h5"),
+        total_events=30,
+    )
+
+    # Convert to 2D histogram
+    hist = convert_events_to_2d_histogram(events, detector_shape=(16, 16))
+
+    # check dims
+    assert hist.dims == ("x", "y")
+    assert hist.unit == "counts"
+
+    # Verify histogram shape
+    assert hist.shape == (16, 16)
+
+    # Verify counts
+    expected_counts = np.zeros((16, 16), dtype=np.float32)
+    expected_counts[5, 5] = 30  # All events at pixel (5, 5)
+    np.testing.assert_array_equal(hist.values, expected_counts)
+
+    # Variance should equal counts (Poisson)
+    # Events at pixel (5,5) should have counts = 30 total
+    np.testing.assert_array_equal(hist.variances, expected_counts)
