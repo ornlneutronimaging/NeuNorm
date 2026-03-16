@@ -1,3 +1,6 @@
+"""
+MARS CCD/CMOS normalization pipeline."""
+
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence
@@ -29,7 +32,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
     """Execute MARS CCD/CMOS normalization pipeline.
 
     Pipeline Steps (10 total)
-    - Load TIFF/FITS (sample, OB, dark)
+    - Load TIFF/FITS (sample, OB, dark) TODO: support FITS
     - Run combine (optional) TODO!
     - ROI clip (optional)
     - Average dark/OB
@@ -37,8 +40,32 @@ def run_mars_ccd_pipeline(  # noqa: C901
     - Gamma filtering (filters/gamma_filter.py)
     - Dark correction (processing/dark_corrector.py)
     - Normalization (existing processing/normalizer.py)
-    - Error propagation (existing processing/uncertainty_calculator.py)
     - Output (exporters/hdf5_writer.py, exporters/tiff_writer.py)
+
+    Parameters
+    ----------
+    sample_paths : Sequence[str | Path]
+        List of paths to sample TIFF files
+    ob_paths : Sequence[str | Path]
+        List of paths to open beam TIFF files
+    dark_paths : Sequence[str | Path]
+        List of paths to dark current TIFF files
+    output_path : Path
+        Path to save the output file (HDF5 or TIFF)
+    roi : Optional[tuple]
+        Region of interest to apply (x_start, y_start, x_end, y_end)
+    gamma_filter : bool
+        Whether to apply gamma filtering to the sample data (default: True)
+
+    Notes
+    -----
+    This function writes the normalized transmission data to disk in either HDF5 or TIFF format,
+    depending on the file extension of `output_path`. Metadata and detector masks are included in the output.
+
+    Returns
+    -------
+    sc.DataArray
+        Final normalized transmission DataArray with metadata and masks
     """
 
     # Load data
