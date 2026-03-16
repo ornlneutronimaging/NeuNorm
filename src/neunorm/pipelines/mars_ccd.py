@@ -30,7 +30,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
 
     Pipeline Steps (10 total)
     - Load TIFF/FITS (sample, OB, dark)
-    - Run combine (optional)
+    - Run combine (optional) TODO!
     - ROI clip (optional)
     - Average dark/OB
     - Dead pixel detection (existing tof/pixel_detector.py)
