@@ -140,7 +140,9 @@ def convert_events_to_histogram(
     return hist_3d
 
 
-def convert_events_to_2d_histogram(events: EventData, detector_shape: tuple[int, int]) -> sc.DataArray:
+def convert_events_to_2d_histogram(
+    events: EventData, detector_shape: tuple[int, int], chunk_size: int = 500_000_000
+) -> sc.DataArray:
     """Convert events to 2D spatial histogram (no TOF).
 
     Parameters
@@ -149,6 +151,9 @@ def convert_events_to_2d_histogram(events: EventData, detector_shape: tuple[int,
         Event data (tof, x, y arrays)
     detector_shape : tuple[int, int]
         (x_bins, y_bins) defining the spatial dimensions of the histogram
+    chunk_size : int, optional
+        Events per chunk for processing (default: 500M)
+        Larger = faster but more memory
 
     Returns
     -------
@@ -160,15 +165,50 @@ def convert_events_to_2d_histogram(events: EventData, detector_shape: tuple[int,
     x_edges = sc.arange("x", 0, x_bins + 1, unit=sc.units.dimensionless)
     y_edges = sc.arange("y", 0, y_bins + 1, unit=sc.units.dimensionless)
 
-    events_2d = sc.DataArray(
-        data=sc.ones(dims=["event"], shape=[len(events)], unit="counts", dtype="float32"),
+    # Initialize accumulator histogram with zeros to enable chunked accumulation.
+    hist_2d = sc.DataArray(
+        data=sc.zeros(
+            dims=["x", "y"],
+            shape=[x_bins, y_bins],
+            unit="counts",
+            dtype="float32",
+        ),
         coords={
-            "x": sc.array(dims=["event"], values=events.x, unit=""),
-            "y": sc.array(dims=["event"], values=events.y, unit=""),
+            "x": x_edges,  # bin centers are implicit; store lower edges
+            "y": y_edges,
         },
     )
 
-    hist_2d = events_2d.hist(x=x_edges, y=y_edges)
+    n_events = len(events)
+    if n_events == 0:
+        # No events: just attach variance to the empty histogram and return.
+        return attach_poisson_variance(hist_2d)
+    # Process events in chunks to keep memory usage bounded.
+    for start in range(0, n_events, chunk_size):
+        end = min(start + chunk_size, n_events)
+        chunk_len = end - start
+        events_2d_chunk = sc.DataArray(
+            data=sc.ones(
+                dims=["event"],
+                shape=[chunk_len],
+                unit="counts",
+                dtype="float32",
+            ),
+            coords={
+                "x": sc.array(
+                    dims=["event"],
+                    values=events.x[start:end],
+                    unit="",
+                ),
+                "y": sc.array(
+                    dims=["event"],
+                    values=events.y[start:end],
+                    unit="",
+                ),
+            },
+        )
+        hist_2d_chunk = events_2d_chunk.hist(x=x_edges, y=y_edges)
+        hist_2d.data += hist_2d_chunk.data
 
     # Attach Poisson variance
     return attach_poisson_variance(hist_2d)
