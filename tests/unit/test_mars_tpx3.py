@@ -15,12 +15,12 @@ class TestMarsTPX3Pipeline:
 
     @classmethod
     def setup_class(cls):
-        """Create tiff files for testing once for all tests in this class."""
+        """Create TPX3-style HDF5 event files for testing once for all tests in this class."""
         cls.sample_paths = []
         cls.sample_paths_bad_pixels = []
         cls.ob_paths = []
 
-        cls._tmpdir = tempfile.TemporaryDirectory(delete=False)
+        cls._tmpdir = tempfile.TemporaryDirectory()
         tmp_dir = Path(cls._tmpdir.name)
 
         # for our test data we have 32x32 detector
@@ -28,7 +28,7 @@ class TestMarsTPX3Pipeline:
         y_values = np.tile(np.arange(32), (32, 1)).T.flatten()
         tofs = np.zeros(32 * 32, dtype=np.int64)  # all events at same TOF for simplicity
 
-        # create 5 sample tiffs with values 81-85 and metadata.
+        # create 5 sample TPX3-style HDF5 with values 81-85 and metadata.
         for i in range(5):
             temp_path = tmp_dir / f"sample_{i:03}.hdf5"
             with h5py.File(temp_path, "w") as hf:
@@ -40,7 +40,7 @@ class TestMarsTPX3Pipeline:
                 hf.create_dataset("y", data=np.tile(y_values, repeats), dtype=np.int32)
             cls.sample_paths.append(temp_path)
 
-        # create 5 sample tiffs with values 81-85 and metadata. These have a dead pixel and a hot pixel.
+        # create 5 sample TPX3-style HDF5 with values 81-85 and metadata. These have a dead pixel and a hot pixel.
         for i in range(5):
             # add dead pixel at (22, 8)
             # add pixel for hot pixel at (7, 19)
@@ -66,7 +66,7 @@ class TestMarsTPX3Pipeline:
                 hf.create_dataset("y", data=y, dtype=np.int32)
             cls.sample_paths_bad_pixels.append(temp_path)
 
-        # create 3 OB tiffs with values 99, 100, 101 and metadata
+        # create 3 OB TPX3-style HDF5 with values 99, 100, 101 and metadata
         for i in range(3):
             temp_path = tmp_dir / f"ob_{i:03}.hdf5"
             with h5py.File(temp_path, "w") as hf:
