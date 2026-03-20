@@ -4,6 +4,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 import scipp as sc
+from astropy.io import fits
 from PIL import Image
 from scitiff.io import load_scitiff
 
@@ -126,11 +127,13 @@ class TestMarsCCDPipeline:
                 assert "metadata/version" in hf
                 np.testing.assert_equal(hf["metadata/version"].asstr()[()], __version__)
                 assert "metadata/roi_applied" not in hf  # ROI not applied in this test
-                # check metadata from files, RunNo and ExposureTime
+                # check metadata from files, RunNo, ExposureTime and Model
                 assert "RunNo" in hf
                 np.testing.assert_equal(hf["RunNo"][:], [1000, 1001, 1002, 1003, 1004])
                 assert "ExposureTime" in hf
                 np.testing.assert_equal(hf["ExposureTime"][:], [30] * 5)
+                assert "ModelStr" in hf
+                np.testing.assert_equal(hf["ModelStr"].asstr()[()], "DW936_BV")
 
     def test_mars_ccd_pipeline_roi_and_tiff(self):
         """
@@ -226,3 +229,109 @@ class TestMarsCCDPipeline:
         expected_dead_pixel_mask = np.zeros((20, 20), dtype=bool)
         expected_dead_pixel_mask[22 - 5, 8 - 5] = True
         np.testing.assert_array_equal(transmission.masks["dead_pixels"].values, expected_dead_pixel_mask)
+
+
+class TestMarsCCDPipelineFITS:
+    """Tests for the MARS CCD pipeline using FITS files."""
+
+    @classmethod
+    def setup_class(cls):
+        """Create FITS files for testing once for all tests in this class."""
+        cls.sample_paths = []
+        cls.ob_paths = []
+        cls.dark_paths = []
+
+        cls._tmpdir = tempfile.TemporaryDirectory(delete=False)
+        tmp_dir = Path(cls._tmpdir.name)
+
+        # create 5 sample FITS files with values 81-85 and metadata.
+        for i in range(5):
+            data = np.full((32, 32), 81 + i, dtype=np.float32)
+            hdu = fits.PrimaryHDU(data)
+            hdu.header["EXPOSURETIME"] = 30.0
+            hdu.header["RUNNO"] = 1000 + i
+            hdu.header["MODEL"] = "DW936_BV"
+            filename = tmp_dir / f"sample_{i:03}.fits"
+            hdu.writeto(filename, overwrite=True)
+            cls.sample_paths.append(filename)
+
+        # create 3 OB FITS files with values 99, 100, 101 and metadata
+        for i in range(3):
+            data = np.full((32, 32), 99 + i, dtype=np.float32)
+            hdu = fits.PrimaryHDU(data)
+            filename = tmp_dir / f"ob_{i:03}.fits"
+            hdu.writeto(filename, overwrite=True)
+            cls.ob_paths.append(filename)
+
+        # create 2 dark FITS files with values 4 and 6 and metadata
+        for i in range(2):
+            data = np.full((32, 32), 4 + 2 * i, dtype=np.float32)
+            hdu = fits.PrimaryHDU(data)
+            filename = tmp_dir / f"dark_{i:03}.fits"
+            hdu.writeto(filename, overwrite=True)
+            cls.dark_paths.append(filename)
+
+    @classmethod
+    def teardown_class(cls):
+        """Remove all temp test files after all tests in this class have run."""
+        cls._tmpdir.cleanup()
+
+    def test_mars_ccd_pipeline_fits_output(self):
+        """
+        Test the MARS CCD pipeline end-to-end with FITS input and HDF5 output and verify contents.
+        """
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+
+            run_mars_ccd_pipeline(
+                sample_paths=self.sample_paths,
+                ob_paths=self.ob_paths,
+                dark_paths=self.dark_paths,
+                output_path=output_path,
+            )
+
+            assert output_path.exists()
+
+            # Read back the file and check contents
+            with h5py.File(output_path, "r") as hf:
+                # Check transmission data
+                assert "transmission" in hf
+                assert hf["transmission"].shape == (5, 32, 32)
+                # check that transmission values are correct based on the formula
+                # T = (S - AVERAGE(D)) / (AVERAGE(OB) - AVERAGE(D))
+                for i in range(5):
+                    np.testing.assert_allclose(hf["transmission"][i], (81 + i - 5) / (100 - 5))
+                assert hf["transmission"].attrs["units"] == "dimensionless"
+                assert hf["transmission"].dtype == np.float32
+                # Check uncertainty data exists and is reasonable
+                assert "uncertainty" in hf
+                assert hf["uncertainty"].dtype == np.float32
+                np.testing.assert_allclose(hf["uncertainty"], 0.1, rtol=0.15)
+                # Check coordinates
+                assert "x" in hf
+                np.testing.assert_equal(hf["x"], np.arange(32))
+                assert "y" in hf
+                np.testing.assert_equal(hf["y"], np.arange(32))
+                # Check masks
+                assert "masks/dead" in hf
+                np.testing.assert_equal(hf["masks/dead"], np.zeros((32, 32), dtype=bool))
+                # Check metadata
+                assert "metadata/sample_paths" in hf
+                np.testing.assert_equal(hf["metadata/sample_paths"].asstr()[:], [str(p) for p in self.sample_paths])
+                assert "metadata/ob_paths" in hf
+                np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[:], [str(p) for p in self.ob_paths])
+                assert "metadata/dark_paths" in hf
+                np.testing.assert_equal(hf["metadata/dark_paths"].asstr()[:], [str(p) for p in self.dark_paths])
+                assert "metadata/gamma_filter_applied" in hf
+                np.testing.assert_equal(hf["metadata/gamma_filter_applied"][()], True)
+                assert "metadata/processing_timestamp" in hf
+                assert "metadata/version" in hf
+                np.testing.assert_equal(hf["metadata/version"].asstr()[()], __version__)
+                assert "metadata/roi_applied" not in hf  # ROI not applied in this test
+                # check metadata from files, RunNo, ExposureTime and Model
+                assert "RUNNO" in hf
+                np.testing.assert_equal(hf["RUNNO"][:], [1000, 1001, 1002, 1003, 1004])
+                assert "EXPOSURETIME" in hf
+                np.testing.assert_equal(hf["EXPOSURETIME"][()], 30)
+                assert "MODEL" in hf
+                np.testing.assert_equal(hf["MODEL"].asstr()[()], "DW936_BV")
