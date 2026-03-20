@@ -1,5 +1,6 @@
 """
-MARS CCD/CMOS normalization pipeline."""
+MARS CCD/CMOS normalization pipeline.
+"""
 
 from datetime import datetime
 from pathlib import Path
@@ -13,12 +14,43 @@ from neunorm import __version__
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
+from neunorm.loaders.fits_loader import load_fits_stack
 from neunorm.loaders.tiff_loader import load_tiff_stack
 from neunorm.processing.dark_corrector import subtract_dark
 from neunorm.processing.normalizer import normalize_transmission
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
 from neunorm.tof.pixel_detector import detect_dead_pixels
+
+
+def load_stack(paths: Sequence[str | Path]) -> sc.DataArray:
+    """
+    Load a stack of images from the given file paths, supporting both TIFF and FITS formats.
+
+    Check the extension of the first file in the list and call the appropriate loader function
+    load_tiff_stack or load_fits_stack.
+
+    Verify all files have the same extension and raise an error if not.
+    """
+
+    if not paths:
+        raise ValueError("No file paths provided")
+
+    first_ext = Path(paths[0]).suffix.lower()
+    if first_ext in (".tiff", ".tif"):
+        for path in paths:
+            if Path(path).suffix.lower() != first_ext:
+                raise ValueError(f"All files must have the same extension. Found mixed extensions: {paths}")
+        return load_tiff_stack(paths)
+    elif first_ext in (".fits", ".fit", ".fts"):
+        for path in paths:
+            if Path(path).suffix.lower() != first_ext:
+                raise ValueError(f"All files must have the same extension. Found mixed extensions: {paths}")
+        return load_fits_stack(paths)
+    else:
+        raise ValueError(
+            f"Unsupported file format: {first_ext}. Supported are TIFF (.tiff, .tif) and FITS (.fits, .fit, .fts)."
+        )
 
 
 def run_mars_ccd_pipeline(  # noqa: C901
@@ -32,7 +64,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
     """Execute MARS CCD/CMOS normalization pipeline.
 
     Pipeline Steps (10 total)
-    - Load TIFF/FITS (sample, OB, dark) TODO: support FITS
+    - Load TIFF/FITS (sample, OB, dark)
     - Run combine (optional) TODO!
     - ROI clip (optional)
     - Average dark/OB
@@ -45,11 +77,11 @@ def run_mars_ccd_pipeline(  # noqa: C901
     Parameters
     ----------
     sample_paths : Sequence[str | Path]
-        List of paths to sample TIFF files
+        List of paths to sample TIFF or FITS files
     ob_paths : Sequence[str | Path]
-        List of paths to open beam TIFF files
+        List of paths to open beam TIFF or FITS files
     dark_paths : Sequence[str | Path]
-        List of paths to dark current TIFF files
+        List of paths to dark current TIFF or FITS files
     output_path : Path
         Path to save the output file (HDF5 or TIFF)
     roi : Optional[tuple]
@@ -69,9 +101,9 @@ def run_mars_ccd_pipeline(  # noqa: C901
     """
 
     # Load data
-    sample = load_tiff_stack(sample_paths)
-    ob = load_tiff_stack(ob_paths)
-    dark = load_tiff_stack(dark_paths)
+    sample = load_stack(sample_paths)
+    ob = load_stack(ob_paths)
+    dark = load_stack(dark_paths)
 
     # Apply ROI if specified
     if roi:
