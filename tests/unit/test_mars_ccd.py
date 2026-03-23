@@ -33,7 +33,11 @@ class TestMarsCCDPipeline:
             exif = img.getexif()
             exif[65027] = "ExposureTime:30.000000"
             exif[65022] = f"RunNo:{1000 + i}"
-            exif[65025] = "ModelStr:DW936_BV"
+            exif[65025] = "ManufacturerStr:DW936_BV"
+            exif[65052] = "MotSlitVB.RBV:42.3"
+            exif[65054] = "MotSlitVT.RBV:42.8"
+            exif[65056] = "MotSlitHR.RBV:41.4"
+            exif[65058] = "MotSlitHL.RBV:42.4"
             filename = tmp_dir / f"sample_{i:03}.tiff"
             img.save(filename, exif=exif)
             cls.sample_paths.append(filename)
@@ -49,7 +53,7 @@ class TestMarsCCDPipeline:
             exif = img.getexif()
             exif[65027] = "ExposureTime:30.000000"
             exif[65022] = f"RunNo:{1000 + i}"
-            exif[65025] = "ModelStr:DW936_BV"
+            exif[65025] = "ManufacturerStr:DW936_BV"
             filename = tmp_dir / f"sample_bad_{i:03}.tiff"
             img.save(filename, exif=exif)
             cls.sample_paths_bad_pixels.append(filename)
@@ -58,6 +62,12 @@ class TestMarsCCDPipeline:
         for i in range(3):
             data = np.full((32, 32), 99 + i, dtype=np.float32)
             img = Image.fromarray(data)
+            exif[65027] = "ExposureTime:30.000000"
+            exif[65025] = "ManufacturerStr:DW936_BV"
+            exif[65052] = "MotSlitVB.RBV:42.3"
+            exif[65054] = "MotSlitVT.RBV:42.8"
+            exif[65056] = "MotSlitHR.RBV:41.4"
+            exif[65058] = "MotSlitHL.RBV:42.4"
             filename = tmp_dir / f"ob_{i:03}.tiff"
             img.save(filename, exif=exif)
             cls.ob_paths.append(filename)
@@ -66,6 +76,9 @@ class TestMarsCCDPipeline:
         for i in range(2):
             data = np.full((32, 32), 4 + 2 * i, dtype=np.float32)
             img = Image.fromarray(data)
+            exif[65027] = "ExposureTime:30.000000"
+            exif[65022] = f"RunNo:{1000 + i}"
+            exif[65025] = "ManufacturerStr:DW936_BV"
             filename = tmp_dir / f"dark_{i:03}.tiff"
             img.save(filename, exif=exif)
             cls.dark_paths.append(filename)
@@ -79,13 +92,13 @@ class TestMarsCCDPipeline:
         """
         Test the MARS CCD pipeline end-to-end with HDF5 output and verify contents.
         """
-        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=False) as f:
             output_path = Path(f.name)
 
             run_mars_ccd_pipeline(
-                sample_paths=self.sample_paths,
-                ob_paths=self.ob_paths,
-                dark_paths=self.dark_paths,
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                dark_paths=[self.dark_paths],
                 output_path=output_path,
             )
 
@@ -116,11 +129,11 @@ class TestMarsCCDPipeline:
                 np.testing.assert_equal(hf["masks/dead"], np.zeros((32, 32), dtype=bool))
                 # Check metadata
                 assert "metadata/sample_paths" in hf
-                np.testing.assert_equal(hf["metadata/sample_paths"].asstr()[:], [str(p) for p in self.sample_paths])
+                np.testing.assert_equal(hf["metadata/sample_paths"].asstr()[:], [[str(p) for p in self.sample_paths]])
                 assert "metadata/ob_paths" in hf
-                np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[:], [str(p) for p in self.ob_paths])
+                np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[:], [[str(p) for p in self.ob_paths]])
                 assert "metadata/dark_paths" in hf
-                np.testing.assert_equal(hf["metadata/dark_paths"].asstr()[:], [str(p) for p in self.dark_paths])
+                np.testing.assert_equal(hf["metadata/dark_paths"].asstr()[:], [[str(p) for p in self.dark_paths]])
                 assert "metadata/gamma_filter_applied" in hf
                 np.testing.assert_equal(hf["metadata/gamma_filter_applied"][()], True)
                 assert "metadata/processing_timestamp" in hf
@@ -132,8 +145,8 @@ class TestMarsCCDPipeline:
                 np.testing.assert_equal(hf["RunNo"][:], [1000, 1001, 1002, 1003, 1004])
                 assert "ExposureTime" in hf
                 np.testing.assert_equal(hf["ExposureTime"][:], [30] * 5)
-                assert "ModelStr" in hf
-                np.testing.assert_equal(hf["ModelStr"].asstr()[()], "DW936_BV")
+                assert "ManufacturerStr" in hf
+                np.testing.assert_equal(hf["ManufacturerStr"].asstr()[()], "DW936_BV")
 
     def test_mars_ccd_pipeline_roi_and_tiff(self):
         """
@@ -143,9 +156,9 @@ class TestMarsCCDPipeline:
             output_path = Path(f.name)
 
             run_mars_ccd_pipeline(
-                sample_paths=self.sample_paths,
-                ob_paths=self.ob_paths,
-                dark_paths=self.dark_paths,
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                dark_paths=[self.dark_paths],
                 output_path=output_path,
                 roi=(5, 5, 25, 25),
             )
@@ -203,9 +216,9 @@ class TestMarsCCDPipeline:
             output_path = Path(f.name)
 
             transmission = run_mars_ccd_pipeline(
-                sample_paths=self.sample_paths_bad_pixels,
-                ob_paths=self.ob_paths,
-                dark_paths=self.dark_paths,
+                sample_paths=[self.sample_paths_bad_pixels],
+                ob_paths=[self.ob_paths],
+                dark_paths=[self.dark_paths],
                 output_path=output_path,
                 roi=(5, 5, 25, 25),
             )
@@ -229,6 +242,69 @@ class TestMarsCCDPipeline:
         expected_dead_pixel_mask = np.zeros((20, 20), dtype=bool)
         expected_dead_pixel_mask[22 - 5, 8 - 5] = True
         np.testing.assert_array_equal(transmission.masks["dead_pixels"].values, expected_dead_pixel_mask)
+
+    def test_mars_ccd_pipeline_combine_runs(self):
+        """Test that multiple runs are combined correctly.
+        Include the same sample paths 3 times, OB twice and dark twice to check that the combination is working.
+        Data should double along with selected metadata.
+
+        Just check the returned DataArray instead of looking at the output file."""
+
+        with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+            output_path = Path(f.name)
+
+            transmission = run_mars_ccd_pipeline(
+                sample_paths=[
+                    self.sample_paths,
+                    self.sample_paths,
+                    self.sample_paths,
+                ],  # include the same sample paths three times to test combination
+                ob_paths=[self.ob_paths, self.ob_paths],  # include the same OB paths twice to test combination
+                dark_paths=[self.dark_paths, self.dark_paths],  # include the same dark paths twice to test combination
+                output_path=output_path,
+                roi=(5, 5, 25, 25),
+            )
+
+            assert output_path.exists()
+
+        assert transmission.shape == (5, 20, 20)
+        # values should be doubled compared to the single run case since we are combining two identical runs.
+        for i in range(5):
+            expected_value = np.full((20, 20), ((81 + i) * 3 - 5 * 2) / ((100 - 5) * 2))
+            np.testing.assert_allclose(transmission.values[i], expected_value)
+
+        # check that the variances exist and are reasonable
+        np.testing.assert_allclose(transmission.variances, 0.009, atol=0.002)
+
+        # The mask should only have the dead pixel masked
+        expected_dead_pixel_mask = np.zeros((20, 20), dtype=bool)
+        np.testing.assert_array_equal(transmission.masks["dead_pixels"].values, expected_dead_pixel_mask)
+
+        # check that the metadata keys that should be summed are tripled and the others are unchanged
+        assert "ExposureTime" in transmission.coords
+        np.testing.assert_equal(
+            transmission.coords["ExposureTime"].values, [30 * 3] * 5
+        )  # should be tripled since we combined three runs with 30s exposure
+        assert "ManufacturerStr" in transmission.coords
+        np.testing.assert_equal(
+            transmission.coords["ManufacturerStr"].values, "DW936_BV"
+        )  # should be unchanged since it's the same for both runs
+        assert "MotSlitVB.RBV" in transmission.coords
+        np.testing.assert_equal(
+            transmission.coords["MotSlitVB.RBV"].values, 42.3
+        )  # should be unchanged since it's the same for both runs
+        assert "MotSlitVT.RBV" in transmission.coords
+        np.testing.assert_equal(
+            transmission.coords["MotSlitVT.RBV"].values, 42.8
+        )  # should be unchanged since it's the same for both runs
+        assert "MotSlitHR.RBV" in transmission.coords
+        np.testing.assert_equal(
+            transmission.coords["MotSlitHR.RBV"].values, 41.4
+        )  # should be unchanged since it's the same for both runs
+        assert "MotSlitHL.RBV" in transmission.coords
+        np.testing.assert_equal(
+            transmission.coords["MotSlitHL.RBV"].values, 42.4
+        )  # should be unchanged since it's the same for both runs
 
 
 class TestMarsCCDPipelineFITS:
@@ -284,9 +360,9 @@ class TestMarsCCDPipelineFITS:
             output_path = Path(f.name)
 
             run_mars_ccd_pipeline(
-                sample_paths=self.sample_paths,
-                ob_paths=self.ob_paths,
-                dark_paths=self.dark_paths,
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                dark_paths=[self.dark_paths],
                 output_path=output_path,
             )
 
@@ -317,11 +393,11 @@ class TestMarsCCDPipelineFITS:
                 np.testing.assert_equal(hf["masks/dead"], np.zeros((32, 32), dtype=bool))
                 # Check metadata
                 assert "metadata/sample_paths" in hf
-                np.testing.assert_equal(hf["metadata/sample_paths"].asstr()[:], [str(p) for p in self.sample_paths])
+                np.testing.assert_equal(hf["metadata/sample_paths"].asstr()[()], [[str(p) for p in self.sample_paths]])
                 assert "metadata/ob_paths" in hf
-                np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[:], [str(p) for p in self.ob_paths])
+                np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[()], [[str(p) for p in self.ob_paths]])
                 assert "metadata/dark_paths" in hf
-                np.testing.assert_equal(hf["metadata/dark_paths"].asstr()[:], [str(p) for p in self.dark_paths])
+                np.testing.assert_equal(hf["metadata/dark_paths"].asstr()[()], [[str(p) for p in self.dark_paths]])
                 assert "metadata/gamma_filter_applied" in hf
                 np.testing.assert_equal(hf["metadata/gamma_filter_applied"][()], True)
                 assert "metadata/processing_timestamp" in hf

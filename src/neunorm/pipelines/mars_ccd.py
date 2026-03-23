@@ -20,6 +20,7 @@ from neunorm.processing.dark_corrector import subtract_dark
 from neunorm.processing.normalizer import normalize_transmission
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
+from neunorm.processing.run_combiner import combine_runs
 from neunorm.tof.pixel_detector import detect_dead_pixels
 
 
@@ -54,9 +55,9 @@ def load_stack(paths: Sequence[str | Path]) -> sc.DataArray:
 
 
 def run_mars_ccd_pipeline(  # noqa: C901
-    sample_paths: Sequence[str | Path],
-    ob_paths: Sequence[str | Path],
-    dark_paths: Sequence[str | Path],
+    sample_paths: Sequence[Sequence[str | Path]],
+    ob_paths: Sequence[Sequence[str | Path]],
+    dark_paths: Sequence[Sequence[str | Path]],
     output_path: Path,
     roi: Optional[tuple] = None,
     gamma_filter: bool = True,
@@ -65,7 +66,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
 
     Pipeline Steps (10 total)
     - Load TIFF/FITS (sample, OB, dark)
-    - Run combine (optional) TODO!
+    - Run combine (optional)
     - ROI clip (optional)
     - Average dark/OB
     - Dead pixel detection (existing tof/pixel_detector.py)
@@ -76,12 +77,15 @@ def run_mars_ccd_pipeline(  # noqa: C901
 
     Parameters
     ----------
-    sample_paths : Sequence[str | Path]
-        List of paths to sample TIFF or FITS files
-    ob_paths : Sequence[str | Path]
-        List of paths to open beam TIFF or FITS files
-    dark_paths : Sequence[str | Path]
-        List of paths to dark current TIFF or FITS files
+    sample_paths : Sequence[Sequence[str | Path]]
+        List of lists of paths to sample TIFF or FITS files.
+        Each inner list represents a run that should be combined before processing.
+    ob_paths : Sequence[Sequence[str | Path]]
+        List of lists of paths to open beam TIFF or FITS files.
+        Each inner list represents a run that should be combined before processing.
+    dark_paths : Sequence[Sequence[str | Path]]
+        List of lists of paths to dark current TIFF or FITS files.
+        Each inner list represents a run that should be combined before processing.
     output_path : Path
         Path to save the output file (HDF5 or TIFF)
     roi : Optional[tuple]
@@ -101,9 +105,45 @@ def run_mars_ccd_pipeline(  # noqa: C901
     """
 
     # Load data
-    sample = load_stack(sample_paths)
-    ob = load_stack(ob_paths)
-    dark = load_stack(dark_paths)
+    samples = [load_stack(paths) for paths in sample_paths]
+    ob = [load_stack(paths) for paths in ob_paths]
+    dark = [load_stack(paths) for paths in dark_paths]
+
+    # Before combining, check that all sample runs have the same shape and some metadata keys match
+    # Keys to check [ManufacturerStr, MotSlitVB.RBV, MotSlitVT.RBV, MotSlitHR.RBV, MotSlitHL.RBV].
+    # MotSlit does not need to match for dark. ExposureTime should be summed for all runs.
+
+    sample = combine_runs(
+        samples,
+        metadata_keys_to_sum=("ExposureTime",),
+        metadata_check_match=[
+            "ManufacturerStr",
+            "MotSlitVB.RBV",
+            "MotSlitVT.RBV",
+            "MotSlitHR.RBV",
+            "MotSlitHL.RBV",
+        ],
+    )
+
+    ob = combine_runs(
+        ob,
+        metadata_keys_to_sum=("ExposureTime",),
+        metadata_check_match=[
+            "ManufacturerStr",
+            "MotSlitVB.RBV",
+            "MotSlitVT.RBV",
+            "MotSlitHR.RBV",
+            "MotSlitHL.RBV",
+        ],
+    )
+
+    dark = combine_runs(
+        dark,
+        metadata_keys_to_sum=("ExposureTime",),
+        metadata_check_match=[
+            "ManufacturerStr",
+        ],
+    )
 
     # Apply ROI if specified
     if roi:
@@ -131,13 +171,15 @@ def run_mars_ccd_pipeline(  # noqa: C901
 
     # Write output
     metadata = {
-        "sample_paths": [str(p) for p in sample_paths],
-        "ob_paths": [str(p) for p in ob_paths],
-        "dark_paths": [str(p) for p in dark_paths],
+        "sample_paths": [[str(p) for p in run] for run in sample_paths],
+        "ob_paths": [[str(p) for p in run] for run in ob_paths],
+        "dark_paths": [[str(p) for p in run] for run in dark_paths],
         "gamma_filter_applied": gamma_filter,
         "processing_timestamp": datetime.now().isoformat(),
         "version": __version__,
     }
+
+    print(metadata)
 
     if roi:
         metadata["roi_applied"] = roi
@@ -151,16 +193,12 @@ def run_mars_ccd_pipeline(  # noqa: C901
         if rename_map:
             transmission = transmission.rename_dims(rename_map)
 
-        model = "Unknown"
-        if "ModelStr" in sample.coords:
-            model = sample.coords["ModelStr"].value
-        elif "Model" in sample.coords:
-            model = sample.coords["Model"].value
-
         daqmetadata = {
             "facility": "HFIR",
             "instrument": "MARS",
-            "detector_type": model,
+            "detector_type": sample.coords["ManufacturerStr"].value
+            if "ManufacturerStr" in sample.coords
+            else "Unknown",
             "source_type": "neutron",
         }
 
