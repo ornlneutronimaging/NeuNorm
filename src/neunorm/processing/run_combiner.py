@@ -48,6 +48,11 @@ def combine_runs(  # noqa: C901
     base_shape = runs[0].shape
     base_dims = runs[0].dims
     base_metadata = runs[0].coords
+    for key in metadata_check_match:
+        if key not in base_metadata:
+            logger.error("Metadata key '{}' not found in base run for matching", key)
+            raise ValueError(f"Metadata key '{key}' not found in base run for matching")
+
     for i, run in enumerate(runs[1:], 1):
         if run.shape != base_shape or run.dims != base_dims:
             logger.error(
@@ -62,7 +67,7 @@ def combine_runs(  # noqa: C901
                 f"Run {i} has shape {run.shape} and dims {run.dims}, expected shape {base_shape} and dims {base_dims}"
             )
         for key in metadata_check_match:
-            if key not in run.coords or key not in base_metadata:
+            if key not in run.coords:
                 logger.error("Metadata key '{}' not found in run {} for matching", key, i)
                 raise ValueError(f"Metadata key '{key}' not found in run {i} for matching")
             if not sc.identical(run.coords[key], base_metadata[key]):

@@ -179,8 +179,6 @@ def run_mars_ccd_pipeline(  # noqa: C901
         "version": __version__,
     }
 
-    print(metadata)
-
     if roi:
         metadata["roi_applied"] = roi
 
@@ -193,12 +191,18 @@ def run_mars_ccd_pipeline(  # noqa: C901
         if rename_map:
             transmission = transmission.rename_dims(rename_map)
 
+        model = "Unknown"
+        if "ManufacturerStr" in sample.coords:
+            model = sample.coords["ManufacturerStr"].value
+        elif "ModelStr" in sample.coords:
+            model = sample.coords["ModelStr"].value
+        elif "Model" in sample.coords:
+            model = sample.coords["Model"].value
+
         daqmetadata = {
             "facility": "HFIR",
             "instrument": "MARS",
-            "detector_type": sample.coords["ManufacturerStr"].value
-            if "ManufacturerStr" in sample.coords
-            else "Unknown",
+            "detector_type": model,
             "source_type": "neutron",
         }
 

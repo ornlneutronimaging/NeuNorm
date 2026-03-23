@@ -34,7 +34,7 @@ def convert_metadata_to_scitiff_coords(metadata: dict) -> sc.DataGroup:
         if isinstance(value, (str, int, float, bool)):
             extra[key] = value
         elif isinstance(value, collections.abc.Sequence):
-            if isinstance(value[0], collections.abc.Sequence) and not isinstance(value[0], str):
+            if value and isinstance(value[0], collections.abc.Sequence) and not isinstance(value[0], str):
                 # Handle list of lists (e.g. list of sample paths)
                 extra[key] = sc.scalar(value=[item for sublist in value for item in sublist])
             else:

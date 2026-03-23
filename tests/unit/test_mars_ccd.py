@@ -62,6 +62,7 @@ class TestMarsCCDPipeline:
         for i in range(3):
             data = np.full((32, 32), 99 + i, dtype=np.float32)
             img = Image.fromarray(data)
+            exif = img.getexif()
             exif[65027] = "ExposureTime:30.000000"
             exif[65025] = "ManufacturerStr:DW936_BV"
             exif[65052] = "MotSlitVB.RBV:42.3"
@@ -76,6 +77,7 @@ class TestMarsCCDPipeline:
         for i in range(2):
             data = np.full((32, 32), 4 + 2 * i, dtype=np.float32)
             img = Image.fromarray(data)
+            exif = img.getexif()
             exif[65027] = "ExposureTime:30.000000"
             exif[65022] = f"RunNo:{1000 + i}"
             exif[65025] = "ManufacturerStr:DW936_BV"
@@ -92,7 +94,7 @@ class TestMarsCCDPipeline:
         """
         Test the MARS CCD pipeline end-to-end with HDF5 output and verify contents.
         """
-        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
 
             run_mars_ccd_pipeline(
