@@ -825,7 +825,7 @@ class Normalization:
         if data is None:
             return False
 
-        #metadata = self.data[data_type]["metadata"]
+        # metadata = self.data[data_type]["metadata"]
         metadata = self.data[DataType.sample]["metadata"]
 
         list_file_name_raw = self.data[data_type]["file_name"]
