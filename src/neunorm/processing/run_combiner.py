@@ -8,8 +8,10 @@ import scipp as sc
 from loguru import logger
 
 
-def combine_runs(
-    runs: list[sc.DataArray], metadata_keys_to_sum: Sequence[str] = ("acquisition_time", "p_charge")
+def combine_runs(  # noqa: C901
+    runs: list[sc.DataArray],
+    metadata_keys_to_sum: Sequence[str] = ("acquisition_time", "p_charge"),
+    metadata_check_match: Sequence[str] = (),
 ) -> sc.DataArray:
     """Combine multiple runs by summing with metadata aggregation.
 
@@ -26,6 +28,8 @@ def combine_runs(
         List of DataArrays representing individual runs.
     metadata_keys_to_sum : Sequence[str], optional
         Sequence of metadata keys to sum across runs, by default ("acquisition_time", "p_charge")
+    metadata_check_match : Sequence[str], optional
+        Sequence of metadata keys that must match across all runs for combination, by default ()
 
     Returns
     -------
@@ -40,9 +44,10 @@ def combine_runs(
     if len(runs) == 1:
         return runs[0]
 
-    # Validate all runs have the same shape and dimensions
+    # Validate all runs have the same shape, dimensions and required metadata keys for matching
     base_shape = runs[0].shape
     base_dims = runs[0].dims
+    base_metadata = runs[0].coords
     for i, run in enumerate(runs[1:], 1):
         if run.shape != base_shape or run.dims != base_dims:
             logger.error(
@@ -56,6 +61,23 @@ def combine_runs(
             raise ValueError(
                 f"Run {i} has shape {run.shape} and dims {run.dims}, expected shape {base_shape} and dims {base_dims}"
             )
+        for key in metadata_check_match:
+            if key not in run.coords or key not in base_metadata:
+                logger.error("Metadata key '{}' not found in run {} for matching", key, i)
+                raise ValueError(f"Metadata key '{key}' not found in run {i} for matching")
+            if not sc.identical(run.coords[key], base_metadata[key]):
+                logger.error(
+                    "Metadata key '{}' does not match between run {} and base run: {} vs {}",
+                    key,
+                    i,
+                    run.coords[key].value if run.coords[key].ndim == 0 else run.coords[key].values,
+                    base_metadata[key].value if base_metadata[key].ndim == 0 else base_metadata[key].values,
+                )
+                raise ValueError(
+                    f"Metadata key '{key}' does not match between run {i} and base run:"
+                    f" {run.coords[key].value if run.coords[key].ndim == 0 else run.coords[key].values} vs"
+                    f" {base_metadata[key].value if base_metadata[key].ndim == 0 else base_metadata[key].values}"
+                )
 
     # Combine data by summing across runs
     combined = runs[0].copy()
