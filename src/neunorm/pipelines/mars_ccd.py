@@ -117,32 +117,38 @@ def run_mars_ccd_pipeline(  # noqa: C901
         samples,
         metadata_keys_to_sum=("ExposureTime",),
         metadata_check_match=[
+            "ExposureTime",
             "ManufacturerStr",
             "MotSlitVB.RBV",
             "MotSlitVT.RBV",
             "MotSlitHR.RBV",
             "MotSlitHL.RBV",
         ],
+        normalize_by_runs=True,
     )
 
     ob = combine_runs(
         ob,
         metadata_keys_to_sum=("ExposureTime",),
         metadata_check_match=[
+            "ExposureTime",
             "ManufacturerStr",
             "MotSlitVB.RBV",
             "MotSlitVT.RBV",
             "MotSlitHR.RBV",
             "MotSlitHL.RBV",
         ],
+        normalize_by_runs=True,
     )
 
     dark = combine_runs(
         dark,
         metadata_keys_to_sum=("ExposureTime",),
         metadata_check_match=[
+            "ExposureTime",
             "ManufacturerStr",
         ],
+        normalize_by_runs=True,
     )
 
     # Apply ROI if specified

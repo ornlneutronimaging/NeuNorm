@@ -12,6 +12,7 @@ def combine_runs(  # noqa: C901
     runs: list[sc.DataArray],
     metadata_keys_to_sum: Sequence[str] = ("acquisition_time", "p_charge"),
     metadata_check_match: Sequence[str] = (),
+    normalize_by_runs: bool = False,
 ) -> sc.DataArray:
     """Combine multiple runs by summing with metadata aggregation.
 
@@ -30,6 +31,8 @@ def combine_runs(  # noqa: C901
         Sequence of metadata keys to sum across runs, by default ("acquisition_time", "p_charge")
     metadata_check_match : Sequence[str], optional
         Sequence of metadata keys that must match across all runs for combination, by default ()
+    normalize_by_runs : bool, optional
+        Whether to normalize the combined data by the number of runs, by default False
 
     Returns
     -------
@@ -89,10 +92,17 @@ def combine_runs(  # noqa: C901
     for run in runs[1:]:
         combined += run
 
+    if normalize_by_runs:
+        combined /= len(runs)
+
     # Aggregate metadata. Use first run data unless specified keys are to be summed
     for key in metadata_keys_to_sum:
         try:
-            combined.coords[key] = sc.sum(sc.concat([run.coords[key] for run in runs], dim="run"), dim="run")
+            if normalize_by_runs:
+                combined.coords[key] = sc.mean(sc.concat([run.coords[key] for run in runs], dim="run"), dim="run")
+            else:
+                combined.coords[key] = sc.sum(sc.concat([run.coords[key] for run in runs], dim="run"), dim="run")
+
         except (KeyError, sc.DimensionError) as e:
             logger.error("Metadata key '{}' not found in all runs for summation: {}", key, e)
             raise ValueError(f"Metadata key '{key}' not found in all runs for summation")

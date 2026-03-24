@@ -111,6 +111,62 @@ def test_combine_runs():
     assert combined.coords["ManufacturerStr"].value == "Andor"
 
 
+def test_combine_runs_normalize_by_runs():
+    """
+    Test combining two runs with the same shape and dimensions but different data, masks and metadata.
+    Normalize by the number of runs, so the values should be the same as the original samples since we are
+    combining two runs but also normalizing by the number of runs, so it should be the mean instead of the sum.
+    """
+    from neunorm.processing.run_combiner import combine_runs
+
+    # Create two runs with the same shape and dimensions but different data and metadata
+    run_data = np.arange(10 * 5 * 5).reshape((10, 5, 5))  # Shape (tof_edges=10, x=5, y=5)
+    run = sc.DataArray(
+        data=sc.array(dims=["tof_edges", "x", "y"], values=run_data, unit="counts", dtype="float64"),
+        coords={"tof_edges": sc.linspace("tof_edges", 1, 100, num=11, unit="us")},
+    )
+    run.variances = run.values.copy()
+    run.coords["acquisition_time"] = sc.array(dims=["tof_edges"], values=np.linspace(2, 11, num=10), unit="s")
+    run.coords.set_aligned("acquisition_time", False)
+
+    run2_data = np.arange(10 * 5 * 5).reshape((10, 5, 5)) * 4
+    run2 = sc.DataArray(
+        data=sc.array(dims=["tof_edges", "x", "y"], values=run2_data, unit="counts", dtype="float64"),
+        coords={"tof_edges": sc.linspace("tof_edges", 1, 100, num=11, unit="us")},
+    )
+    run2.variances = run2.values.copy()
+    run2.coords["acquisition_time"] = sc.array(dims=["tof_edges"], values=np.linspace(1, 10, num=10), unit="s")
+    run2.coords.set_aligned("acquisition_time", False)
+
+    # Combine the two samples
+    combined = combine_runs([run, run2], metadata_keys_to_sum=["acquisition_time"], normalize_by_runs=True)
+
+    # Should still be in counts
+    assert combined.unit == sc.units.counts
+
+    # Check coordinates, should be the same as the input samples
+    assert combined.dims == ("tof_edges", "x", "y")
+    assert "tof_edges" in combined.coords
+    assert combined.coords["tof_edges"].values.shape == (11,)
+    assert combined.coords["tof_edges"].unit == "us"
+    np.testing.assert_equal(combined.coords["tof_edges"].values, np.linspace(1, 100, num=11))
+
+    # Check shape
+    assert combined.data.shape == (10, 5, 5)
+    assert combined.variances.shape == (10, 5, 5)
+
+    # Values should be mean of the two samples since normalize_by_runs=True
+    expected_values = np.arange(10 * 5 * 5).reshape((10, 5, 5)) * 2.5
+    np.testing.assert_allclose(combined.values, expected_values)
+    # Variance should the propagated variance of the mean of the two samples
+    np.testing.assert_allclose(combined.variances, expected_values / 2)
+
+    # Acquisition time should be mean of the two samples
+    np.testing.assert_allclose(
+        combined.coords["acquisition_time"].values, (np.linspace(2, 11, num=10) + np.linspace(1, 10, num=10)) / 2
+    )
+
+
 def test_combine_runs_different_shapes():
     """Test that combining runs with different shapes raises an error."""
     from neunorm.processing.run_combiner import combine_runs

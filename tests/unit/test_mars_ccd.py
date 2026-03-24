@@ -270,23 +270,24 @@ class TestMarsCCDPipeline:
             assert output_path.exists()
 
         assert transmission.shape == (5, 20, 20)
-        # values should be doubled compared to the single run case since we are combining two identical runs.
+        # values should be the same as the original sample values since we are combining three runs but also normalizing
+        # by the number of runs, so it should not change the final transmission values, just reduce the variance.
         for i in range(5):
-            expected_value = np.full((20, 20), ((81 + i) * 3 - 5 * 2) / ((100 - 5) * 2))
+            expected_value = np.full((20, 20), ((81 + i) - 5) / (100 - 5))
             np.testing.assert_allclose(transmission.values[i], expected_value)
 
         # check that the variances exist and are reasonable
-        np.testing.assert_allclose(transmission.variances, 0.009, atol=0.002)
+        np.testing.assert_allclose(transmission.variances, 0.004, atol=0.002)
 
         # The mask should only have the dead pixel masked
         expected_dead_pixel_mask = np.zeros((20, 20), dtype=bool)
         np.testing.assert_array_equal(transmission.masks["dead_pixels"].values, expected_dead_pixel_mask)
 
-        # check that the metadata keys that should be summed are tripled and the others are unchanged
+        # check that the metadata keys that should be summed are unchanged
         assert "ExposureTime" in transmission.coords
         np.testing.assert_equal(
-            transmission.coords["ExposureTime"].values, [30 * 3] * 5
-        )  # should be tripled since we combined three runs with 30s exposure
+            transmission.coords["ExposureTime"].values, [30] * 5
+        )  # should be unchanged since we are normalizing by the number of runs
         assert "ManufacturerStr" in transmission.coords
         np.testing.assert_equal(
             transmission.coords["ManufacturerStr"].values, "DW936_BV"

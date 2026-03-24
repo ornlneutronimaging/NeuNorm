@@ -115,14 +115,14 @@ def load_tiff_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
             # Try converting to float if possible, otherwise keep as string
             try:
                 values = [float(v) for v in values]
-                da.coords[key_name] = sc.array(dims=[dim_name], values=values, unit=None)
+                da.coords[key_name] = sc.array(dims=[dim_name], values=values, unit=sc.units.dimensionless)
             except (ValueError, TypeError):
                 if len(set(v for v in values)) == 1:
                     # If all values are the same string, store as scalar
-                    da.coords[key_name] = sc.scalar(value=values[0], unit=None)
+                    da.coords[key_name] = sc.scalar(value=values[0], unit=sc.units.dimensionless)
                 else:
                     # Values differ across files, store as array with dimension of the stack
-                    da.coords[key_name] = sc.array(dims=[dim_name], values=values, unit=None)
+                    da.coords[key_name] = sc.array(dims=[dim_name], values=values, unit=sc.units.dimensionless)
             da.coords.set_aligned(key_name, False)
 
     return da
