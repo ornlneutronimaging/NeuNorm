@@ -111,7 +111,8 @@ def run_mars_ccd_pipeline(  # noqa: C901
 
     # Before combining, check that all sample runs have the same shape and some metadata keys match
     # Keys to check [ManufacturerStr, MotSlitVB.RBV, MotSlitVT.RBV, MotSlitHR.RBV, MotSlitHL.RBV].
-    # MotSlit does not need to match for dark. ExposureTime should be summed for all runs.
+    # MotSlit does not need to match for dark. ExposureTime is included in metadata checks and is
+    # effectively averaged/normalized across runs (not summed) when normalize_by_runs=True.
 
     sample = combine_runs(
         samples,

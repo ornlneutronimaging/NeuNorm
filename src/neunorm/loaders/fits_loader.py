@@ -120,10 +120,10 @@ def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
                 values = [hdr.get(key) for hdr in headers]
                 if len(set(str(v) for v in values)) == 1:
                     # If all values are the same, store as scalar
-                    da.coords[key] = sc.scalar(value=values[0], unit=None)
+                    da.coords[key] = sc.scalar(value=values[0])
                 else:
                     # Values differ across files, store as array with dimension of the stack
-                    da.coords[key] = sc.array(dims=[dim_name], values=values, unit=None)
+                    da.coords[key] = sc.array(dims=[dim_name], values=values)
                 da.coords.set_aligned(key, False)
 
     return da

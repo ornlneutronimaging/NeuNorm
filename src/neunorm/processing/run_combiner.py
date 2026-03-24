@@ -102,6 +102,7 @@ def combine_runs(  # noqa: C901
                 combined.coords[key] = sc.mean(sc.concat([run.coords[key] for run in runs], dim="run"), dim="run")
             else:
                 combined.coords[key] = sc.sum(sc.concat([run.coords[key] for run in runs], dim="run"), dim="run")
+            combined.coords.set_aligned(key, False)
 
         except (KeyError, sc.DimensionError) as e:
             logger.error("Metadata key '{}' not found in all runs for summation: {}", key, e)
