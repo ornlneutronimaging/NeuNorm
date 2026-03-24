@@ -34,6 +34,8 @@ def test_combine_runs():
     run.coords.set_aligned("acquisition_time", False)
     run.coords["other_metadata"] = sc.scalar(value=42)
     run.coords.set_aligned("other_metadata", False)
+    run.coords["ManufacturerStr"] = sc.scalar(value="Andor")
+    run.coords.set_aligned("ManufacturerStr", False)
 
     run2_data = np.arange(10 * 5 * 5).reshape((10, 5, 5)) * 4
     run2 = sc.DataArray(
@@ -55,9 +57,11 @@ def test_combine_runs():
     run2.coords.set_aligned("acquisition_time", False)
     run2.coords["other_metadata"] = sc.scalar(value=13)
     run2.coords.set_aligned("other_metadata", False)
+    run2.coords["ManufacturerStr"] = sc.scalar(value="Andor")
+    run2.coords.set_aligned("ManufacturerStr", False)
 
     # Combine the two samples
-    combined = combine_runs([run, run2])
+    combined = combine_runs([run, run2], metadata_check_match=["ManufacturerStr"])
 
     # Should still be in counts
     assert combined.unit == sc.units.counts
@@ -103,6 +107,65 @@ def test_combine_runs():
     # other_metadata should be from the first sample since it's not in the metadata_keys_to_sum list
     np.testing.assert_allclose(combined.coords["other_metadata"].value, 42)
 
+    # check ManufacturerStr
+    assert combined.coords["ManufacturerStr"].value == "Andor"
+
+
+def test_combine_runs_normalize_by_runs():
+    """
+    Test combining two runs with the same shape and dimensions but different data, masks and metadata.
+    Normalize by the number of runs, so the values should be the same as the original samples since we are
+    combining two runs but also normalizing by the number of runs, so it should be the mean instead of the sum.
+    """
+    from neunorm.processing.run_combiner import combine_runs
+
+    # Create two runs with the same shape and dimensions but different data and metadata
+    run_data = np.arange(10 * 5 * 5).reshape((10, 5, 5))  # Shape (tof_edges=10, x=5, y=5)
+    run = sc.DataArray(
+        data=sc.array(dims=["tof_edges", "x", "y"], values=run_data, unit="counts", dtype="float64"),
+        coords={"tof_edges": sc.linspace("tof_edges", 1, 100, num=11, unit="us")},
+    )
+    run.variances = run.values.copy()
+    run.coords["acquisition_time"] = sc.array(dims=["tof_edges"], values=np.linspace(2, 11, num=10), unit="s")
+    run.coords.set_aligned("acquisition_time", False)
+
+    run2_data = np.arange(10 * 5 * 5).reshape((10, 5, 5)) * 4
+    run2 = sc.DataArray(
+        data=sc.array(dims=["tof_edges", "x", "y"], values=run2_data, unit="counts", dtype="float64"),
+        coords={"tof_edges": sc.linspace("tof_edges", 1, 100, num=11, unit="us")},
+    )
+    run2.variances = run2.values.copy()
+    run2.coords["acquisition_time"] = sc.array(dims=["tof_edges"], values=np.linspace(1, 10, num=10), unit="s")
+    run2.coords.set_aligned("acquisition_time", False)
+
+    # Combine the two samples
+    combined = combine_runs([run, run2], metadata_keys_to_sum=["acquisition_time"], normalize_by_runs=True)
+
+    # Should still be in counts
+    assert combined.unit == sc.units.counts
+
+    # Check coordinates, should be the same as the input samples
+    assert combined.dims == ("tof_edges", "x", "y")
+    assert "tof_edges" in combined.coords
+    assert combined.coords["tof_edges"].values.shape == (11,)
+    assert combined.coords["tof_edges"].unit == "us"
+    np.testing.assert_equal(combined.coords["tof_edges"].values, np.linspace(1, 100, num=11))
+
+    # Check shape
+    assert combined.data.shape == (10, 5, 5)
+    assert combined.variances.shape == (10, 5, 5)
+
+    # Values should be mean of the two samples since normalize_by_runs=True
+    expected_values = np.arange(10 * 5 * 5).reshape((10, 5, 5)) * 2.5
+    np.testing.assert_allclose(combined.values, expected_values)
+    # Variance should the propagated variance of the mean of the two samples
+    np.testing.assert_allclose(combined.variances, expected_values / 2)
+
+    # Acquisition time should be mean of the two samples
+    np.testing.assert_allclose(
+        combined.coords["acquisition_time"].values, (np.linspace(2, 11, num=10) + np.linspace(1, 10, num=10)) / 2
+    )
+
 
 def test_combine_runs_different_shapes():
     """Test that combining runs with different shapes raises an error."""
@@ -123,6 +186,63 @@ def test_combine_runs_different_shapes():
 
     with pytest.raises(ValueError):
         combine_runs([run1, run2])
+
+
+def test_combine_runs_mismatch_metadata():
+    """Test that combining runs with different metadata raises an error."""
+    from neunorm.processing.run_combiner import combine_runs
+
+    # Create two runs with different metadata
+    run1 = sc.DataArray(
+        data=sc.array(dims=["tof_edges", "x", "y"], values=np.zeros((10, 5, 5)), unit="counts"),
+        coords={"tof_edges": sc.linspace("tof_edges", 1, 100, num=11, unit="us")},
+    )
+    run1.variances = run1.values.copy()
+    # Add metadata keys for matching
+    run1.coords["ManufacturerStr"] = sc.scalar(value="Andor")
+    run1.coords.set_aligned("ManufacturerStr", False)
+    run1.coords["MotSlitVB"] = sc.array(dims=["tof_edges"], values=np.full(10, 42.3))
+    run1.coords.set_aligned("MotSlitVB", False)
+
+    run2 = sc.DataArray(
+        data=sc.array(dims=["tof_edges", "x", "y"], values=np.zeros((10, 5, 5)), unit="counts"),
+        coords={"tof_edges": sc.linspace("tof_edges", 1, 100, num=11, unit="us")},
+    )
+    run2.variances = run2.values.copy()
+
+    # test missing metadata keys for matching
+    with pytest.raises(ValueError, match="Metadata key 'ManufacturerStr' not found in run 1 for matching"):
+        combine_runs([run1, run2], metadata_check_match=["ManufacturerStr"])
+
+    with pytest.raises(ValueError, match="Metadata key 'MotSlitVB' not found in run 1 for matching"):
+        combine_runs([run1, run2], metadata_check_match=["MotSlitVB"])
+
+    # test mismatched metadata values for matching
+    run2.coords["ManufacturerStr"] = sc.scalar(value="QHY")
+    run2.coords.set_aligned("ManufacturerStr", False)
+    run2.coords["MotSlitVB"] = sc.array(dims=["tof_edges"], values=np.full(10, 12.3))
+    run2.coords.set_aligned("MotSlitVB", False)
+
+    with pytest.raises(
+        ValueError, match="Metadata key 'ManufacturerStr' does not match between run 1 and base run: QHY vs Andor"
+    ):
+        combine_runs([run1, run2], metadata_check_match=["ManufacturerStr"])
+
+    with pytest.raises(ValueError, match="Metadata key 'MotSlitVB' does not match between run 1 and base run:"):
+        combine_runs([run1, run2], metadata_check_match=["MotSlitVB"])
+
+    # test matching metadata values for matching
+    run2.coords["ManufacturerStr"] = sc.scalar(value="Andor")
+    run2.coords.set_aligned("ManufacturerStr", False)
+    run2.coords["MotSlitVB"] = sc.array(dims=["tof_edges"], values=np.full(10, 42.3))
+    run2.coords.set_aligned("MotSlitVB", False)
+
+    combined = combine_runs(
+        [run1, run2], metadata_check_match=["ManufacturerStr", "MotSlitVB"], metadata_keys_to_sum=[]
+    )
+    # If no error is raised, the test passes. We can also check that the combined metadata values are correct
+    assert combined.coords["ManufacturerStr"].value == "Andor"
+    np.testing.assert_allclose(combined.coords["MotSlitVB"].values, np.full(10, 42.3))
 
 
 def test_combine_runs_different_dims():

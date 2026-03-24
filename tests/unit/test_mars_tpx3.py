@@ -90,8 +90,8 @@ class TestMarsTPX3Pipeline:
             output_path = Path(f.name)
 
             run_mars_tpx3_pipeline(
-                sample_paths=self.sample_paths,
-                ob_paths=self.ob_paths,
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
                 output_path=output_path,
                 detector_shape=(32, 32),  # match our test data
             )
@@ -125,9 +125,9 @@ class TestMarsTPX3Pipeline:
                 np.testing.assert_equal(hf["masks/hot"], np.zeros((32, 32), dtype=bool))
                 # Check metadata
                 assert "metadata/sample_paths" in hf
-                np.testing.assert_equal(hf["metadata/sample_paths"].asstr()[:], [str(p) for p in self.sample_paths])
+                np.testing.assert_equal(hf["metadata/sample_paths"].asstr()[:], [[str(p) for p in self.sample_paths]])
                 assert "metadata/ob_paths" in hf
-                np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[:], [str(p) for p in self.ob_paths])
+                np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[:], [[str(p) for p in self.ob_paths]])
                 assert "metadata/gamma_filter_applied" in hf
                 np.testing.assert_equal(hf["metadata/gamma_filter_applied"][()], True)
                 assert "metadata/processing_timestamp" in hf
@@ -143,8 +143,8 @@ class TestMarsTPX3Pipeline:
             output_path = Path(f.name)
 
             run_mars_tpx3_pipeline(
-                sample_paths=self.sample_paths,
-                ob_paths=self.ob_paths,
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
                 output_path=output_path,
                 roi=(5, 5, 25, 25),
             )
@@ -201,8 +201,8 @@ class TestMarsTPX3Pipeline:
             output_path = Path(f.name)
 
             transmission = run_mars_tpx3_pipeline(
-                sample_paths=self.sample_paths_bad_pixels,
-                ob_paths=self.ob_paths,
+                sample_paths=[self.sample_paths_bad_pixels],
+                ob_paths=[self.ob_paths],
                 output_path=output_path,
                 roi=(5, 5, 25, 25),
                 gamma_filter=False,  # disable gamma filter to test that hot pixel is not removed
@@ -233,3 +233,27 @@ class TestMarsTPX3Pipeline:
         expected_hot_pixel_mask = np.zeros((20, 20), dtype=bool)
         expected_hot_pixel_mask[19 - 5, 7 - 5] = True
         np.testing.assert_array_equal(transmission.masks["hot_pixels"].values, expected_hot_pixel_mask)
+
+    def test_mars_tpx3_pipeline_combining_runs(self):
+        """Test combining multiple runs by providing multiple sample paths and multiple ob paths."""
+
+        with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+            output_path = Path(f.name)
+
+            transmission = run_mars_tpx3_pipeline(
+                sample_paths=[self.sample_paths, self.sample_paths, self.sample_paths],
+                ob_paths=[self.ob_paths, self.ob_paths],
+                output_path=output_path,
+                detector_shape=(32, 32),
+            )
+
+            assert output_path.exists()
+
+        assert transmission.shape == (5, 32, 32)
+        # values should be the same as original sample values since we are normalizing by number of runs
+        for i in range(5):
+            expected_value = np.full((32, 32), (81 + i) / 100)
+            np.testing.assert_allclose(transmission.values[i], expected_value)
+
+        # The variances should be less than the variance from a single run due to combining multiple runs
+        np.testing.assert_allclose(transmission.variances, 0.004, atol=0.001)

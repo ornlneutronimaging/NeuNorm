@@ -18,13 +18,14 @@ from neunorm.loaders.event_loader import load_event_data
 from neunorm.processing.normalizer import normalize_transmission
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
+from neunorm.processing.run_combiner import combine_runs
 from neunorm.tof.event_converter import convert_events_to_2d_histogram
 from neunorm.tof.pixel_detector import detect_dead_pixels, detect_hot_pixels
 
 
 def run_mars_tpx3_pipeline(  # noqa: C901
-    sample_paths: Sequence[str | Path],
-    ob_paths: Sequence[str | Path],
+    sample_paths: Sequence[Sequence[str | Path]],
+    ob_paths: Sequence[Sequence[str | Path]],
     output_path: Path,
     roi: Optional[tuple] = None,
     gamma_filter: bool = True,
@@ -45,10 +46,12 @@ def run_mars_tpx3_pipeline(  # noqa: C901
 
     Parameters
     ----------
-    sample_paths : Sequence[str | Path]
-        List of paths to sample HDF5 files
-    ob_paths : Sequence[str | Path]
-        List of paths to open beam HDF5 files
+    sample_paths : Sequence[Sequence[str | Path]]
+        List of lists of paths to sample HDF5 files.
+        Each inner list corresponds to one run and will be combined before processing.
+    ob_paths : Sequence[Sequence[str | Path]]
+        List of lists of paths to open beam HDF5 files
+        Each inner list corresponds to one run and will be combined before processing.
     output_path : Path
         Path to save the output file (HDF5 or TIFF)
     roi : Optional[tuple]
@@ -70,12 +73,18 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     """
 
     # Load data and convert to histogram
-    sample = sc.concat(
-        [convert_events_to_2d_histogram(load_event_data(p), detector_shape) for p in sample_paths], dim="N_image"
-    )
-    ob = sc.concat(
-        [convert_events_to_2d_histogram(load_event_data(p), detector_shape) for p in ob_paths], dim="N_image"
-    )
+    samples = [
+        sc.concat([convert_events_to_2d_histogram(load_event_data(p), detector_shape) for p in run], dim="N_image")
+        for run in sample_paths
+    ]
+    obs = [
+        sc.concat([convert_events_to_2d_histogram(load_event_data(p), detector_shape) for p in run], dim="N_image")
+        for run in ob_paths
+    ]
+
+    # Combine runs if there are multiple runs
+    sample = combine_runs(samples, metadata_keys_to_sum=[], metadata_check_match=[], normalize_by_runs=True)
+    ob = combine_runs(obs, metadata_keys_to_sum=[], metadata_check_match=[], normalize_by_runs=True)
 
     # Apply ROI if specified
     if roi:
@@ -100,8 +109,8 @@ def run_mars_tpx3_pipeline(  # noqa: C901
 
     # Write output
     metadata = {
-        "sample_paths": [str(p) for p in sample_paths],
-        "ob_paths": [str(p) for p in ob_paths],
+        "sample_paths": [[str(p) for p in run] for run in sample_paths],
+        "ob_paths": [[str(p) for p in run] for run in ob_paths],
         "gamma_filter_applied": gamma_filter,
         "processing_timestamp": datetime.now().isoformat(),
         "version": __version__,
