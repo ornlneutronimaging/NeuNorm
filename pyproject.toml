@@ -218,6 +218,7 @@ nbconvert = ">=7.17.0" # required by nbsphinx, setting minimum to avoid vulnerab
 [tool.pixi.feature.viz.dependencies]
 matplotlib = "*"
 fonttools = ">=4.60.2" # required by matplotlib, setting minimum to avoid vulnerabilities
+tornado = ">=6.5.5"    # required by matplotlib, setting minimum to avoid vulnerabilities
 ipympl = "*"
 
 [tool.pixi.feature.jupyter.dependencies]

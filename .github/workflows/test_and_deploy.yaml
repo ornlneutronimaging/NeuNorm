@@ -40,7 +40,7 @@ jobs:
 
       - name: Dependency check
         run: |
-          pixi run audit-deps --ignore-vuln GHSA-78cv-mqj4-43f7 --ignore-vuln CVE-2026-31958 # temporary ignore until we can update to a fixed version of tornado >=6.5.5
+          pixi run audit-deps --ignore-vuln CVE-2026-4539 # temporary ignore until fixed version of pygments
 
   conda-build:
     name: Build conda package
