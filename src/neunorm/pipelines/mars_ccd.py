@@ -14,44 +14,13 @@ from neunorm import __version__
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
-from neunorm.loaders.fits_loader import load_fits_stack
-from neunorm.loaders.tiff_loader import load_tiff_stack
+from neunorm.loaders.stack_loader import load_stack
 from neunorm.processing.dark_corrector import subtract_dark
 from neunorm.processing.normalizer import normalize_transmission
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.run_combiner import combine_runs
 from neunorm.tof.pixel_detector import detect_dead_pixels
-
-
-def load_stack(paths: Sequence[str | Path]) -> sc.DataArray:
-    """
-    Load a stack of images from the given file paths, supporting both TIFF and FITS formats.
-
-    Check the extension of the first file in the list and call the appropriate loader function
-    load_tiff_stack or load_fits_stack.
-
-    Verify all files have the same extension and raise an error if not.
-    """
-
-    if not paths:
-        raise ValueError("No file paths provided")
-
-    first_ext = Path(paths[0]).suffix.lower()
-    if first_ext in (".tiff", ".tif"):
-        for path in paths:
-            if Path(path).suffix.lower() != first_ext:
-                raise ValueError(f"All files must have the same extension. Found mixed extensions: {paths}")
-        return load_tiff_stack(paths)
-    elif first_ext in (".fits", ".fit", ".fts"):
-        for path in paths:
-            if Path(path).suffix.lower() != first_ext:
-                raise ValueError(f"All files must have the same extension. Found mixed extensions: {paths}")
-        return load_fits_stack(paths)
-    else:
-        raise ValueError(
-            f"Unsupported file format: {first_ext}. Supported are TIFF (.tiff, .tif) and FITS (.fits, .fit, .fts)."
-        )
 
 
 def run_mars_ccd_pipeline(  # noqa: C901
