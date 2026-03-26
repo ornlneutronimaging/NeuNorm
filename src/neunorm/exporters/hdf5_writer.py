@@ -12,7 +12,7 @@ import scipp as sc
 from loguru import logger
 
 
-def write_hdf5(
+def write_hdf5(  # noqa: C901
     output_path: Union[Path, str],
     transmission: sc.DataArray,
     dead_pixel_mask: str = "dead",
@@ -76,9 +76,12 @@ def write_hdf5(
 
         # Write coordinates
         for coord in transmission.coords:
-            f.create_dataset(f"/{coord}", data=transmission.coords[coord].values)
-            if transmission.coords[coord].unit is not None:
-                f[f"/{coord}"].attrs["units"] = str(transmission.coords[coord].unit)
+            try:
+                f.create_dataset(f"/{coord}", data=transmission.coords[coord].values)
+                if transmission.coords[coord].unit is not None:
+                    f[f"/{coord}"].attrs["units"] = str(transmission.coords[coord].unit)
+            except TypeError as e:
+                logger.warning(f"Could not write coordinate '{coord}' to HDF5: {e}")
 
         # Write masks
         if dead_pixel_mask in transmission.masks:

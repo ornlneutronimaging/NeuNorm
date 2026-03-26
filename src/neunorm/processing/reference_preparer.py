@@ -43,7 +43,7 @@ def median_with_variance(data: sc.DataArray, dim: str) -> sc.DataArray:
     )
 
 
-def prepare_reference(
+def prepare_reference(  # noqa: C901
     stack: sc.DataArray,
     method: str = "mean",
     dim: str = "frame",
@@ -73,12 +73,30 @@ def prepare_reference(
         raise ValueError(f"Dimension '{dim}' not found in input data. Available dimensions: {stack.dims}")
 
     if method == "mean":
-        return stack.mean(dim=dim)
+        result = stack.mean(dim=dim)
 
-    if method == "median":
+    elif method == "median":
         if stack.variances is None:
-            return stack.median(dim=dim)
+            result = stack.median(dim=dim)
         else:
-            return median_with_variance(stack, dim=dim)
+            result = median_with_variance(stack, dim=dim)
+    else:
+        raise ValueError(f"Unsupported method '{method}'. Use 'mean' or 'median'.")
 
-    raise ValueError(f"Unsupported method '{method}'. Use 'mean' or 'median'.")
+    # Integrate non-aligned coords along the same dimension by taking the mean (or median) across the same dimension.
+    # Otherwise just copy the coordinate.
+    for coord in stack.coords:
+        if not stack.coords[coord].aligned:
+            if dim in stack.coords[coord].dims:
+                if method == "mean":
+                    result.coords[coord] = stack.coords[coord].mean(dim=dim)
+                elif method == "median":
+                    result.coords[coord] = stack.coords[coord].median(dim=dim)
+                else:
+                    raise ValueError(f"Unsupported method '{method}' for coordinate '{coord}'. Use 'mean' or 'median'.")
+            else:
+                # If the coordinate does not have the reduction dimension, just copy
+                result.coords[coord] = stack.coords[coord]
+            result.coords.set_aligned(coord, False)
+
+    return result
