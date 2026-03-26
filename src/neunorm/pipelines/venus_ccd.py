@@ -104,7 +104,6 @@ def run_venus_ccd_pipeline(  # noqa: C901
         metadata_check_match=["ManufacturerStr"],
         normalize_by_runs=True,
     )
-    print(ob.coords["IntegratedPCharge"])
 
     dark = combine_runs(
         dark,
@@ -122,7 +121,6 @@ def run_venus_ccd_pipeline(  # noqa: C901
     # Average dark and OB
     dark = prepare_reference(dark, dim="N_image")
     ob = prepare_reference(ob, dim="N_image")
-    print(ob.coords["IntegratedPCharge"])
 
     # Dead pixel detection
     sample.masks["dead_pixels"] = detect_dead_pixels(sample)
@@ -132,9 +130,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
         sample = apply_gamma_filter(sample)
 
     # Dark correction
-    print(sample.coords["IntegratedPCharge"])
     sample_dark_corrected = subtract_dark(sample, dark)
-    print(ob.coords["IntegratedPCharge"])
     ob_dark_corrected = subtract_dark(ob, dark)
 
     # Normalization
