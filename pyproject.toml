@@ -188,6 +188,7 @@ numba = ">=0.60"          # For testing performance module
 [tool.pixi.feature.package.dependencies]
 anaconda-client = ">=1.13.0,<2"
 pyjwt = ">=2.12.0"              # required by anaconda-client, setting minimum to avoid vulnerabilities
+requests = ">=2.33.0"           # required by anaconda-client, setting minimum to avoid vulnerabilities
 twine = ">=6.1.0,<7"
 versioningit = "*"
 hatch = "*"
