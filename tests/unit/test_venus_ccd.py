@@ -19,6 +19,7 @@ class TestVenusCCDPipeline:
         """Create tiff files for testing once for all tests in this class."""
         cls.sample_paths = []
         cls.sample_paths_bad_pixels = []
+        cls.sample_paths_air = []
         cls.ob_paths = []
         cls.dark_paths = []
 
@@ -75,6 +76,17 @@ class TestVenusCCDPipeline:
             filename = tmp_dir / f"dark_{i:03}.tiff"
             img.save(filename, exif=exif)
             cls.dark_paths.append(filename)
+
+        # create a sample for testing air region correction
+        data = np.full((32, 32), 80, dtype=np.float32)
+        # set higher values in region
+        data[6:11, 6:11] = 100.0
+        img = Image.fromarray(data)
+        exif = img.getexif()
+        exif[65027] = "IntegratedPCharge:0.1"
+        filename = tmp_dir / "sample_air.tiff"
+        img.save(filename, exif=exif)
+        cls.sample_paths_air.append(filename)
 
     @classmethod
     def teardown_class(cls):
@@ -282,3 +294,46 @@ class TestVenusCCDPipeline:
         np.testing.assert_equal(
             transmission.coords["ManufacturerStr"].values, "ANDOR"
         )  # should be unchanged since it's the same for both runs
+
+    def test_venus_ccd_pipeline_air_roi(self):
+        """Test that air_roi is handled correctly."""
+
+        with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+            output_path = Path(f.name)
+
+            transmission = run_venus_ccd_pipeline(
+                sample_paths=[
+                    self.sample_paths_air,
+                ],
+                ob_paths=[self.ob_paths[1:2]],  # include only the OB with value 100
+                dark_paths=[self.dark_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                air_roi=(6, 6, 11, 11),
+            )
+
+            assert output_path.exists()
+
+        assert transmission.shape == (1, 32, 32)
+        # air region should equal 1.0
+        np.testing.assert_allclose(transmission.values[:, 6:11, 6:11], 1)
+        # check all values
+        expected_value = np.full((1, 32, 32), (80 - 5) / (100 - 5) * 2)
+        expected_value[:, 6:11, 6:11] = (100 - 5) / (100 - 5) * 2  # air region which equals 2
+        expected_value /= 2  # air region should be normalized to 1.0
+        np.testing.assert_allclose(transmission.values, expected_value)
+
+        # check that the variances exist and are reasonable
+        expected_variances = np.full((1, 32, 32), 0.0168)
+        expected_variances[:, 6:11, 6:11] = 0.0237
+        np.testing.assert_allclose(transmission.variances, expected_variances, atol=0.001)
+
+        # The mask should only have the dead pixel masked
+        expected_dead_pixel_mask = np.zeros((32, 32), dtype=bool)
+        np.testing.assert_array_equal(transmission.masks["dead_pixels"].values, expected_dead_pixel_mask)
+
+        # check that the metadata keys that should be summed are unchanged
+        assert "IntegratedPCharge" in transmission.coords
+        np.testing.assert_equal(
+            transmission.coords["IntegratedPCharge"].values, [0.1]
+        )  # should be unchanged since we are normalizing by the number of runs
