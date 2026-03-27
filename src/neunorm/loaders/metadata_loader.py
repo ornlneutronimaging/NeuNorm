@@ -87,6 +87,9 @@ def load_metadata(file_path: Union[str, Path], read_shutter_counts: bool = False
                         f"Image directory in metadata not found: {image_path}. Shutter counts will not be loaded."
                     )
 
+        if "DASlogs" in f["entry"] and "BL10:Exp:Det" in f["entry"]["DASlogs"]:
+            metadata["detector"] = f["entry"]["DASlogs"]["BL10:Exp:Det"]["value_strings"][-1][0].decode("utf-8").strip()
+
     logger.debug(f"Loaded metadata: {metadata}")
 
     return metadata

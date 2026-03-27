@@ -5,17 +5,17 @@ Implements the core neutron imaging equation: T = Sample / OpenBeam
 with proper uncertainty propagation and beam corrections.
 """
 
-from typing import Optional
+from typing import Optional, Union
 
 import scipp as sc
 from loguru import logger
 
 
-def normalize_transmission(
+def normalize_transmission(  # noqa: C901
     sample: sc.DataArray,
     ob: sc.DataArray,
-    proton_charge_sample: Optional[float] = None,
-    proton_charge_ob: Optional[float] = None,
+    proton_charge_sample: Optional[Union[float, sc.Variable]] = None,
+    proton_charge_ob: Optional[Union[float, sc.Variable]] = None,
     pc_uncertainty: float = 0.005,
 ) -> sc.DataArray:
     """
@@ -35,10 +35,10 @@ def normalize_transmission(
         Sample histogram with variance
     ob : sc.DataArray
         Open beam histogram with variance
-    proton_charge_sample : float, optional
+    proton_charge_sample : float or sc.Variable, optional
         Integrated proton charge during sample acquisition (Coulombs)
         If provided, normalizes by beam intensity
-    proton_charge_ob : float, optional
+    proton_charge_ob : float or sc.Variable, optional
         Integrated proton charge during OB acquisition (Coulombs)
     pc_uncertainty : float, optional
         Relative proton charge uncertainty (default: 0.005 = 0.5%)
@@ -73,8 +73,12 @@ def normalize_transmission(
 
     # Apply proton charge corrections if provided
     if proton_charge_sample is not None:
-        logger.info(f"  Applying proton charge correction: Sample pc={proton_charge_sample:.1f} C")
-        sample_corrected = sample / sc.scalar(proton_charge_sample, unit="C")
+        if isinstance(proton_charge_sample, sc.Variable):
+            logger.info(f"  Applying proton charge correction: Sample mean pc={proton_charge_sample.mean().value} C")
+            sample_corrected = sample / proton_charge_sample
+        else:
+            logger.info(f"  Applying proton charge correction: Sample pc={proton_charge_sample} C")
+            sample_corrected = sample / sc.scalar(proton_charge_sample, unit="C")
 
         # Add proton charge systematic uncertainty
         if sample_corrected.variances is not None:
@@ -84,8 +88,12 @@ def normalize_transmission(
         sample_corrected = sample
 
     if proton_charge_ob is not None:
-        logger.info(f"  Applying proton charge correction: OB pc={proton_charge_ob:.1f} C")
-        ob_corrected = ob / sc.scalar(proton_charge_ob, unit="C")
+        if isinstance(proton_charge_ob, sc.Variable):
+            logger.info(f"  Applying proton charge correction: OB mean pc={proton_charge_ob.mean().value} C")
+            ob_corrected = ob / proton_charge_ob
+        else:
+            logger.info(f"  Applying proton charge correction: OB pc={proton_charge_ob:.1f} C")
+            ob_corrected = ob / sc.scalar(proton_charge_ob, unit="C")
 
         # Add proton charge systematic uncertainty
         if ob_corrected.variances is not None:

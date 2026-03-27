@@ -1,5 +1,5 @@
 """
-MARS CCD/CMOS normalization pipeline.
+VENUS CCD/CMOS normalization pipeline.
 """
 
 from datetime import datetime
@@ -15,6 +15,7 @@ from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
 from neunorm.loaders.stack_loader import load_stack
+from neunorm.processing.air_region_corrector import apply_air_region_correction
 from neunorm.processing.dark_corrector import subtract_dark
 from neunorm.processing.normalizer import normalize_transmission
 from neunorm.processing.reference_preparer import prepare_reference
@@ -23,26 +24,31 @@ from neunorm.processing.run_combiner import combine_runs
 from neunorm.tof.pixel_detector import detect_dead_pixels
 
 
-def run_mars_ccd_pipeline(  # noqa: C901
+def run_venus_ccd_pipeline(  # noqa: C901
     sample_paths: Sequence[Sequence[str | Path]],
     ob_paths: Sequence[Sequence[str | Path]],
     dark_paths: Sequence[Sequence[str | Path]],
     output_path: Path,
     roi: Optional[tuple] = None,
     gamma_filter: bool = True,
+    air_roi: Optional[tuple] = None,
 ) -> sc.DataArray:
-    """Execute MARS CCD/CMOS normalization pipeline.
+    """Execute VENUS CCD/CMOS normalization pipeline.
 
-    Pipeline Steps (10 total)
+    Pipeline Steps (12 total)
     - Load TIFF/FITS (sample, OB, dark)
-    - Run combine (optional)
+    - Load p_charge metadata
+    - Run combine (critical for VENUS)
     - ROI clip (optional)
     - Average dark/OB
-    - Dead pixel detection (existing tof/pixel_detector.py)
-    - Gamma filtering (filters/gamma_filter.py)
-    - Dark correction (processing/dark_corrector.py)
-    - Normalization (existing processing/normalizer.py)
-    - Output (exporters/hdf5_writer.py, exporters/tiff_writer.py)
+    - Dead pixel detection
+    - Gamma filtering (optional, less critical than MARS)
+    - Dark correction
+    - p_charge beam correction
+    - Normalization
+    - Air region correction (optional)
+    - Error propagation (includes p_charge uncertainty)
+    - Output
 
     Parameters
     ----------
@@ -61,6 +67,9 @@ def run_mars_ccd_pipeline(  # noqa: C901
         Region of interest to apply (x_start, y_start, x_end, y_end)
     gamma_filter : bool
         Whether to apply gamma filtering to the sample data (default: True)
+    air_roi : Optional[tuple]
+        Region of interest to use for air correction (x_start, y_start, x_end, y_end).
+        If None, air correction is not applied.
 
     Notes
     -----
@@ -79,45 +88,27 @@ def run_mars_ccd_pipeline(  # noqa: C901
     dark = [load_stack(paths) for paths in dark_paths]
 
     # Before combining, check that all sample runs have the same shape and some metadata keys match
-    # Keys to check [ManufacturerStr, MotSlitVB.RBV, MotSlitVT.RBV, MotSlitHR.RBV, MotSlitHL.RBV].
-    # MotSlit does not need to match for dark. ExposureTime is included in metadata checks and is
+    # Keys to check ManufacturerStr. IntegratedPCharge is included in metadata checks and is
     # effectively averaged/normalized across runs (not summed) when normalize_by_runs=True.
 
     sample = combine_runs(
         samples,
-        metadata_keys_to_sum=("ExposureTime",),
-        metadata_check_match=[
-            "ExposureTime",
-            "ManufacturerStr",
-            "MotSlitVB.RBV",
-            "MotSlitVT.RBV",
-            "MotSlitHR.RBV",
-            "MotSlitHL.RBV",
-        ],
+        metadata_keys_to_sum=("IntegratedPCharge",),
+        metadata_check_match=["ManufacturerStr"],
         normalize_by_runs=True,
     )
 
     ob = combine_runs(
         ob,
-        metadata_keys_to_sum=("ExposureTime",),
-        metadata_check_match=[
-            "ExposureTime",
-            "ManufacturerStr",
-            "MotSlitVB.RBV",
-            "MotSlitVT.RBV",
-            "MotSlitHR.RBV",
-            "MotSlitHL.RBV",
-        ],
+        metadata_keys_to_sum=("IntegratedPCharge",),
+        metadata_check_match=["ManufacturerStr"],
         normalize_by_runs=True,
     )
 
     dark = combine_runs(
         dark,
-        metadata_keys_to_sum=("ExposureTime",),
-        metadata_check_match=[
-            "ExposureTime",
-            "ManufacturerStr",
-        ],
+        metadata_keys_to_sum=("IntegratedPCharge",),
+        metadata_check_match=["ManufacturerStr"],
         normalize_by_runs=True,
     )
 
@@ -143,7 +134,16 @@ def run_mars_ccd_pipeline(  # noqa: C901
     ob_dark_corrected = subtract_dark(ob, dark)
 
     # Normalization
-    transmission = normalize_transmission(sample_dark_corrected, ob_dark_corrected)
+    transmission = normalize_transmission(
+        sample=sample_dark_corrected,
+        ob=ob_dark_corrected,
+        proton_charge_sample=sample.coords["IntegratedPCharge"],
+        proton_charge_ob=ob.coords["IntegratedPCharge"],
+    )
+
+    # Air region correction (optional)
+    if air_roi is not None:
+        transmission = apply_air_region_correction(transmission, air_roi)
 
     # Write output
     metadata = {
@@ -176,8 +176,8 @@ def run_mars_ccd_pipeline(  # noqa: C901
             model = sample.coords["Model"].value
 
         daqmetadata = {
-            "facility": "HFIR",
-            "instrument": "MARS",
+            "facility": "SNS",
+            "instrument": "VENUS",
             "detector_type": model,
             "source_type": "neutron",
         }
@@ -198,5 +198,5 @@ def run_mars_ccd_pipeline(  # noqa: C901
     else:
         raise ValueError(f"Unsupported output file format: {output_path.suffix}")
 
-    logger.success("MARS CCD pipeline completed successfully. Output written to {}", output_path)
+    logger.success("VENUS CCD pipeline completed successfully. Output written to {}", output_path)
     return transmission
