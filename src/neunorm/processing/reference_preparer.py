@@ -74,7 +74,6 @@ def prepare_reference(  # noqa: C901
 
     if method == "mean":
         result = stack.mean(dim=dim)
-
     elif method == "median":
         if stack.variances is None:
             result = stack.median(dim=dim)
@@ -88,12 +87,22 @@ def prepare_reference(  # noqa: C901
     for coord in stack.coords:
         if not stack.coords[coord].aligned:
             if dim in stack.coords[coord].dims:
-                if method == "mean":
-                    result.coords[coord] = stack.coords[coord].mean(dim=dim)
-                elif method == "median":
-                    result.coords[coord] = stack.coords[coord].median(dim=dim)
-                else:
-                    raise ValueError(f"Unsupported method '{method}' for coordinate '{coord}'. Use 'mean' or 'median'.")
+                try:
+                    if method == "mean":
+                        result.coords[coord] = stack.coords[coord].mean(dim=dim)
+                    elif method == "median":
+                        result.coords[coord] = stack.coords[coord].median(dim=dim)
+                    else:
+                        raise ValueError(
+                            f"Unsupported method '{method}' for coordinate '{coord}'. Use 'mean' or 'median'."
+                        )
+                except sc.DTypeError:
+                    logger.warning(
+                        "Could not reduce coordinate '{}' along dimension '{}'. Copying without reduction.",
+                        coord,
+                        dim,
+                    )
+                    result.coords[coord] = stack.coords[coord]
             else:
                 # If the coordinate does not have the reduction dimension, just copy
                 result.coords[coord] = stack.coords[coord]

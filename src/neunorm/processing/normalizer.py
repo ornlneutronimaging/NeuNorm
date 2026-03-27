@@ -74,7 +74,7 @@ def normalize_transmission(  # noqa: C901
     # Apply proton charge corrections if provided
     if proton_charge_sample is not None:
         if isinstance(proton_charge_sample, sc.Variable):
-            logger.info(f"  Applying proton charge correction: Sample pc={proton_charge_sample.values} C")
+            logger.info(f"  Applying proton charge correction: Sample mean pc={proton_charge_sample.mean().value} C")
             sample_corrected = sample / proton_charge_sample
         else:
             logger.info(f"  Applying proton charge correction: Sample pc={proton_charge_sample} C")
@@ -89,7 +89,7 @@ def normalize_transmission(  # noqa: C901
 
     if proton_charge_ob is not None:
         if isinstance(proton_charge_ob, sc.Variable):
-            logger.info(f"  Applying proton charge correction: OB pc={proton_charge_ob.values} C")
+            logger.info(f"  Applying proton charge correction: OB mean pc={proton_charge_ob.mean().value} C")
             ob_corrected = ob / proton_charge_ob
         else:
             logger.info(f"  Applying proton charge correction: OB pc={proton_charge_ob:.1f} C")

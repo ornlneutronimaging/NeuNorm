@@ -198,5 +198,5 @@ def run_venus_ccd_pipeline(  # noqa: C901
     else:
         raise ValueError(f"Unsupported output file format: {output_path.suffix}")
 
-    logger.success("MARS CCD pipeline completed successfully. Output written to {}", output_path)
+    logger.success("VENUS CCD pipeline completed successfully. Output written to {}", output_path)
     return transmission

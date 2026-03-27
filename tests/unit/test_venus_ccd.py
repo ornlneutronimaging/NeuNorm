@@ -228,8 +228,6 @@ class TestVenusCCDPipeline:
         approximate_variances = np.full((5, 20, 20), 0.047)
         approximate_variances[:, 22 - 5, 8 - 5] = 0  # dead pixel should have almost zero variance
         approximate_variances[:, 7 - 5, 19 - 5] = 0.4557  # gamma spike pixel should have higher variance
-        print(transmission.variances.min())
-        print(transmission.variances.max())
         np.testing.assert_allclose(transmission.variances, approximate_variances, atol=0.004)
 
         # The mask should only have the dead pixel masked
