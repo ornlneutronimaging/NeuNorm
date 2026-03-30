@@ -37,13 +37,15 @@ def analyze_statistics(data: sc.DataArray, min_snr: float = 3.0, tof_dim: str = 
         raise ValueError(f"Specified TOF dimension '{tof_dim}' not found in data dimensions {data.dims}")
 
     total_counts = data.sum(dim=tuple(d for d in data.dims if d != tof_dim))
+    if np.any(total_counts.values < 0):
+        raise ValueError("Negative counts detected in data. Can't analyze statistics for negative counts.")
     total_bins = total_counts.sizes[tof_dim]
     snr = np.sqrt(total_counts.values)
     low_stats_bins = np.where(snr < min_snr)[0]
     if len(low_stats_bins) == 0:
         recommended_rebinning = 1
     else:
-        # Simple heuristic: rebin by factor of 2 until all bins have sufficient SNR
+        # Simple heuristic: increase rebinning factor until all bins have sufficient SNR
         recommended_rebinning = 2
         while True:
             # Pad array to make it divisible by recommended_rebinning
