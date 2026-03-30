@@ -215,6 +215,7 @@ sphinx_rtd_theme = "*"
 myst-parser = "*"
 nbsphinx = "*"
 nbconvert = ">=7.17.0" # required by nbsphinx, setting minimum to avoid vulnerabilities
+pygments = ">=2.20.0"  # required by sphinx, setting minimum to avoid vulnerabilities
 
 [tool.pixi.feature.viz.dependencies]
 matplotlib = "*"

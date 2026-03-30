@@ -40,7 +40,7 @@ jobs:
 
       - name: Dependency check
         run: |
-          pixi run audit-deps --ignore-vuln CVE-2026-4539 # temporary ignore until fixed version of pygments
+          pixi run audit-deps --ignore-vuln CVE-2026-34073 # temporary ignore until fixed version of cryptography
 
   conda-build:
     name: Build conda package
