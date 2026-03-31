@@ -31,7 +31,7 @@ def rebin_tof(  # noqa: C901
         Unit by which the new bin width is specified. Must be one of `time`, `wavelength` or `bins`. Default is `time`.
         If `bins`, width is interpreted as the number of adjacent bins to combine.
         If `time`, width is interpreted as the desired width of the new TOF bins in the same unit as the coordinates.
-        If `wavelength`, width is interpreted as the desired width of the new TOF bins in wavelength units,
+        If `wavelength`, width is interpreted as the desired width of the new TOF bins in Angstrom units,
         and converted to time using the provided source-to-detector distance and detector time offset.
     logarithmic : bool
         Whether to use logarithmic binning. Default is False.
@@ -64,7 +64,7 @@ def rebin_tof(  # noqa: C901
     elif unit == "time":
         tof_edges = data.coords[tof_dim]
         if logarithmic:
-            new_tof_edges = sc.logspace(
+            new_tof_edges = sc.geomspace(
                 tof_edges[0], tof_edges[-1], num=int((sc.log(tof_edges[-1]) - sc.log(tof_edges[0])) / width) + 1
             )
         else:
@@ -75,22 +75,17 @@ def rebin_tof(  # noqa: C901
         offset = sc.scalar(detector_time_offset, unit=tof_edges.unit)
         if logarithmic:
             # convert to wavelength edges, create logarithmic wavelength edges, then convert back to TOF edges
-            wavelength_edges = sc.to_unit(
-                sc.to_unit((tof_edges + offset), "s") * sc.constants.h / (sc.constants.m_n * lsd), "Angstrom"
-            )
-            new_wavelength_edges = sc.logspace(
+            wavelength_edges = sc.to_unit((tof_edges + offset) * sc.constants.h / (sc.constants.m_n * lsd), "Angstrom")
+            new_wavelength_edges = sc.geomspace(
                 wavelength_edges[0],
                 wavelength_edges[-1],
                 num=int((sc.log(wavelength_edges[-1]) - sc.log(wavelength_edges[0])) / width) + 1,
             )
-            new_tof_edges = sc.to_unit(
-                sc.scalar(new_wavelength_edges, unit="Angstrom") * sc.constants.m_n * lsd / sc.constants.h - offset,
-                tof_edges.unit,
+            new_tof_edges = (
+                sc.scalar(new_wavelength_edges, unit="Angstrom") * sc.constants.m_n * lsd / sc.constants.h - offset
             )
         else:
-            new_tof_edges = sc.to_unit(
-                sc.scalar(width, unit="Angstrom") * sc.constants.m_n * lsd / sc.constants.h - offset, tof_edges.unit
-            )
+            new_tof_edges = sc.scalar(width, unit="Angstrom") * sc.constants.m_n * lsd / sc.constants.h
     else:
         raise ValueError("Invalid unit for rebinning width. Must be one of 'time', 'wavelength', or 'bins'.")
 
