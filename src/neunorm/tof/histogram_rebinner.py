@@ -2,6 +2,8 @@
 Module for rebinning TOF histograms. Provides functionality to combine adjacent TOF bins and update edges accordingly.
 """
 
+from typing import Union
+
 import numpy as np
 import scipp as sc
 
@@ -12,14 +14,29 @@ def rebin_with_snapped_boundaries(old_edges: sc.Variable, requested_tof_edges: s
     This ensures that we only combine adjacent bins and don't create arbitrary bin schemes,
     which is a requirement for histogram-mode data.
     """
-    idx = np.searchsorted(old_edges.values, requested_tof_edges.values, side="right") - 1
+    # Map requested edges to indices of the nearest original edge on the left.
+    old_vals = old_edges.values
+    req_vals = requested_tof_edges.values
+    idx = np.searchsorted(old_vals, req_vals, side="right") - 1
+    # Prevent negative indices (which would wrap to the last element) or indices
+    # beyond the last edge. This keeps snapping within the valid range of edges.
+    idx = np.clip(idx, 0, len(old_vals) - 1)
+    snapped_vals = old_vals[idx]
+    # Validate that snapped edges form a strictly increasing sequence of original edges.
+    if snapped_vals.size == 0 or not np.all(np.diff(snapped_vals) > 0):
+        raise ValueError(
+            "Requested TOF binning would require splitting existing bins or "
+            "would produce non-increasing/zero-width bins. "
+            "Adjust the requested TOF edges or bin width so that consecutive "
+            "snapped edges correspond to strictly increasing original bin edges."
+        )
 
     return old_edges[idx]
 
 
 def rebin_tof(  # noqa: C901
     data: sc.DataArray,
-    width: float,
+    width: Union[int, float],
     unit: str = "bins",
     logarithmic: bool = False,
     tof_dim: str = "tof",
@@ -44,10 +61,10 @@ def rebin_tof(  # noqa: C901
     ----------
     data : sc.DataArray
         Input data with TOF dimension.
-    width : float
+    width : Union[int, float]
         Width of the new TOF bins in terms of the specified unit. Must be positive.
     unit : str
-        Unit by which the new bin width is specified. Must be one of `time`, `wavelength` or `bins`. Default is `time`.
+        Unit by which the new bin width is specified. Must be one of `time`, `wavelength` or `bins`. Default is `bins`.
         If `bins`, width is interpreted as the number of adjacent bins to combine.
         If `time`, width is interpreted as the desired width of the new TOF bins in the same unit as the coordinates.
         If `wavelength`, width is interpreted as the desired width of the new TOF bins in Angstrom units,
@@ -71,12 +88,17 @@ def rebin_tof(  # noqa: C901
     if unit == "bins":
         if logarithmic:
             raise ValueError("Logarithmic binning is not supported when unit is 'bins'.")
-        factor = int(width)
 
-        if factor == 1:
+        # check if width is an integer and if not, raise an error
+        if not isinstance(width, int):
+            raise ValueError(
+                "When unit is 'bins', width must be an integer representing the number of adjacent bins to combine."
+            )
+
+        if width == 1:
             return data  # No rebinning needed
         # create new TOF edges by taking every Nth edge from the original TOF edges
-        new_tof_edges = data.coords[tof_dim][::factor]
+        new_tof_edges = data.coords[tof_dim][::width]
         # add last edge if not included
         if not sc.identical(new_tof_edges[-1], data.coords[tof_dim][-1]):
             new_tof_edges = sc.concat([new_tof_edges, data.coords[tof_dim][-1:]], dim=tof_dim)

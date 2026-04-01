@@ -20,9 +20,9 @@ def test_rebin_tof_by_bins():
     )
     data.variances = values
 
-    # rebin by a width of 1, which should return the original data
+    # rebin by a width of 1, which should return data that is unchanged
     result = rebin_tof(data, width=1)
-    assert result is data  # Should return the original data without modification
+    assert sc.identical(result, data)  # Should return data that is identical to the original data
 
     # rebin by a width of 2, which should combine every 2 adjacent TOF bins into one
     result = rebin_tof(data, width=2)
@@ -258,3 +258,22 @@ def test_rebin_tof_invalid():
 
     with pytest.raises(ValueError):
         rebin_tof(data, width=2, unit="bins", logarithmic=True)  # Logarithmic binning not supported for 'bins' unit
+
+    with pytest.raises(ValueError):
+        rebin_tof(data, width=2.5, unit="bins")  # Non-integer width not allowed for 'bins' unit
+
+
+def test_rebin_with_snapped_boundaries():
+    """Test the rebin_with_snapped_boundaries function"""
+    from neunorm.tof.histogram_rebinner import rebin_with_snapped_boundaries
+
+    old_edges = sc.array(dims=["tof"], values=[0, 10, 20, 30, 40], unit="us")
+
+    new_edges = rebin_with_snapped_boundaries(old_edges, sc.array(dims=["tof"], values=[15, 35], unit="us"))
+    np.testing.assert_allclose(new_edges.values, [10, 30])
+
+    new_edges = rebin_with_snapped_boundaries(old_edges, sc.array(dims=["tof"], values=[-10, 100], unit="us"))
+    np.testing.assert_allclose(new_edges.values, [0, 40])
+
+    with pytest.raises(ValueError, match="Requested TOF binning would require splitting existing bins"):
+        rebin_with_snapped_boundaries(old_edges, sc.array(dims=["tof"], values=[0, 1, 2, 3], unit="us"))
