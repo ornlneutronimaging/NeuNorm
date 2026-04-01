@@ -2,7 +2,19 @@
 Module for rebinning TOF histograms. Provides functionality to combine adjacent TOF bins and update edges accordingly.
 """
 
+import numpy as np
 import scipp as sc
+
+
+def rebin_with_snapped_boundaries(old_edges: sc.Variable, requested_tof_edges: sc.Variable):
+    """
+    For requested TOF edges that don't align with original TOF edges, snap to the nearest original edge on the left.
+    This ensures that we only combine adjacent bins and don't create arbitrary bin schemes,
+    which is a requirement for histogram-mode data.
+    """
+    idx = np.searchsorted(old_edges.values, requested_tof_edges.values, side="right") - 1
+
+    return old_edges[idx]
 
 
 def rebin_tof(  # noqa: C901
@@ -20,6 +32,13 @@ def rebin_tof(  # noqa: C901
     - Combine N adjacent TOF bins by summing counts
     - Update TOF bin edges accordingly
     - Propagate variance correctly through summation
+
+    Constraints
+
+    For histogram-mode data (TPX1, TPX3 histogram mode):
+    - Can ONLY combine adjacent bins
+    - Cannot create arbitrary bin schemes (would require raw events)
+    - Cannot split bins
 
     Parameters
     ----------
@@ -64,11 +83,21 @@ def rebin_tof(  # noqa: C901
     elif unit == "time":
         tof_edges = data.coords[tof_dim]
         if logarithmic:
-            new_tof_edges = sc.geomspace(
-                tof_edges[0], tof_edges[-1], num=int((sc.log(tof_edges[-1]) - sc.log(tof_edges[0])) / width) + 1
+            last_bin = np.ceil(np.log(tof_edges.values[-1] / tof_edges.values[0]) / np.log1p(width))
+            requested_tof_edges = sc.array(
+                dims=[tof_dim], values=tof_edges.values[0] * (1 + width) ** np.arange(last_bin + 1), unit=tof_edges.unit
             )
         else:
-            new_tof_edges = sc.scalar(width, unit=tof_edges.unit)
+            requested_tof_edges = sc.arange(
+                dim=tof_dim,
+                start=tof_edges.values[0],
+                stop=tof_edges.values[-1] + width,
+                step=width,
+                unit=tof_edges.unit,
+            )
+
+        new_tof_edges = rebin_with_snapped_boundaries(tof_edges, requested_tof_edges)
+
     elif unit == "wavelength":
         tof_edges = data.coords[tof_dim]
         lsd = sc.scalar(l_source_to_detector, unit="m")
@@ -76,16 +105,30 @@ def rebin_tof(  # noqa: C901
         if logarithmic:
             # convert to wavelength edges, create logarithmic wavelength edges, then convert back to TOF edges
             wavelength_edges = sc.to_unit((tof_edges + offset) * sc.constants.h / (sc.constants.m_n * lsd), "Angstrom")
-            new_wavelength_edges = sc.geomspace(
-                wavelength_edges[0],
-                wavelength_edges[-1],
-                num=int((sc.log(wavelength_edges[-1]) - sc.log(wavelength_edges[0])) / width) + 1,
+            last_bin = np.ceil(np.log(wavelength_edges.values[-1] / wavelength_edges.values[0]) / np.log1p(width))
+            requested_wavelength_edges = sc.array(
+                dims=[tof_dim],
+                values=wavelength_edges.values[0] * (1 + width) ** np.arange(last_bin + 1),
+                unit="Angstrom",
             )
-            new_tof_edges = (
-                sc.scalar(new_wavelength_edges, unit="Angstrom") * sc.constants.m_n * lsd / sc.constants.h - offset
+            requested_tof_edges = sc.to_unit(
+                sc.to_unit(requested_wavelength_edges * sc.constants.m_n * lsd / sc.constants.h, tof_edges.unit)
+                - offset,
+                tof_edges.unit,
             )
         else:
-            new_tof_edges = sc.scalar(width, unit="Angstrom") * sc.constants.m_n * lsd / sc.constants.h
+            requested_tof_width = sc.to_unit(
+                sc.scalar(width, unit="Angstrom") * sc.constants.m_n * lsd / sc.constants.h, tof_edges.unit
+            )
+            requested_tof_edges = sc.arange(
+                dim=tof_dim,
+                start=tof_edges[0],
+                stop=tof_edges[-1] + requested_tof_width,
+                step=requested_tof_width,
+                unit=tof_edges.unit,
+            )
+
+        new_tof_edges = rebin_with_snapped_boundaries(tof_edges, requested_tof_edges)
     else:
         raise ValueError("Invalid unit for rebinning width. Must be one of 'time', 'wavelength', or 'bins'.")
 

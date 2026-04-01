@@ -95,7 +95,7 @@ def test_rebin_tof_by_time():
     # rebin by a width of 12500, we will have 2 full bins and one partial bin (last 2 original bins combined)
     result = rebin_tof(data, width=12500, unit="time")
     assert result.shape == (3, 5, 5)  # Should have 3 TOF bins (2 full + 1 partial)
-    np.testing.assert_allclose(result.coords["tof"].values, [0, 12500, 25000, 37500])  # New edges
+    np.testing.assert_allclose(result.coords["tof"].values, [0, 12500, 25000, 30000])  # New edges
     np.testing.assert_allclose(
         result.data.values[0], 50.0
     )  # First rebinned bin should have sum of first 5 original bins
@@ -110,9 +110,35 @@ def test_rebin_tof_by_time():
     # rebin by a width of 250000, which should combine all TOF bins into one
     result = rebin_tof(data, width=250000, unit="time")
     assert result.shape == (1, 5, 5)  # Should have only one TOF bin
-    np.testing.assert_allclose(result.coords["tof"].values, [0, 250000])  # New edges
+    np.testing.assert_allclose(result.coords["tof"].values, [0, 30000])  # New edges
     np.testing.assert_allclose(result.data.values, 120.0)  # All original bins combined
     np.testing.assert_allclose(result.variances, 120.0)  # Variance should also sum correctly
+
+
+def test_rebin_tof_by_logarithmic_time():
+    """Test the rebin_tof function when rebinning by logarithmic time"""
+    from neunorm.tof.histogram_rebinner import rebin_tof
+
+    values = np.full((11, 5, 5), 10.0)  # 11 TOF bins, 5x5 spatial pixels
+    data = sc.DataArray(
+        data=sc.array(dims=["tof", "x", "y"], values=values, unit="counts", dtype="float64"),
+        coords={
+            "tof": sc.linspace("tof", 2500, 30000, num=12, unit="us"),  # N+1 edges for N bins. Bin widths = 2500
+        },
+    )
+    data.variances = values
+
+    # rebin by a logarithmic width of 2
+    result = rebin_tof(data, width=2, unit="time", logarithmic=True)
+    assert result.shape == (3, 5, 5)  # Should have 3 TOF bins based on logarithmic spacing
+
+    np.testing.assert_allclose(result.coords["tof"].values, [2500, 7500, 22500, 30000])  # New edges
+
+    # Each rebinned bin should have sum of original bins based on logarithmic spacing
+    new_value = [20, 60, 30]
+    expected_values = np.tile(new_value, (5, 5, 1)).T
+    np.testing.assert_allclose(result.values, expected_values)
+    np.testing.assert_allclose(result.variances, expected_values)  # Variance should also sum correctly
 
 
 def test_rebin_tof_by_wavelength():
@@ -136,9 +162,9 @@ def test_rebin_tof_by_wavelength():
 
     # rebin based on original bin width in wavelength, which should be unchanged
     result = rebin_tof(data, width=one_wavelength_bin, unit="wavelength")
-    # assert sc.identical(result, data)  # Should be unchanged
+    assert sc.identical(result, data)  # Should be unchanged
 
-    # rebin by a width of 5000, which should combine every 2 adjacent TOF bins into one
+    # rebin by a width of 2 bins, which should combine every 2 adjacent TOF bins into one
     result = rebin_tof(data, width=one_wavelength_bin * 2, unit="wavelength")
     assert result.shape == (6, 5, 5)  # Should have half the number of TOF bins
     np.testing.assert_allclose(result.coords["tof"].values, np.linspace(0, 30000, num=7))  # New edges
@@ -155,7 +181,7 @@ def test_rebin_tof_by_wavelength():
     # rebin by a width of 12500, we will have 2 full bins and one partial bin (last 2 original bins combined)
     result = rebin_tof(data, width=one_wavelength_bin * 5, unit="wavelength")
     assert result.shape == (3, 5, 5)  # Should have 3 TOF bins (2 full + 1 partial)
-    np.testing.assert_allclose(result.coords["tof"].values, [0, 12500, 25000, 37500])  # New edges
+    np.testing.assert_allclose(result.coords["tof"].values, [0, 12500, 25000, 30000])  # New edges
     np.testing.assert_allclose(
         result.data.values[0], 50.0
     )  # First rebinned bin should have sum of first 5 original bins
@@ -170,9 +196,39 @@ def test_rebin_tof_by_wavelength():
     # rebin by a width of 250000, which should combine all TOF bins into one
     result = rebin_tof(data, width=one_wavelength_bin * 625, unit="wavelength")
     assert result.shape == (1, 5, 5)  # Should have only one TOF bin
-    np.testing.assert_allclose(result.coords["tof"].values, [0, 1562500])  # New edges
+    np.testing.assert_allclose(result.coords["tof"].values, [0, 30000])  # New edges
     np.testing.assert_allclose(result.data.values, 120.0)  # All original bins combined
     np.testing.assert_allclose(result.variances, 120.0)  # Variance should also sum correctly
+
+
+def test_rebin_tof_by_logarithmic_wavelength():
+    """Test the rebin_tof function when rebinning by logarithmic wavelength
+
+    By setting offset to 0, the logarithmic rebinning by wavelength should match the logarithmic rebinning by time,
+    since wavelength is directly proportional to time for a given source-to-detector distance."""
+    from neunorm.tof.histogram_rebinner import rebin_tof
+
+    values = np.full((11, 5, 5), 10.0)  # 11 TOF bins, 5x5 spatial pixels
+    data = sc.DataArray(
+        data=sc.array(dims=["tof", "x", "y"], values=values, unit="counts", dtype="float64"),
+        coords={
+            "tof": sc.linspace("tof", 2500, 30000, num=12, unit="us"),  # N+1 edges for N bins. Bin widths = 2500
+        },
+    )
+    data.variances = values
+
+    # rebin by a logarithmic width of 2
+    # This should match the logarithmic rebinning by tof_width=2 when offset equals 0
+    result = rebin_tof(data, width=2, unit="wavelength", logarithmic=True, detector_time_offset=0)
+    assert result.shape == (3, 5, 5)  # Should have 3 TOF bins based on logarithmic spacing
+
+    np.testing.assert_allclose(result.coords["tof"].values, [2500, 7500, 22500, 30000])  # New edges
+
+    # Each rebinned bin should have sum of original bins based on logarithmic spacing
+    new_value = [20, 60, 30]
+    expected_values = np.tile(new_value, (5, 5, 1)).T
+    np.testing.assert_allclose(result.values, expected_values)
+    np.testing.assert_allclose(result.variances, expected_values)
 
 
 def test_rebin_tof_invalid():
