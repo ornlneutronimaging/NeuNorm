@@ -251,6 +251,58 @@ def test_rebin_tof_by_logarithmic_wavelength():
     np.testing.assert_allclose(result.variances, expected_values)
 
 
+def test_rebin_tof_by_manual_edges():
+    """Test the rebin_tof function when rebinning by manually specified edges"""
+    from neunorm.tof.histogram_rebinner import rebin_tof
+
+    values = np.full((12, 5, 5), 10.0)  # 12 TOF bins, 5x5 spatial pixels
+    data = sc.DataArray(
+        data=sc.array(dims=["tof", "x", "y"], values=values, unit="counts", dtype="float64"),
+        coords={
+            "tof": sc.linspace("tof", 0, 30000, num=13, unit="us"),  # N+1 edges for N bins
+        },
+    )
+    data.variances = values
+
+    # rebin by manually specifying edges in bin indices
+    new_bin_edges = sc.array(dims=["tof"], values=[1, 2, 5, 12], unit="dimensionless", dtype="int64")
+    result = rebin_tof(data, width=new_bin_edges, unit="manual")
+    assert result.shape == (3, 5, 5)  # Should have 3 TOF bins based on specified edges
+    np.testing.assert_allclose(
+        result.coords["tof"].values, [2500, 5000, 12500, 30000]
+    )  # New edges converted from bin indices
+    new_values = [10, 30, 70]
+    expected_values = np.tile(new_values, (5, 5, 1)).T
+    np.testing.assert_allclose(
+        result.data.values, expected_values
+    )  # Each rebinned bin should have sum of original bins based on specified edges
+    np.testing.assert_allclose(result.variances, expected_values)  # Variance should also sum correctly
+
+    # rebin by manually specifying edges in tof
+    new_tof_edges = sc.array(dims=["tof"], values=[10000, 20000, 25000], unit="us")
+    result = rebin_tof(data, width=new_tof_edges, unit="manual")
+    assert result.shape == (2, 5, 5)  # Should have 2 TOF bins based on specified edges
+    np.testing.assert_allclose(result.coords["tof"].values, [10000, 20000, 25000])  # New edges
+    new_values = [40, 20]
+    expected_values = np.tile(new_values, (5, 5, 1)).T
+    np.testing.assert_allclose(
+        result.data.values, expected_values
+    )  # Each rebinned bin should have sum of original bins based on specified edges
+    np.testing.assert_allclose(result.variances, expected_values)  # Variance should also sum correctly
+
+    # rebin by manually specifying edges in wavelength
+    new_wavelength_edges = sc.array(dims=["tof"], values=[1, 2, 4], unit="Angstrom")
+    result = rebin_tof(data, width=new_wavelength_edges, unit="manual")
+    assert result.shape == (2, 5, 5)  # Should have 2 TOF bins based on specified edges
+    np.testing.assert_allclose(result.coords["tof"].values, [0, 7500, 20000])  # New edges converted to TOF
+    new_values = [30, 50]
+    expected_values = np.tile(new_values, (5, 5, 1)).T
+    np.testing.assert_allclose(
+        result.data.values, expected_values
+    )  # Each rebinned bin should have sum of original bins based on specified edges
+    np.testing.assert_allclose(result.variances, expected_values)
+
+
 def test_rebin_tof_invalid():
     """Test that rebin_tof raises an error for invalid rebinning widths"""
     from neunorm.tof.histogram_rebinner import rebin_tof
@@ -271,6 +323,12 @@ def test_rebin_tof_invalid():
         rebin_tof(data, width=-1)  # Invalid width (non-positive)
 
     with pytest.raises(ValueError):
+        rebin_tof(data, width=-1, unit="time")  # Invalid width (non-positive)
+
+    with pytest.raises(ValueError):
+        rebin_tof(data, width=-1, unit="wavelength")  # Invalid width (non-positive)
+
+    with pytest.raises(ValueError):
         rebin_tof(data, width=2, tof_dim="invalid_dim")  # Invalid TOF dimension
 
     with pytest.raises(ValueError):
@@ -281,6 +339,28 @@ def test_rebin_tof_invalid():
 
     with pytest.raises(ValueError):
         rebin_tof(data, width=2.5, unit="bins")  # Non-integer width not allowed for 'bins' unit
+
+    with pytest.raises(ValueError, match="When unit is 'manual', width must be provided as a sc.Variable"):
+        rebin_tof(data, width=42, unit="manual")
+
+    with pytest.raises(ValueError, match="Manual TOF edges must have at least two values."):
+        rebin_tof(data, width=sc.array(dims=["tof"], values=[0], unit="us"), unit="manual")
+
+    with pytest.raises(
+        ValueError,
+        match="When width is a dimensionless sc.Variable, it must have an integer dtype representing bin indices.",
+    ):
+        rebin_tof(data, width=sc.array(dims=["tof"], values=[0.5, 1.5], unit="dimensionless"), unit="manual")
+
+    with pytest.raises(ValueError, match="Bin indices in width are out of bounds for the TOF dimension."):
+        rebin_tof(
+            data, width=sc.array(dims=["tof"], values=[-1, 1, 2], unit="dimensionless", dtype="int64"), unit="manual"
+        )
+
+    with pytest.raises(
+        ValueError, match="Width provided as a sc.Variable could not be converted to the unit of the TOF coordinates."
+    ):
+        rebin_tof(data, width=sc.array(dims=["tof"], values=[1, 2, 3], unit="K"), unit="manual")
 
 
 def test_rebin_with_snapped_boundaries():

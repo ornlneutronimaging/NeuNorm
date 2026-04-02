@@ -13,6 +13,18 @@ def rebin_with_snapped_boundaries(old_edges: sc.Variable, requested_tof_edges: s
     For requested TOF edges that don't align with original TOF edges, snap to the nearest original edge on the left.
     This ensures that we only combine adjacent bins and don't create arbitrary bin schemes,
     which is a requirement for histogram-mode data.
+
+    Parameters
+    ----------
+    old_edges : sc.Variable
+        Original TOF bin edges.
+    requested_tof_edges : sc.Variable
+        Desired TOF bin edges that may not align with original edges.
+
+    Returns
+    -------
+    sc.Variable
+        New TOF edges snapped to the nearest original edges on the left.
     """
     # Map requested edges to indices of the nearest original edge on the left.
     old_vals = np.asarray(old_edges.values)
@@ -36,7 +48,7 @@ def rebin_with_snapped_boundaries(old_edges: sc.Variable, requested_tof_edges: s
 
 def rebin_tof(  # noqa: C901
     data: sc.DataArray,
-    width: Union[int, float],
+    width: Union[int, float, sc.Variable],
     unit: str = "bins",
     logarithmic: bool = False,
     tof_dim: str = "tof",
@@ -61,14 +73,18 @@ def rebin_tof(  # noqa: C901
     ----------
     data : sc.DataArray
         Input data with TOF dimension.
-    width : Union[int, float]
+    width : Union[int, float, sc.Variable]
         Width of the new TOF bins in terms of the specified unit. Must be positive.
+        If a sc.Variable is provided, it it interpreted as the desired edges of the new TOF bins,
+        can be in units of time, wavelength or dimensionless (interpreted as bin indices),
+        and will be convertible to the unit of the TOF coordinates.
     unit : str
         Unit by which the new bin width is specified. Must be one of `time`, `wavelength` or `bins`. Default is `bins`.
         If `bins`, width is interpreted as the number of adjacent bins to combine.
         If `time`, width is interpreted as the desired width of the new TOF bins in the same unit as the coordinates.
         If `wavelength`, width is interpreted as the desired width of the new TOF bins in Angstrom units,
         and converted to time using the provided source-to-detector distance and detector time offset.
+        if `manual`, width is required to be a sc.Variable representing the desired edges of the new TOF bins.
     logarithmic : bool
         Whether to use logarithmic binning. Default is False.
     tof_dim : str
@@ -77,15 +93,62 @@ def rebin_tof(  # noqa: C901
         Distance from the source to the detector in meters. Required for wavelength binning. Default is 25.0.
     detector_time_offset : float
         Time offset of the detector in same unit as TOF. Required for wavelength binning. Default is 5000.0.
+
+    Returns
+    -------
+    sc.DataArray
+        Rebinned DataArray with updated TOF bins and propagated variance.
     """
 
     if tof_dim not in data.dims:
         raise ValueError(f"Specified TOF dimension '{tof_dim}' not found in data dimensions {data.dims}")
 
-    if width <= 0:
-        raise ValueError("Rebinning width must be positive.")
+    if unit == "manual":
+        if not isinstance(width, sc.Variable):
+            raise ValueError(
+                "When unit is 'manual', width must be provided as a sc.Variable "
+                "representing the desired edges of the new TOF bins."
+            )
+        if width.size < 2:
+            raise ValueError("Manual TOF edges must have at least two values.")
 
-    if unit == "bins":
+        if width.unit == sc.units.dimensionless:
+            # Interpret as bin indices and extract TOF edges
+            if not np.issubdtype(width.values.dtype, np.integer):
+                raise ValueError(
+                    "When width is a dimensionless sc.Variable, it must have an integer dtype representing bin indices."
+                )
+            if np.any(width.values < 0) or np.any(width.values >= data.coords[tof_dim].size):
+                raise ValueError("Bin indices in width are out of bounds for the TOF dimension.")
+            new_tof_edges = data.coords[tof_dim][width.values]
+        else:
+            # Try to convert to the unit of the TOF coordinates
+            try:
+                converted_width = sc.to_unit(width, data.coords[tof_dim].unit)
+            except sc.UnitError as e:
+                # now try wavelength
+                try:
+                    lsd = sc.scalar(l_source_to_detector, unit="m")
+                    offset = sc.scalar(detector_time_offset, unit=data.coords[tof_dim].unit)
+                    converted_width = (
+                        sc.to_unit(
+                            sc.to_unit(width, unit="Angstrom") * sc.constants.m_n * lsd / sc.constants.h,
+                            data.coords[tof_dim].unit,
+                        )
+                        - offset
+                    )
+
+                except sc.UnitError as e2:
+                    raise ValueError(
+                        f"Width provided as a sc.Variable could not be converted to the unit of the TOF coordinates. "
+                        f"Conversion to time failed with error: {e}. "
+                        f"Conversion to wavelength failed with error: {e2}."
+                    )
+            new_tof_edges = rebin_with_snapped_boundaries(data.coords[tof_dim], converted_width)
+    elif unit == "bins":
+        if width <= 0:
+            raise ValueError("Rebinning width must be positive.")
+
         if logarithmic:
             raise ValueError("Logarithmic binning is not supported when unit is 'bins'.")
 
@@ -103,6 +166,9 @@ def rebin_tof(  # noqa: C901
         if not sc.identical(new_tof_edges[-1], data.coords[tof_dim][-1]):
             new_tof_edges = sc.concat([new_tof_edges, data.coords[tof_dim][-1:]], dim=tof_dim)
     elif unit == "time":
+        if width <= 0:
+            raise ValueError("Rebinning width must be positive.")
+
         tof_edges = data.coords[tof_dim]
         if logarithmic:
             last_bin = np.ceil(np.log(tof_edges.values[-1] / tof_edges.values[0]) / np.log1p(width))
@@ -121,6 +187,8 @@ def rebin_tof(  # noqa: C901
         new_tof_edges = rebin_with_snapped_boundaries(tof_edges, requested_tof_edges)
 
     elif unit == "wavelength":
+        if width <= 0:
+            raise ValueError("Rebinning width must be positive.")
         tof_edges = data.coords[tof_dim]
         lsd = sc.scalar(l_source_to_detector, unit="m")
         offset = sc.scalar(detector_time_offset, unit=tof_edges.unit)
