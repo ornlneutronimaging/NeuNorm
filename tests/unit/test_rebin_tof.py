@@ -362,6 +362,9 @@ def test_rebin_tof_invalid():
     ):
         rebin_tof(data, width=sc.array(dims=["tof"], values=[1, 2, 3], unit="K"), unit="manual")
 
+    with pytest.raises(ValueError, match="When width is provided as a sc.Variable, unit must be set to 'manual'"):
+        rebin_tof(data, width=sc.array(dims=["tof"], values=[1, 2, 3], unit="us"))
+
 
 def test_rebin_with_snapped_boundaries():
     """Test the rebin_with_snapped_boundaries function"""

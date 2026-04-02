@@ -75,16 +75,19 @@ def rebin_tof(  # noqa: C901
         Input data with TOF dimension.
     width : Union[int, float, sc.Variable]
         Width of the new TOF bins in terms of the specified unit. Must be positive.
-        If a sc.Variable is provided, it it interpreted as the desired edges of the new TOF bins,
+        If a sc.Variable is provided, it is interpreted as the desired edges of the new TOF bins,
         can be in units of time, wavelength or dimensionless (interpreted as bin indices),
         and will be convertible to the unit of the TOF coordinates.
     unit : str
-        Unit by which the new bin width is specified. Must be one of `time`, `wavelength` or `bins`. Default is `bins`.
+        Unit by which the new bin width is specified. Must be one of `time`, `wavelength`, `bins`, or `manual`.
+        Default is `bins`.
         If `bins`, width is interpreted as the number of adjacent bins to combine.
         If `time`, width is interpreted as the desired width of the new TOF bins in the same unit as the coordinates.
         If `wavelength`, width is interpreted as the desired width of the new TOF bins in Angstrom units,
         and converted to time using the provided source-to-detector distance and detector time offset.
-        if `manual`, width is required to be a sc.Variable representing the desired edges of the new TOF bins.
+        If `manual`, width is required to be a 1-D sc.Variable representing the explicit TOF bin edges;
+        its values are interpreted as TOF coordinate values (time-of-flight) and must be in, or convertible to,
+        the unit of the TOF coordinates, and are treated as bin edges rather than bin indices or counts.
     logarithmic : bool
         Whether to use logarithmic binning. Default is False.
     tof_dim : str
@@ -102,6 +105,12 @@ def rebin_tof(  # noqa: C901
 
     if tof_dim not in data.dims:
         raise ValueError(f"Specified TOF dimension '{tof_dim}' not found in data dimensions {data.dims}")
+
+    if isinstance(width, sc.Variable) and unit != "manual":
+        raise ValueError(
+            "When width is provided as a sc.Variable, unit must be set to 'manual' and "
+            "the variable should represent the desired edges of the new TOF bins."
+        )
 
     if unit == "manual":
         if not isinstance(width, sc.Variable):
@@ -212,15 +221,15 @@ def rebin_tof(  # noqa: C901
             )
             requested_tof_edges = sc.arange(
                 dim=tof_dim,
-                start=tof_edges[0],
-                stop=tof_edges[-1] + requested_tof_width,
-                step=requested_tof_width,
+                start=tof_edges.values[0],
+                stop=tof_edges.values[-1] + requested_tof_width.values,
+                step=requested_tof_width.values,
                 unit=tof_edges.unit,
             )
 
         new_tof_edges = rebin_with_snapped_boundaries(tof_edges, requested_tof_edges)
     else:
-        raise ValueError("Invalid unit for rebinning width. Must be one of 'time', 'wavelength', or 'bins'.")
+        raise ValueError("Invalid unit for rebinning width. Must be one of 'manual', 'time', 'wavelength', or 'bins'.")
 
     # rebin histogrammed data by summing over the specified factor
     rebinned_data = sc.rebin(data, {tof_dim: new_tof_edges})
