@@ -125,7 +125,7 @@ plopp = ">=25.10.0" # Scipp visualization
 h5py = ">=3.0"
 pillow = ">=12.1.1"
 astropy = "*"
-aiohttp = ">=3.13.3" # required by astropy, setting minimum to avoid vulnerabilities
+aiohttp = ">=3.13.4" # required by astropy, setting minimum to avoid vulnerabilities
 # Data validation
 pydantic = ">=2.0"
 # Logging
