@@ -15,8 +15,8 @@ def rebin_with_snapped_boundaries(old_edges: sc.Variable, requested_tof_edges: s
     which is a requirement for histogram-mode data.
     """
     # Map requested edges to indices of the nearest original edge on the left.
-    old_vals = old_edges.values
-    req_vals = requested_tof_edges.values
+    old_vals = np.asarray(old_edges.values)
+    req_vals = np.asarray(requested_tof_edges.values)
     idx = np.searchsorted(old_vals, req_vals, side="right") - 1
     # Prevent negative indices (which would wrap to the last element) or indices
     # beyond the last edge. This keeps snapping within the valid range of edges.
@@ -31,7 +31,7 @@ def rebin_with_snapped_boundaries(old_edges: sc.Variable, requested_tof_edges: s
             "snapped edges correspond to strictly increasing original bin edges."
         )
 
-    return old_edges[idx]
+    return sc.array(dims=old_edges.dims, values=snapped_vals, unit=old_edges.unit)
 
 
 def rebin_tof(  # noqa: C901
@@ -156,4 +156,20 @@ def rebin_tof(  # noqa: C901
 
     # rebin histogrammed data by summing over the specified factor
     rebinned_data = sc.rebin(data, {tof_dim: new_tof_edges})
+
+    # copy over unaligned coords; only DataArray/Dataset can be passed to sc.rebin
+    # so for coord Variables we build rebinned edges and preserve the rest as-is.
+    for coord in data.coords:
+        if not data.coords[coord].aligned:
+            if tof_dim in data.coords[coord].dims:
+                # turn into DataArray to use sc.rebin for edge rebinning, then convert back to Variable
+                rebinned_edges = sc.rebin(
+                    sc.DataArray(data.coords[coord], coords={tof_dim: data.coords[tof_dim]}),
+                    {tof_dim: new_tof_edges},
+                ).data
+                rebinned_data.coords[coord] = rebinned_edges
+            else:
+                rebinned_data.coords[coord] = data.coords[coord]
+            rebinned_data.coords.set_aligned(coord, False)
+
     return rebinned_data

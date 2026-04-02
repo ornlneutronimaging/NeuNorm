@@ -20,9 +20,19 @@ def test_rebin_tof_by_bins():
     )
     data.variances = values
 
+    # Add some unaligned coordinates that also depend on TOF to test that they are rebinned correctly
+    data.coords["p_charge"] = sc.array(dims=["tof"], values=np.linspace(2, 13, num=12), unit="C")
+    data.coords.set_aligned("p_charge", False)
+    data.coords["run_number"] = sc.scalar(42)
+    data.coords.set_aligned("run_number", False)
+
     # rebin by a width of 1, which should return data that is unchanged
     result = rebin_tof(data, width=1)
     assert sc.identical(result, data)  # Should return data that is identical to the original data
+    assert sc.identical(result.coords["p_charge"], data.coords["p_charge"])  # Unaligned coord should be unchanged
+    assert sc.identical(
+        result.coords["run_number"], data.coords["run_number"]
+    )  # Unaligned scalar coord should be unchanged
 
     # rebin by a width of 2, which should combine every 2 adjacent TOF bins into one
     result = rebin_tof(data, width=2)
@@ -30,6 +40,11 @@ def test_rebin_tof_by_bins():
     np.testing.assert_allclose(result.coords["tof"].values, np.linspace(0, 30000, num=7))  # New edges
     np.testing.assert_allclose(result.data.values, 20.0)  # Each rebinned bin should have sum of 2 original bins
     np.testing.assert_allclose(result.variances, 20.0)  # Variance should also sum correctly
+    # check that unaligned coord is rebinned correctly by summing every 2 adjacent values
+    assert sc.identical(result.coords["p_charge"], sc.array(dims=["tof"], values=np.linspace(5, 25, num=6), unit="C"))
+    assert sc.identical(
+        result.coords["run_number"], data.coords["run_number"]
+    )  # Unaligned scalar coord should be unchanged
 
     # rebin by a width of 3, which should combine every 3 adjacent TOF bins into one
     result = rebin_tof(data, width=3)
@@ -37,6 +52,11 @@ def test_rebin_tof_by_bins():
     np.testing.assert_allclose(result.coords["tof"].values, np.linspace(0, 30000, num=5))  # New edges
     np.testing.assert_allclose(result.data.values, 30.0)  # Each rebinned bin should have sum of 3 original bins
     np.testing.assert_allclose(result.variances, 30.0)  # Variance should also sum correctly
+    # check that unaligned coord is rebinned correctly by summing every 3 adjacent values
+    assert sc.identical(result.coords["p_charge"], sc.array(dims=["tof"], values=np.linspace(9, 36, num=4), unit="C"))
+    assert sc.identical(
+        result.coords["run_number"], data.coords["run_number"]
+    )  # Unaligned scalar coord should be unchanged
 
     # rebin by a width of 5, we will have 2 full bins and one partial bin (last 2 original bins combined)
     result = rebin_tof(data, width=5)
