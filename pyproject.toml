@@ -192,7 +192,7 @@ requests = ">=2.33.0"           # required by anaconda-client, setting minimum t
 twine = ">=6.1.0,<7"
 versioningit = "*"
 hatch = "*"
-cryptography = ">=46.0.5"       # required by twine and hatch, setting minimum to avoid vulnerabilities
+cryptography = ">=46.0.7"       # required by twine and hatch, setting minimum to avoid vulnerabilities
 "jaraco.context" = ">=6.1.0"    # required by twine and hatch, setting minimum to avoid vulnerabilities
 filelock = ">=3.20.1"           # required by hatch, setting minimum to avoid vulnerabilities
 urllib3 = ">=2.6.3"             # required by twine, setting minimum to avoid vulnerabilities
