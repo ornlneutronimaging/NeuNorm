@@ -10,7 +10,7 @@ from loguru import logger
 
 def load_metadata(  # noqa: C901
     file_path: Union[str, Path], read_shutter_counts: bool = False, read_spectra_tof: bool = False
-) -> dict:
+) -> dict[str, sc.Variable]:
     """Load metadata from NeXus file.
 
     Parameters
@@ -23,7 +23,9 @@ def load_metadata(  # noqa: C901
         Whether to read spectra TOF from the image directory specified in the metadata (default: False)
     Returns
     -------
-    dict        Metadata values for proton charge, duration, image file path, and optionally shutter counts
+    dict
+        Metadata values for proton charge, duration, image file path, and optionally shutter counts.
+        All values are returned as scipp Variables.
     """
 
     file_path = Path(file_path)
@@ -33,10 +35,10 @@ def load_metadata(  # noqa: C901
 
     logger.info(f"Loading metadata from {file_path}")
 
-    metadata = {}
+    metadata: dict[str, sc.Variable] = {}
 
     if read_shutter_counts:
-        metadata["shutter_counts"] = None  # Initialize with None in case we fail to load them later
+        metadata["shutter_counts"] = sc.scalar("")
 
     with h5py.File(file_path, "r") as f:
         if "entry" not in f:
@@ -52,15 +54,14 @@ def load_metadata(  # noqa: C901
 
         if "DASlogs" not in f["entry"] or "BL10:Exp:IM:ImageFilePath" not in f["entry"]["DASlogs"]:
             logger.warning("Unable to find 'BL10:Exp:IM:ImageFilePath' dataset in HDF5 file under 'entry/DASlogs'")
-            metadata["image_file_path"] = None
+            metadata["image_file_path"] = sc.scalar("")
         else:
             # Always read the last value from /entry/DASlogs/BL10:Exp:IM:ImageFilePath/value
-            metadata["image_file_path"] = (
-                f["entry"]["DASlogs"]["BL10:Exp:IM:ImageFilePath"]["value"][-1][0].decode("utf-8").strip()
-            )
+            image_file_path = f["entry"]["DASlogs"]["BL10:Exp:IM:ImageFilePath"]["value"][-1][0].decode("utf-8").strip()
+            metadata["image_file_path"] = sc.scalar(image_file_path)
 
             # The image path is relative to the parent directory of the HDF5 file, so we need to resolve it
-            image_path = file_path.parent.parent.joinpath(metadata["image_file_path"]).resolve()
+            image_path = file_path.parent.parent.joinpath(image_file_path).resolve()
 
             if read_shutter_counts:
                 metadata["shutter_counts"] = load_shutter_counts(image_path)
@@ -70,12 +71,12 @@ def load_metadata(  # noqa: C901
 
         if "DASlogs" in f["entry"]:
             if "BL10:Exp:Det" in f["entry"]["DASlogs"]:
-                metadata["detector"] = (
+                metadata["detector"] = sc.scalar(
                     f["entry"]["DASlogs"]["BL10:Exp:Det"]["value_strings"][-1][0].decode("utf-8").strip()
                 )
             if "BL10:Det:TH:DSPT1:TIDelay" in f["entry"]["DASlogs"]:
-                metadata["detector_time_offset"] = float(
-                    f["entry"]["DASlogs"]["BL10:Det:TH:DSPT1:TIDelay"]["average_value"][0]
+                metadata["detector_time_offset"] = sc.scalar(
+                    float(f["entry"]["DASlogs"]["BL10:Det:TH:DSPT1:TIDelay"]["average_value"][0])
                 )
 
     logger.debug(f"Loaded metadata: {metadata}")
@@ -83,7 +84,7 @@ def load_metadata(  # noqa: C901
     return metadata
 
 
-def load_shutter_counts(image_path: Union[str, Path]) -> list[float]:
+def load_shutter_counts(image_path: Union[str, Path]) -> sc.Variable:
     """Load shutter counts from a text file.
 
     Parameters
@@ -94,8 +95,8 @@ def load_shutter_counts(image_path: Union[str, Path]) -> list[float]:
 
     Returns
     -------
-    list of float
-        List of shutter counts loaded from the file, up until the first count of 0 is encountered.
+    sc.Variable
+        Variable containing shutter counts loaded from the file, up until the first count of 0 is encountered.
     """
 
     image_path = Path(image_path)
@@ -126,13 +127,13 @@ def load_shutter_counts(image_path: Union[str, Path]) -> list[float]:
                         break
                     list_shutter_counts.append(float(_value))
 
-            return list_shutter_counts
+            return sc.array(dims=["N_image"], values=list_shutter_counts)
     else:
         logger.warning(f"Image directory in metadata not found: {image_path}. Shutter counts will not be loaded.")
-    return None
+    return sc.array(dims=["N_image"], values=np.array([], dtype=float))
 
 
-def load_spectra_tof(image_path: Union[str, Path]) -> list[float]:
+def load_spectra_tof(image_path: Union[str, Path]) -> sc.Variable:
     """Load TOF values from spectra text file.
 
     Parameters
@@ -143,8 +144,8 @@ def load_spectra_tof(image_path: Union[str, Path]) -> list[float]:
 
     Returns
     -------
-    list of float
-        List of TOF values loaded from the file, should be same number as number of images in the stack.
+    sc.Variable
+        Variable containing TOF values loaded from the file, same number as images in the stack.
     """
 
     image_path = Path(image_path)
@@ -171,4 +172,4 @@ def load_spectra_tof(image_path: Union[str, Path]) -> list[float]:
                 dims=["N_image"], values=data[:, 0], unit="s"
             )  # return just the TOF values, which should be in the first column
 
-    return []
+    return sc.array(dims=["N_image"], values=np.array([], dtype=float), unit="s")

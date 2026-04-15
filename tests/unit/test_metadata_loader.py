@@ -2,6 +2,7 @@ import tempfile
 from pathlib import Path
 
 import h5py
+import scipp as sc
 
 from neunorm.loaders.metadata_loader import load_metadata
 
@@ -49,9 +50,12 @@ class TestMetadataLoader:
         assert "image_file_path" in metadata
         assert "shutter_counts" not in metadata
 
-        assert metadata["proton_charge"] == 1.23e-6
-        assert metadata["duration"] == 60.0
-        assert metadata["image_file_path"] == "images"
+        assert isinstance(metadata["proton_charge"], sc.Variable)
+        assert isinstance(metadata["duration"], sc.Variable)
+        assert isinstance(metadata["image_file_path"], sc.Variable)
+        assert sc.identical(metadata["proton_charge"], sc.scalar(1.23e-6, unit="pC"))
+        assert sc.identical(metadata["duration"], sc.scalar(60.0, unit="s"))
+        assert sc.identical(metadata["image_file_path"], sc.scalar("images"))
 
     def test_load_metadata_with_shutter_counts(self):
         """
@@ -64,7 +68,10 @@ class TestMetadataLoader:
         assert "image_file_path" in metadata
         assert "shutter_counts" in metadata
 
-        assert metadata["proton_charge"] == 1.23e-6
-        assert metadata["duration"] == 60.0
-        assert metadata["image_file_path"] == "images"
-        assert metadata["shutter_counts"] == [1000.0, 2000.0, 3000.0, 4000.0, 5000.0]
+        assert isinstance(metadata["shutter_counts"], sc.Variable)
+        assert sc.identical(metadata["proton_charge"], sc.scalar(1.23e-6, unit="pC"))
+        assert sc.identical(metadata["duration"], sc.scalar(60.0, unit="s"))
+        assert sc.identical(metadata["image_file_path"], sc.scalar("images"))
+        assert sc.identical(
+            metadata["shutter_counts"], sc.array(dims=["N_image"], values=[1000.0, 2000.0, 3000.0, 4000.0, 5000.0])
+        )

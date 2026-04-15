@@ -113,12 +113,7 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         sample = load_tiff_stack(tiff_paths)
         # Attach metadata as coordinates to the sample DataArray for later use in normalization and rebinning
         for key, value in metadata.items():
-            if isinstance(value, (str, int, float)):
-                sample.coords[key] = sc.scalar(value)
-            elif isinstance(value, list) and all(isinstance(v, (int, float)) for v in value):
-                sample.coords[key] = sc.array(dims=["N_image"], values=value)
-            elif isinstance(value, sc.Variable):
-                sample.coords[key] = value
+            sample.coords[key] = value
             sample.coords.set_aligned(key, False)
 
         # replace N_image dim with TOF if spectra_tof is available in metadata
@@ -137,12 +132,7 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         ob_run = load_tiff_stack(tiff_paths)
         # Attach metadata as coordinates to the OB DataArray for later use in normalization and rebinning
         for key, value in metadata.items():
-            if isinstance(value, (str, int, float)):
-                ob_run.coords[key] = sc.scalar(value)
-            elif isinstance(value, list) and all(isinstance(v, (int, float)) for v in value):
-                ob_run.coords[key] = sc.array(dims=["N_image"], values=value)
-            elif isinstance(value, sc.Variable):
-                ob_run.coords[key] = value
+            ob_run.coords[key] = value
             ob_run.coords.set_aligned(key, False)
 
         # replace N_image dim with TOF if spectra_tof is available in metadata
