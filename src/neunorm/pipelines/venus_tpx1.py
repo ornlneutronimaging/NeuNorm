@@ -21,6 +21,7 @@ from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.run_combiner import combine_runs
 from neunorm.processing.spatial_rebinner import rebin_spatial
+from neunorm.tof.coordinate_converter import convert_tof_to_energy, convert_tof_to_wavelength
 from neunorm.tof.histogram_rebinner import rebin_tof
 from neunorm.tof.pixel_detector import detect_dead_pixels
 from neunorm.tof.statistics_analyzer import analyze_statistics
@@ -118,7 +119,8 @@ def run_venus_tpx1_pipeline(  # noqa: C901
 
         # replace N_image dim with TOF if spectra_tof is available in metadata
         if "spectra_tof" in metadata:
-            sample = sample.rename_dims({"N_image": "TOF"})
+            sample = sample.rename_dims({"N_image": "tof"})
+            sample.coords["tof"] = metadata["spectra_tof"].rename_dims({"N_image": "tof"})
         else:
             raise ValueError(
                 f"Spectra TOF values not found in metadata for {hdf5_path}. "
@@ -137,7 +139,8 @@ def run_venus_tpx1_pipeline(  # noqa: C901
 
         # replace N_image dim with TOF if spectra_tof is available in metadata
         if "spectra_tof" in metadata:
-            ob_run = ob_run.rename_dims({"N_image": "TOF"})
+            ob_run = ob_run.rename_dims({"N_image": "tof"})
+            ob_run.coords["tof"] = metadata["spectra_tof"].rename_dims({"N_image": "tof"})
         else:
             raise ValueError(
                 f"Spectra TOF values not found in metadata for {hdf5_path}. "
@@ -165,7 +168,7 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         ob = apply_roi(ob, roi)
 
     # Average OB
-    ob = prepare_reference(ob, dim="TOF")
+    ob = prepare_reference(ob, dim="tof")
 
     # Dead pixel detection
     sample.masks["dead_pixels"] = detect_dead_pixels(sample)
@@ -203,7 +206,16 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         transmission = apply_air_region_correction(transmission, air_roi)
 
     # Add wavelength and energy coordinates converted from TOF using the detector distance
-    # and time offset from the metadata (TODO)
+    # and time offset from the metadata
+    if "detector_time_offset" in sample.coords:
+        distance = sc.scalar(25.0, unit="m")  # distance for VENUS
+        time_offset = sample.coords["detector_time_offset"]
+        transmission.coords["wavelength"] = convert_tof_to_wavelength(transmission.coords["tof"], distance, time_offset)
+        transmission.coords["energy"] = convert_tof_to_energy(transmission.coords["tof"], distance, time_offset)
+    else:
+        logger.warning(
+            "Detector distance and/or time offset not found in metadata. Cannot add wavelength and energy coordinates."
+        )
 
     # Write output
     metadata = {
@@ -222,8 +234,8 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         write_hdf5(output_path, transmission, dead_pixel_mask="dead_pixels", metadata=metadata)
     elif output_path.suffix.lower() in (".tiff", ".tif"):
         rename_map = {}
-        if "N_image" in transmission.dims:
-            rename_map["N_image"] = "z"  # TIFF stacks typically use 'z' for the stack dimension
+        if "tof" in transmission.dims:
+            rename_map["tof"] = "t"  # TIFF stacks typically use 't' for the time dimension
         if rename_map:
             transmission = transmission.rename_dims(rename_map)
 

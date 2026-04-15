@@ -26,7 +26,7 @@ def convert_tof_to_wavelength(
         Variable containing wavelength values corresponding to the input TOF data in units of Angstroms.
     """
 
-    return sc.to_unit((tof + offset) * sc.constants.h / (sc.constants.m_n * distance), "Angstrom")
+    return sc.to_unit((tof + sc.to_unit(offset, tof.unit)) * sc.constants.h / (sc.constants.m_n * distance), "Angstrom")
 
 
 def convert_wavelength_to_tof(
@@ -79,6 +79,6 @@ def convert_tof_to_energy(
         Variable containing energy values corresponding to the input TOF data in units of meV.
     """
 
-    velocity = distance / (tof + offset)
+    velocity = distance / (tof + sc.to_unit(offset, tof.unit))
     energy_joules = 0.5 * sc.constants.m_n * velocity**2
     return sc.to_unit(energy_joules, "meV")

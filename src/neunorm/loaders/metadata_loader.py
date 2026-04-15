@@ -76,7 +76,7 @@ def load_metadata(  # noqa: C901
                 )
             if "BL10:Det:TH:DSPT1:TIDelay" in f["entry"]["DASlogs"]:
                 metadata["detector_time_offset"] = sc.scalar(
-                    float(f["entry"]["DASlogs"]["BL10:Det:TH:DSPT1:TIDelay"]["average_value"][0]), unit="uS"
+                    float(f["entry"]["DASlogs"]["BL10:Det:TH:DSPT1:TIDelay"]["average_value"][0]), unit="us"
                 )
 
     logger.debug(f"Loaded metadata: {metadata}")
