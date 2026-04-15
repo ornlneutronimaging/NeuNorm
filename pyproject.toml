@@ -123,7 +123,7 @@ scipp = ">=25.8.0"
 plopp = ">=25.10.0" # Scipp visualization
 # Data I/O
 h5py = ">=3.0"
-pillow = ">=12.1.1"
+pillow = ">=12.2.0"
 astropy = "*"
 aiohttp = ">=3.13.4" # required by astropy, setting minimum to avoid vulnerabilities
 # Data validation
@@ -149,7 +149,7 @@ numpy = ">=2.0,<3"
 scipy = ">=1.11"
 scipp = ">=25.8.0"
 h5py = ">=3.0"
-pillow = ">=12.1.1"
+pillow = ">=12.2.0"
 astropy = "*"
 pydantic = ">=2.0"
 loguru = ">=0.7"
@@ -179,11 +179,11 @@ jupyter = { features = [
 ], solve-group = "jupyter" }
 
 [tool.pixi.feature.test.dependencies]
-pytest = ">=6.2.4,<9.0.0"
+pytest = ">=9.0.3"
 pytest-cov = "*"
 pytest-repeat = "*"
 pytest-xdist = "*"
-numba = ">=0.60"          # For testing performance module
+numba = ">=0.60"    # For testing performance module
 
 [tool.pixi.feature.package.dependencies]
 anaconda-client = ">=1.13.0,<2"
