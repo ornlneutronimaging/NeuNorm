@@ -213,14 +213,12 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         transmission.coords["wavelength"] = convert_tof_to_wavelength(transmission.coords["tof"], distance, time_offset)
         transmission.coords["energy"] = convert_tof_to_energy(transmission.coords["tof"], distance, time_offset)
     else:
-        logger.warning(
-            "Detector distance and/or time offset not found in metadata. Cannot add wavelength and energy coordinates."
-        )
+        logger.warning("Time offset not found in metadata. Cannot add wavelength and energy coordinates.")
 
     # Write output
     metadata = {
-        "sample_hdf5_paths": [run for run in sample_hdf5_paths],
-        "ob_hdf5_paths": [run for run in ob_hdf5_paths],
+        "sample_hdf5_paths": [str(run) for run in sample_hdf5_paths],
+        "ob_hdf5_paths": [str(run) for run in ob_hdf5_paths],
         "sample_tiff_paths": [[str(p) for p in run] for run in sample_tiff_paths],
         "ob_tiff_paths": [[str(p) for p in run] for run in ob_tiff_paths],
         "processing_timestamp": datetime.now().isoformat(),
