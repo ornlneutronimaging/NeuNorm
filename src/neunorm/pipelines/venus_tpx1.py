@@ -117,15 +117,10 @@ def run_venus_tpx1_pipeline(  # noqa: C901
             sample.coords[key] = value
             sample.coords.set_aligned(key, False)
 
-        # replace N_image dim with TOF if spectra_tof is available in metadata
-        if "spectra_tof" in metadata:
-            sample = sample.rename_dims({"N_image": "tof"})
-            sample.coords["tof"] = metadata["spectra_tof"].rename_dims({"N_image": "tof"})
-        else:
-            raise ValueError(
-                f"Spectra TOF values not found in metadata for {hdf5_path}. "
-                "Cannot attach TOF coordinates to sample DataArray."
-            )
+        # replace N_image dim with TOF from spectra_tof
+        sample = sample.rename_dims({"N_image": "tof"})
+        sample.coords["tof"] = metadata["spectra_tof"].rename_dims({"N_image": "tof"})
+
         samples.append(sample)
 
     # Load data from TIFF files and metadata from HDF5 files
@@ -137,15 +132,10 @@ def run_venus_tpx1_pipeline(  # noqa: C901
             ob_run.coords[key] = value
             ob_run.coords.set_aligned(key, False)
 
-        # replace N_image dim with TOF if spectra_tof is available in metadata
-        if "spectra_tof" in metadata:
-            ob_run = ob_run.rename_dims({"N_image": "tof"})
-            ob_run.coords["tof"] = metadata["spectra_tof"].rename_dims({"N_image": "tof"})
-        else:
-            raise ValueError(
-                f"Spectra TOF values not found in metadata for {hdf5_path}. "
-                "Cannot attach TOF coordinates to OB DataArray."
-            )
+        # replace N_image dim with TOF from spectra_tof
+        ob_run = ob_run.rename_dims({"N_image": "tof"})
+        ob_run.coords["tof"] = metadata["spectra_tof"].rename_dims({"N_image": "tof"})
+
         ob.append(ob_run)
 
     sample = combine_runs(
@@ -182,14 +172,16 @@ def run_venus_tpx1_pipeline(  # noqa: C901
 
     # TOF rebinning (optional)
     if rebin_by_tof:
-        if isinstance(rebin_by_tof, int):
-            logger.info(f"Applying TOF rebinning with user-specified factor: {rebin_by_tof}")
-            sample = rebin_tof(sample, rebin_by_tof)
-        else:
+        if rebin_by_tof is True:
             # Analyze statistics to get recommended rebinning factor
             recommended_factor = analyze_statistics(sample)
             logger.info(f"Recommended TOF rebinning factor based on statistics analysis: {recommended_factor}")
-            sample = rebin_tof(sample, recommended_factor)
+            sample = rebin_tof(sample, recommended_factor.recommended_rebinning)
+        elif isinstance(rebin_by_tof, int):
+            logger.info(f"Applying TOF rebinning with user-specified factor: {rebin_by_tof}")
+            sample = rebin_tof(sample, rebin_by_tof)
+        else:
+            raise ValueError(f"Invalid value for rebin_by_tof: {rebin_by_tof}. Must be bool or int.")
 
     # Normalization
     transmission = normalize_transmission(
@@ -236,12 +228,8 @@ def run_venus_tpx1_pipeline(  # noqa: C901
             transmission = transmission.rename_dims(rename_map)
 
         model = "Unknown"
-        if "ManufacturerStr" in sample.coords:
-            model = sample.coords["ManufacturerStr"].value
-        elif "ModelStr" in sample.coords:
-            model = sample.coords["ModelStr"].value
-        elif "Model" in sample.coords:
-            model = sample.coords["Model"].value
+        if "detector" in sample.coords:
+            model = sample.coords["detector"].value
 
         daqmetadata = {
             "facility": "SNS",

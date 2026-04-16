@@ -130,7 +130,7 @@ def load_shutter_counts(image_path: Union[str, Path]) -> sc.Variable:
     return sc.array(dims=["N_image"], values=np.array([], dtype=float))
 
 
-def load_spectra_tof(image_path: Union[str, Path]) -> sc.Variable:
+def load_spectra_tof(image_path: Union[str, Path]) -> sc.Variable:  # noqa: C901
     """Load TOF values from spectra text file.
 
     Parameters
@@ -169,4 +169,6 @@ def load_spectra_tof(image_path: Union[str, Path]) -> sc.Variable:
                 dims=["N_image"], values=data[:, 0], unit="s"
             )  # return just the TOF values, which should be in the first column
 
-    return sc.array(dims=["N_image"], values=np.array([], dtype=float), unit="s")
+    raise FileNotFoundError(
+        f"Image directory in metadata not found: {image_path}. Spectra TOF values will not be loaded."
+    )
