@@ -7,6 +7,8 @@ from typing import Union
 import numpy as np
 import scipp as sc
 
+from neunorm.tof.coordinate_converter import convert_tof_to_wavelength, convert_wavelength_to_tof
+
 
 def rebin_with_snapped_boundaries(old_edges: sc.Variable, requested_tof_edges: sc.Variable):
     """
@@ -203,21 +205,17 @@ def rebin_tof(  # noqa: C901
         offset = sc.scalar(detector_time_offset, unit=tof_edges.unit)
         if logarithmic:
             # convert to wavelength edges, create logarithmic wavelength edges, then convert back to TOF edges
-            wavelength_edges = sc.to_unit((tof_edges + offset) * sc.constants.h / (sc.constants.m_n * lsd), "Angstrom")
+            wavelength_edges = convert_tof_to_wavelength(tof_edges, lsd, offset)
             last_bin = np.ceil(np.log(wavelength_edges.values[-1] / wavelength_edges.values[0]) / np.log1p(width))
             requested_wavelength_edges = sc.array(
                 dims=[tof_dim],
                 values=wavelength_edges.values[0] * (1 + width) ** np.arange(last_bin + 1),
                 unit="Angstrom",
             )
-            requested_tof_edges = sc.to_unit(
-                sc.to_unit(requested_wavelength_edges * sc.constants.m_n * lsd / sc.constants.h, tof_edges.unit)
-                - offset,
-                tof_edges.unit,
-            )
+            requested_tof_edges = convert_wavelength_to_tof(requested_wavelength_edges, lsd, offset)
         else:
-            requested_tof_width = sc.to_unit(
-                sc.scalar(width, unit="Angstrom") * sc.constants.m_n * lsd / sc.constants.h, tof_edges.unit
+            requested_tof_width = convert_wavelength_to_tof(
+                sc.scalar(width, unit="Angstrom"), lsd, sc.scalar(0, unit=tof_edges.unit)
             )
             requested_tof_edges = sc.arange(
                 dim=tof_dim,

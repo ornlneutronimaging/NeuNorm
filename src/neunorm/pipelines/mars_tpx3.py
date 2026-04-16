@@ -36,7 +36,7 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     Pipeline Step
     1. Load event data
     2. Convert events to 2D histogram
-    3. Run combine (optional) # TODO
+    3. Run combine (optional)
     4. ROI clip (optional)
     5. Dead pixel detection
     6. Hot pixel detection
