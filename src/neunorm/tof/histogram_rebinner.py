@@ -6,7 +6,6 @@ from typing import Union
 
 import numpy as np
 import scipp as sc
-from loguru import logger
 
 from neunorm.tof.coordinate_converter import convert_tof_to_wavelength, convert_wavelength_to_tof
 
@@ -237,18 +236,15 @@ def rebin_tof(  # noqa: C901
     # so for coord Variables we build rebinned edges and preserve the rest as-is.
     for coord in data.coords:
         if not data.coords[coord].aligned:
-            try:
-                if tof_dim in data.coords[coord].dims:
-                    # turn into DataArray to use sc.rebin for edge rebinning, then convert back to Variable
-                    rebinned_edges = sc.rebin(
-                        sc.DataArray(data.coords[coord], coords={tof_dim: data.coords[tof_dim]}),
-                        {tof_dim: new_tof_edges},
-                    ).data
-                    rebinned_data.coords[coord] = rebinned_edges
-                else:
-                    rebinned_data.coords[coord] = data.coords[coord]
-                rebinned_data.coords.set_aligned(coord, False)
-            except (sc.BinEdgeError, sc.DimensionError) as e:
-                logger.warning(f"Failed to rebin coordinate '{coord}' along TOF dimension. Error: {e}")
+            if tof_dim in data.coords[coord].dims:
+                # turn into DataArray to use sc.rebin for edge rebinning, then convert back to Variable
+                rebinned_edges = sc.rebin(
+                    sc.DataArray(data.coords[coord], coords={tof_dim: data.coords[tof_dim]}),
+                    {tof_dim: new_tof_edges},
+                ).data
+                rebinned_data.coords[coord] = rebinned_edges
+            else:
+                rebinned_data.coords[coord] = data.coords[coord]
+            rebinned_data.coords.set_aligned(coord, False)
 
     return rebinned_data

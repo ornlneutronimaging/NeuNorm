@@ -17,7 +17,6 @@ from neunorm.loaders.metadata_loader import load_metadata
 from neunorm.loaders.tiff_loader import load_tiff_stack
 from neunorm.processing.air_region_corrector import apply_air_region_correction
 from neunorm.processing.normalizer import normalize_transmission
-from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.run_combiner import combine_runs
 from neunorm.processing.spatial_rebinner import rebin_spatial
@@ -114,12 +113,13 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         sample = load_tiff_stack(tiff_paths)
         # Attach metadata as coordinates to the sample DataArray for later use in normalization and rebinning
         for key, value in metadata.items():
-            sample.coords[key] = value
-            sample.coords.set_aligned(key, False)
-
-        # replace N_image dim with TOF from spectra_tof
-        sample = sample.rename_dims({"N_image": "tof"})
-        sample.coords["tof"] = metadata["spectra_tof"].rename_dims({"N_image": "tof"})
+            if key == "spectra_tof":
+                # replace N_image dim with TOF from spectra_tof
+                sample = sample.rename_dims({"N_image": "tof"})
+                sample.coords["tof"] = metadata["spectra_tof"].rename_dims({"N_image": "tof"})
+            else:
+                sample.coords[key] = value
+                sample.coords.set_aligned(key, False)
 
         samples.append(sample)
 
@@ -129,12 +129,13 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         ob_run = load_tiff_stack(tiff_paths)
         # Attach metadata as coordinates to the OB DataArray for later use in normalization and rebinning
         for key, value in metadata.items():
-            ob_run.coords[key] = value
-            ob_run.coords.set_aligned(key, False)
-
-        # replace N_image dim with TOF from spectra_tof
-        ob_run = ob_run.rename_dims({"N_image": "tof"})
-        ob_run.coords["tof"] = metadata["spectra_tof"].rename_dims({"N_image": "tof"})
+            if key == "spectra_tof":
+                # replace N_image dim with TOF from spectra_tof
+                ob_run = ob_run.rename_dims({"N_image": "tof"})
+                ob_run.coords["tof"] = metadata["spectra_tof"].rename_dims({"N_image": "tof"})
+            else:
+                ob_run.coords[key] = value
+                ob_run.coords.set_aligned(key, False)
 
         ob.append(ob_run)
 
@@ -157,29 +158,28 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         sample = apply_roi(sample, roi)
         ob = apply_roi(ob, roi)
 
-    # Average OB
-    ob = prepare_reference(ob, dim="tof")
-
     # Dead pixel detection
-    sample.masks["dead_pixels"] = detect_dead_pixels(sample)
+    sample.masks["dead_pixels"] = detect_dead_pixels(ob)
 
     # Spatial rebinning (optional)
     if rebin_by_spatial is not None:
         sample = rebin_spatial(sample, rebin_by_spatial)
         ob = rebin_spatial(ob, rebin_by_spatial)
         # redo mask after rebinning
-        sample.masks["dead_pixels"] = detect_dead_pixels(sample)
+        sample.masks["dead_pixels"] = detect_dead_pixels(ob)
 
     # TOF rebinning (optional)
     if rebin_by_tof:
         if rebin_by_tof is True:
             # Analyze statistics to get recommended rebinning factor
-            recommended_factor = analyze_statistics(sample)
+            recommended_factor = analyze_statistics(ob)
             logger.info(f"Recommended TOF rebinning factor based on statistics analysis: {recommended_factor}")
             sample = rebin_tof(sample, recommended_factor.recommended_rebinning)
+            ob = rebin_tof(ob, recommended_factor.recommended_rebinning)
         elif isinstance(rebin_by_tof, int):
             logger.info(f"Applying TOF rebinning with user-specified factor: {rebin_by_tof}")
             sample = rebin_tof(sample, rebin_by_tof)
+            ob = rebin_tof(ob, rebin_by_tof)
         else:
             raise ValueError(f"Invalid value for rebin_by_tof: {rebin_by_tof}. Must be bool or int.")
 

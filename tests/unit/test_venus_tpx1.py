@@ -32,8 +32,8 @@ class TestVenusTPX1Pipeline:
             img.save(filename)
             cls.sample_tiff_paths.append(filename)
 
-        # create 3 OB tiffs with values 99, 100, 101 and metadata
-        for i in range(3):
+        # create 5 OB tiffs with values 99, 100, 101, 102, 103 and metadata
+        for i in range(5):
             data = np.full((32, 32), 99 + i, dtype=np.float32)
             img = Image.fromarray(data)
             filename = tmp_dir / f"ob_{i:03}.tiff"
@@ -82,7 +82,7 @@ class TestVenusTPX1Pipeline:
         image_dir.mkdir(exist_ok=True, parents=True)
         spectra_tof_file = image_dir / "test_Spectra.txt"
         with open(spectra_tof_file, "w") as f:
-            for i in range(4):
+            for i in range(6):
                 f.write(f"{i * 0.1 + 0.1} 0\n")
 
     @classmethod
@@ -116,13 +116,13 @@ class TestVenusTPX1Pipeline:
                 # T = S / AVERAGE(OB) * (proton_charge_ob / proton_charge_sample)
                 # but will be two times because of the difference proton charge between sample and OB
                 for i in range(5):
-                    np.testing.assert_allclose(hf["transmission"][i], (81 + i) / (100) * 2)
+                    np.testing.assert_allclose(hf["transmission"][i], (81 + i) / (99 + i) * 2)
                 assert hf["transmission"].attrs["units"] == "dimensionless"
                 assert hf["transmission"].dtype == np.float32
                 # Check uncertainty data exists and is reasonable
                 assert "uncertainty" in hf
                 assert hf["uncertainty"].dtype == np.float32
-                np.testing.assert_allclose(hf["uncertainty"], 0.2, rtol=0.1)
+                np.testing.assert_allclose(hf["uncertainty"], 0.245, rtol=0.1)
                 # Check coordinates
                 assert "x" in hf
                 np.testing.assert_equal(hf["x"], np.arange(32))
@@ -187,9 +187,9 @@ class TestVenusTPX1Pipeline:
         # check that transmission values are correct based on the formula
         # T = (S) / AVERAGE(OB) * (proton_charge_ob / proton_charge_sample)
         for i in range(5):
-            np.testing.assert_allclose(image.values[i], (81 + i) / 100 * 2)
+            np.testing.assert_allclose(image.values[i], (81 + i) / (99 + i) * 2)
         # Check uncertainty data exists and is reasonable
-        np.testing.assert_allclose(image.variances, 0.04, rtol=0.1)
+        np.testing.assert_allclose(image.variances, 0.06, rtol=0.1)
         assert "scitiff-mask" in image.masks
         assert image.masks["scitiff-mask"].shape == (5, 20, 20)
         np.testing.assert_array_equal(image.masks["scitiff-mask"].values, False)
@@ -204,7 +204,7 @@ class TestVenusTPX1Pipeline:
         # Check extra metadata
         extra = dg["extra"]
         assert len(extra["sample_tiff_paths"].values) == 5
-        assert len(extra["ob_tiff_paths"].values) == 3
+        assert len(extra["ob_tiff_paths"].values) == 5
         assert len(extra["sample_hdf5_paths"].values) == 1
         assert len(extra["ob_hdf5_paths"].values) == 1
 
@@ -234,9 +234,9 @@ class TestVenusTPX1Pipeline:
 
         # values should be the same but variances should be reduced because of the rebinning
         for i in range(5):
-            np.testing.assert_allclose(transmission.values[i], (81 + i) / 100 * 2)
+            np.testing.assert_allclose(transmission.values[i], (81 + i) / (99 + i) * 2)
 
-        np.testing.assert_allclose(transmission.variances, 0.00077, rtol=0.1)
+        np.testing.assert_allclose(transmission.variances, 0.001, rtol=0.1)
 
     def test_venus_tpx1_pipeline_tof_rebin(self):
         """
@@ -262,13 +262,13 @@ class TestVenusTPX1Pipeline:
             32,
         )  # original was (5, 32, 32) so rebin by factor of 2 should give (3, 32, 32)
 
-        np.testing.assert_allclose(transmission.values[0], (81 + 82) / 100 * 2)
-        np.testing.assert_allclose(transmission.values[1], (83 + 84) / 100 * 2)
-        np.testing.assert_allclose(transmission.values[2], (85) / 100 * 2)
+        np.testing.assert_allclose(transmission.values[0], (81 + 82) / (99 + 100) * 2)
+        np.testing.assert_allclose(transmission.values[1], (83 + 84) / (101 + 102) * 2)
+        np.testing.assert_allclose(transmission.values[2], (85) / 103 * 2)
 
-        np.testing.assert_allclose(transmission.variances[0], 0.1, rtol=0.1)
-        np.testing.assert_allclose(transmission.variances[1], 0.1, rtol=0.1)
-        np.testing.assert_allclose(transmission.variances[2], 0.04, rtol=0.1)
+        np.testing.assert_allclose(transmission.variances[0], 0.03, rtol=0.1)
+        np.testing.assert_allclose(transmission.variances[1], 0.03, rtol=0.1)
+        np.testing.assert_allclose(transmission.variances[2], 0.06, rtol=0.1)
 
         np.testing.assert_allclose(transmission.coords["tof"].values, [0.1, 0.3, 0.5, 0.6])
         np.testing.assert_allclose(transmission.coords["wavelength"].values, [16.6, 48.3, 79.9, 95.7], atol=0.1)
@@ -301,9 +301,9 @@ class TestVenusTPX1Pipeline:
 
         # values and variances should be the same
         for i in range(5):
-            np.testing.assert_allclose(transmission.values[i], (81 + i) / 100 * 2)
+            np.testing.assert_allclose(transmission.values[i], (81 + i) / (99 + i) * 2)
 
-        np.testing.assert_allclose(transmission.variances, 0.04, rtol=0.1)
+        np.testing.assert_allclose(transmission.variances, 0.06, rtol=0.1)
 
         np.testing.assert_allclose(transmission.coords["tof"].values, [0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
 
@@ -328,7 +328,7 @@ class TestVenusTPX1Pipeline:
         assert transmission.shape == (5, 32, 32)
         # Since all the data are the same for a single tof the air correction should just normalize 1.
         np.testing.assert_allclose(transmission.values, 1)
-        np.testing.assert_allclose(transmission.variances, 0.015, rtol=0.1)
+        np.testing.assert_allclose(transmission.variances, 0.0227, rtol=0.1)
 
     def test_venus_tpx1_pipeline_invalid_paths(self):
         """Check error when the length of tiff and hdf5 paths do not match."""

@@ -49,22 +49,18 @@ def load_metadata(  # noqa: C901
             raise KeyError("Expected 'duration' dataset not found in HDF5 file under 'entry'")
         metadata["duration"] = sc.scalar(float(f["entry"]["duration"][0]), unit="s")
 
-        if "DASlogs" not in f["entry"] or "BL10:Exp:IM:ImageFilePath" not in f["entry"]["DASlogs"]:
-            logger.warning("Unable to find 'BL10:Exp:IM:ImageFilePath' dataset in HDF5 file under 'entry/DASlogs'")
-            metadata["image_file_path"] = sc.scalar("")
-        else:
-            # Always read the last value from /entry/DASlogs/BL10:Exp:IM:ImageFilePath/value
+        image_path = ""
+        if "DASlogs" in f["entry"] and "BL10:Exp:IM:ImageFilePath" in f["entry"]["DASlogs"]:
             image_file_path = f["entry"]["DASlogs"]["BL10:Exp:IM:ImageFilePath"]["value"][-1][0].decode("utf-8").strip()
             metadata["image_file_path"] = sc.scalar(image_file_path)
-
             # The image path is relative to the parent directory of the HDF5 file, so we need to resolve it
             image_path = file_path.parent.parent.joinpath(image_file_path).resolve()
 
-            if read_shutter_counts:
-                metadata["shutter_counts"] = load_shutter_counts(image_path)
+        if read_shutter_counts:
+            metadata["shutter_counts"] = load_shutter_counts(image_path)
 
-            if read_spectra_tof:
-                metadata["spectra_tof"] = load_spectra_tof(image_path)
+        if read_spectra_tof:
+            metadata["spectra_tof"] = load_spectra_tof(image_path)
 
         if "DASlogs" in f["entry"]:
             if "BL10:Exp:Det" in f["entry"]["DASlogs"]:
@@ -151,23 +147,25 @@ def load_spectra_tof(image_path: Union[str, Path]) -> sc.Variable:  # noqa: C901
         # Look for spectra files in the image directory. It is expected to end in _Spectra.txt
         spectra_files = glob.glob(str(image_path / "*_Spectra.txt"))
         if len(spectra_files) == 0:
-            logger.warning("Spectra file not found!")
-        else:
-            if len(spectra_files) > 1:
-                logger.warning(
-                    f"Multiple spectra files found in {image_path}. "
-                    f"Expected only one. Found: {spectra_files}. Using the first one."
-                )
-            # There should only be one spectra file
-            spectra_file = spectra_files[0]
-            logger.info(f"Loading spectra from {spectra_file}")
-            try:
-                data = np.loadtxt(spectra_file, skiprows=1, delimiter=",")
-            except ValueError:
-                data = np.loadtxt(spectra_file)
-            return sc.array(
-                dims=["N_image"], values=data[:, 0], unit="s"
-            )  # return just the TOF values, which should be in the first column
+            raise FileNotFoundError(
+                f"Spectra TOF file not found in {image_path}. Expected a file ending with '_Spectra.txt'."
+            )
+
+        if len(spectra_files) > 1:
+            logger.warning(
+                f"Multiple spectra files found in {image_path}. "
+                f"Expected only one. Found: {spectra_files}. Using the first one."
+            )
+        # There should only be one spectra file
+        spectra_file = spectra_files[0]
+        logger.info(f"Loading spectra from {spectra_file}")
+        try:
+            data = np.loadtxt(spectra_file, skiprows=1, delimiter=",")
+        except ValueError:
+            data = np.loadtxt(spectra_file)
+        return sc.array(
+            dims=["N_image"], values=data[:, 0], unit="s"
+        )  # return just the TOF values, which should be in the first column
 
     raise FileNotFoundError(
         f"Image directory in metadata not found: {image_path}. Spectra TOF values will not be loaded."
