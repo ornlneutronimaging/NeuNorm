@@ -37,9 +37,6 @@ def load_metadata(  # noqa: C901
 
     metadata: dict[str, sc.Variable] = {}
 
-    if read_shutter_counts:
-        metadata["shutter_counts"] = sc.scalar("")
-
     with h5py.File(file_path, "r") as f:
         if "entry" not in f:
             raise KeyError("Expected 'entry' group not found in HDF5 file")

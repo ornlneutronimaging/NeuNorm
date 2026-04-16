@@ -185,13 +185,11 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         if isinstance(rebin_by_tof, int):
             logger.info(f"Applying TOF rebinning with user-specified factor: {rebin_by_tof}")
             sample = rebin_tof(sample, rebin_by_tof)
-            ob = rebin_tof(ob, rebin_by_tof)
         else:
             # Analyze statistics to get recommended rebinning factor
             recommended_factor = analyze_statistics(sample)
             logger.info(f"Recommended TOF rebinning factor based on statistics analysis: {recommended_factor}")
             sample = rebin_tof(sample, recommended_factor)
-            ob = rebin_tof(ob, recommended_factor)
 
     # Normalization
     transmission = normalize_transmission(

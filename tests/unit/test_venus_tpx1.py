@@ -69,6 +69,10 @@ class TestVenusTPX1Pipeline:
             daslogs = entry.create_group("DASlogs")
             image_file_path = daslogs.create_group("BL10:Exp:IM:ImageFilePath")
             image_file_path.create_dataset("value", data=[[b"images/ob"]])
+            time_offset_path = daslogs.create_group("BL10:Det:TH:DSPT1:TIDelay")
+            time_offset_path.create_dataset("average_value", data=[5000])
+            detector_path = daslogs.create_group("BL10:Exp:Det")
+            detector_path.create_dataset("value_strings", data=[[b"MCP TPX1"]])
 
         # Also create a directory for the image file and a spectra TOF file
         image_dir = tmp_dir / "images" / "ob"
@@ -81,7 +85,7 @@ class TestVenusTPX1Pipeline:
     @classmethod
     def teardown_class(cls):
         """Remove all temp test files after all tests in this class have run."""
-        # cls._tmpdir.cleanup()
+        cls._tmpdir.cleanup()
 
     def test_venus_tpx1_pipeline_hdf5(self):
         """

@@ -19,6 +19,8 @@ def convert_tof_to_wavelength(
         Variable containing TOF values with appropriate units (e.g., microseconds).
     distance : sc.Variable
         Variable representing the distance from the source to the detector, with appropriate units (e.g., meters).
+    offset : sc.Variable
+        Variable representing the time offset, with appropriate units (e.g., microseconds).
 
     Returns
     -------
@@ -50,7 +52,7 @@ def convert_wavelength_to_tof(
     Returns
     -------
     sc.Variable
-        Variable containing TOF values corresponding to the input wavelength data in units of microseconds.
+        Variable containing TOF values corresponding to the input wavelength data in units matching the offset unit.
     """
 
     return sc.to_unit((wavelength * sc.constants.m_n * distance) / sc.constants.h, offset.unit) - offset

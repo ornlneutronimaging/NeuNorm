@@ -68,8 +68,12 @@ def load_tiff_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
     dim_name = "TOF" if tof_edges is not None else "N_image"
     dims = [dim_name, "y", "x"]
 
-    # Clip data to ensure non-negative values for Poisson statistics
-    full_data = np.clip(full_data, 0, None)
+    # Validate data for Poisson statistics: counts must be non-negative.
+    if np.any(full_data < 0):
+        raise ValueError(
+            "Loaded TIFF data contains negative counts; cannot attach Poisson "
+            "variances (variance = counts) to negative data."
+        )
 
     # Create DataArray
     # Assuming variance = counts (Poisson) if not provided.
