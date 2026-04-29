@@ -73,23 +73,18 @@ def load_metadata(  # noqa: C901
                 )
 
             # The TOF binning can be determined by these logs, it provides start, bin size, and number of bins.
-            if (
-                "BL10:Det:T1:TSStart_RBV" in f["entry"]["DASlogs"]
-                and "BL10:Det:T1:TSBinSize_RBV" in f["entry"]["DASlogs"]
-                and "BL10:Det:T1:TSSize_RBV" in f["entry"]["DASlogs"]
-            ):
-                metadata["tof_binning"] = {}
-                metadata["tof_binning"]["start"] = sc.scalar(
+            if "BL10:Det:T1:TSStart_RBV" in f["entry"]["DASlogs"]:
+                metadata["tof_start"] = sc.scalar(
                     float(f["entry"]["DASlogs"]["BL10:Det:T1:TSStart_RBV"]["value"][0]), unit="us"
                 )
 
-                metadata["tof_binning"]["bin_size"] = sc.scalar(
+            if "BL10:Det:T1:TSBinSize_RBV" in f["entry"]["DASlogs"]:
+                metadata["tof_bin_size"] = sc.scalar(
                     float(f["entry"]["DASlogs"]["BL10:Det:T1:TSBinSize_RBV"]["value"][0]), unit="us"
                 )
 
-                metadata["tof_binning"]["num_bins"] = sc.scalar(
-                    int(f["entry"]["DASlogs"]["BL10:Det:T1:TSSize_RBV"]["value"][0])
-                )
+            if "BL10:Det:T1:TSSize_RBV" in f["entry"]["DASlogs"]:
+                metadata["tof_num_bins"] = sc.scalar(int(f["entry"]["DASlogs"]["BL10:Det:T1:TSSize_RBV"]["value"][0]))
 
     logger.debug(f"Loaded metadata: {metadata}")
 

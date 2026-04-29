@@ -111,50 +111,50 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
     # Load data from TIFF files and metadata from HDF5 files
     for hdf5_path, tiff_paths in zip(sample_hdf5_paths, sample_tiff_paths):
         metadata = load_metadata(hdf5_path)
-        if "tof_binning" not in metadata:
+        if "tof_start" not in metadata or "tof_bin_size" not in metadata or "tof_num_bins" not in metadata:
             raise ValueError(
                 f"TOF binning information not found in metadata loaded from {hdf5_path}. "
                 "Cannot proceed without TOF binning."
             )
         sample = load_tiff_stack(tiff_paths)
+
+        # change to tof binning using metadata
+        start = metadata["tof_start"]
+        bin_size = metadata["tof_bin_size"]
+        num_bins = metadata["tof_num_bins"]
+        tof_bins = sc.arange("tof", num_bins + 1) * bin_size + start
+        sample = sample.rename_dims({"N_image": "tof"})
+        sample.coords["tof"] = tof_bins
+
         # Attach metadata as coordinates to the sample DataArray for later use in normalization and rebinning
         for key, value in metadata.items():
-            if key == "tof_binning":
-                # create tof bins from start, bin size, and num bins
-                start = value["start"]
-                bin_size = value["bin_size"]
-                num_bins = value["num_bins"]
-                tof_bins = sc.arange("tof", num_bins + 1) * bin_size + start
-                sample = sample.rename_dims({"N_image": "tof"})
-                sample.coords["tof"] = tof_bins
-            else:
-                sample.coords[key] = value
-                sample.coords.set_aligned(key, False)
+            sample.coords[key] = value
+            sample.coords.set_aligned(key, False)
 
         samples.append(sample)
 
     # Load data from TIFF files and metadata from HDF5 files
     for hdf5_path, tiff_paths in zip(ob_hdf5_paths, ob_tiff_paths):
         metadata = load_metadata(hdf5_path)
-        if "tof_binning" not in metadata:
+        if "tof_start" not in metadata or "tof_bin_size" not in metadata or "tof_num_bins" not in metadata:
             raise ValueError(
                 f"TOF binning information not found in metadata loaded from {hdf5_path}. "
                 "Cannot proceed without TOF binning."
             )
         ob_run = load_tiff_stack(tiff_paths)
+
+        # change to tof binning using metadata
+        start = metadata["tof_start"]
+        bin_size = metadata["tof_bin_size"]
+        num_bins = metadata["tof_num_bins"]
+        tof_bins = sc.arange("tof", num_bins + 1) * bin_size + start
+        ob_run = ob_run.rename_dims({"N_image": "tof"})
+        ob_run.coords["tof"] = tof_bins
+
         # Attach metadata as coordinates to the OB DataArray for later use in normalization and rebinning
         for key, value in metadata.items():
-            if key == "tof_binning":
-                # create tof bins from start, bin size, and num bins
-                start = value["start"]
-                bin_size = value["bin_size"]
-                num_bins = value["num_bins"]
-                tof_bins = sc.arange("tof", num_bins + 1) * bin_size + start
-                ob_run = ob_run.rename_dims({"N_image": "tof"})
-                ob_run.coords["tof"] = tof_bins
-            else:
-                ob_run.coords[key] = value
-                ob_run.coords.set_aligned(key, False)
+            ob_run.coords[key] = value
+            ob_run.coords.set_aligned(key, False)
 
         ob.append(ob_run)
 
@@ -178,10 +178,10 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
         ob = apply_roi(ob, roi)
 
     # Dead pixel detection
-    sample.masks["dead_pixels"] = detect_dead_pixels(sample)
+    sample.masks["dead_pixels"] = detect_dead_pixels(ob)
 
     # Hot pixel detection
-    sample.masks["hot_pixels"] = detect_hot_pixels(sample)
+    sample.masks["hot_pixels"] = detect_hot_pixels(ob)
 
     # Spatial rebinning (optional)
     if rebin_by_spatial is not None:
@@ -279,5 +279,5 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
     else:
         raise ValueError(f"Unsupported output file format: {output_path.suffix}")
 
-    logger.success("VENUS TPX1 pipeline completed successfully. Output written to {}", output_path)
+    logger.success("VENUS TPX3 histogram pipeline completed successfully. Output written to {}", output_path)
     return transmission
