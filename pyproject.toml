@@ -189,6 +189,7 @@ numba = ">=0.60"    # For testing performance module
 anaconda-client = ">=1.13.0,<2"
 pyjwt = ">=2.12.0"              # required by anaconda-client, setting minimum to avoid vulnerabilities
 requests = ">=2.33.0"           # required by anaconda-client, setting minimum to avoid vulnerabilities
+python-dotenv = ">=1.2.2"       # required by anaconda-client, setting minimum to avoid vulnerabilities
 twine = ">=6.1.0,<7"
 versioningit = "*"
 hatch = "*"
@@ -214,7 +215,7 @@ sphinx = "*"
 sphinx_rtd_theme = "*"
 myst-parser = "*"
 nbsphinx = "*"
-nbconvert = ">=7.17.0" # required by nbsphinx, setting minimum to avoid vulnerabilities
+nbconvert = ">=7.17.1" # required by nbsphinx, setting minimum to avoid vulnerabilities
 pygments = ">=2.20.0"  # required by sphinx, setting minimum to avoid vulnerabilities
 
 [tool.pixi.feature.viz.dependencies]

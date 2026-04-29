@@ -40,7 +40,7 @@ jobs:
 
       - name: Dependency check
         run: |
-          pixi run audit-deps
+          pixi run audit-deps --ignore-vuln CVE-2026-3219 # temporary ignore until fixed version of pip
 
   conda-build:
     name: Build conda package
