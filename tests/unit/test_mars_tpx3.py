@@ -20,7 +20,7 @@ class TestMarsTPX3Pipeline:
         cls.sample_paths_bad_pixels = []
         cls.ob_paths = []
 
-        cls._tmpdir = tempfile.TemporaryDirectory()
+        cls._tmpdir = tempfile.TemporaryDirectory(delete=False)
         tmp_dir = Path(cls._tmpdir.name)
 
         # for our test data we have 32x32 detector
@@ -32,12 +32,17 @@ class TestMarsTPX3Pipeline:
         for i in range(5):
             temp_path = tmp_dir / f"sample_{i:03}.hdf5"
             with h5py.File(temp_path, "w") as hf:
-                # TPX3 format: tof, x, y arrays
+                # TPX3 format:
+                # /entry/bank1_events/event_id
+                # /entry/bank1_events/event_time_offset
+                entry = hf.create_group("entry")
+                bank = entry.create_group("bank1_events")
                 # repeat the same values to increase counts in each
                 repeats = 81 + i
-                hf.create_dataset("tof", data=np.repeat(tofs, repeats))
-                hf.create_dataset("x", data=np.tile(x_values, repeats), dtype=np.int32)
-                hf.create_dataset("y", data=np.tile(y_values, repeats), dtype=np.int32)
+                bank.create_dataset("event_time_offset", data=np.repeat(tofs, repeats))
+                bank.create_dataset(
+                    "event_id", data=np.repeat(x_values, repeats) + np.repeat(y_values, repeats) * 32, dtype=np.int32
+                )
             cls.sample_paths.append(temp_path)
 
         # create 5 sample TPX3-style HDF5 with values 81-85 and metadata. These have a dead pixel and a hot pixel.
@@ -61,9 +66,10 @@ class TestMarsTPX3Pipeline:
                         t.extend([tof] * repeats)
                         x.extend([x_val] * repeats)
                         y.extend([y_val] * repeats)
-                hf.create_dataset("tof", data=t)
-                hf.create_dataset("x", data=x, dtype=np.int32)
-                hf.create_dataset("y", data=y, dtype=np.int32)
+                entry = hf.create_group("entry")
+                bank = entry.create_group("bank1_events")
+                bank.create_dataset("event_time_offset", data=t)
+                bank.create_dataset("event_id", data=np.array(x) + np.array(y) * 32, dtype=np.int32)
             cls.sample_paths_bad_pixels.append(temp_path)
 
         # create 3 OB TPX3-style HDF5 with values 99, 100, 101 and metadata
@@ -72,9 +78,12 @@ class TestMarsTPX3Pipeline:
             with h5py.File(temp_path, "w") as hf:
                 # repeat the same values to increase counts in each
                 repeats = 99 + i
-                hf.create_dataset("tof", data=np.repeat(tofs, repeats))
-                hf.create_dataset("x", data=np.tile(x_values, repeats), dtype=np.int32)
-                hf.create_dataset("y", data=np.tile(y_values, repeats), dtype=np.int32)
+                entry = hf.create_group("entry")
+                bank = entry.create_group("bank1_events")
+                bank.create_dataset("event_time_offset", data=np.repeat(tofs, repeats))
+                bank.create_dataset(
+                    "event_id", data=np.repeat(x_values, repeats) + np.repeat(y_values, repeats) * 32, dtype=np.int32
+                )
             cls.ob_paths.append(temp_path)
 
     @classmethod
@@ -147,6 +156,7 @@ class TestMarsTPX3Pipeline:
                 ob_paths=[self.ob_paths],
                 output_path=output_path,
                 roi=(5, 5, 25, 25),
+                detector_shape=(32, 32),  # match our test data
             )
 
             assert output_path.exists()
@@ -205,6 +215,7 @@ class TestMarsTPX3Pipeline:
                 ob_paths=[self.ob_paths],
                 output_path=output_path,
                 roi=(5, 5, 25, 25),
+                detector_shape=(32, 32),  # match our test data
                 gamma_filter=False,  # disable gamma filter to test that hot pixel is not removed
             )
 

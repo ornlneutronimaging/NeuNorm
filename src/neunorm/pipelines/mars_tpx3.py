@@ -14,7 +14,7 @@ from neunorm import __version__
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
-from neunorm.loaders.event_loader import load_event_data
+from neunorm.loaders.event_loader import load_event_nexus
 from neunorm.processing.normalizer import normalize_transmission
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
@@ -74,11 +74,23 @@ def run_mars_tpx3_pipeline(  # noqa: C901
 
     # Load data and convert to histogram
     samples = [
-        sc.concat([convert_events_to_2d_histogram(load_event_data(p), detector_shape) for p in run], dim="N_image")
+        sc.concat(
+            [
+                convert_events_to_2d_histogram(load_event_nexus(p, detector_shape=detector_shape), detector_shape)
+                for p in run
+            ],
+            dim="N_image",
+        )
         for run in sample_paths
     ]
     obs = [
-        sc.concat([convert_events_to_2d_histogram(load_event_data(p), detector_shape) for p in run], dim="N_image")
+        sc.concat(
+            [
+                convert_events_to_2d_histogram(load_event_nexus(p, detector_shape=detector_shape), detector_shape)
+                for p in run
+            ],
+            dim="N_image",
+        )
         for run in ob_paths
     ]
 

@@ -100,3 +100,128 @@ def load_event_data(
     logger.success(f"✓ Loaded {events.total_events:,} events from {file_path.name}")
 
     return events
+
+
+def load_event_nexus(  # noqa: C901
+    file_path: Union[str, Path],
+    detector_bank: Optional[str] = "bank1",
+    detector_shape: tuple[int, int] = (512, 512),
+    max_events: Optional[int] = None,
+) -> EventData:
+    """
+    Load event-mode data from SNS NeXus HDF5 file.
+
+    Reads from the SNS NeXus event bank structure:
+    /entry/<bank>_events/ with datasets:
+    - event_id: Linearized pixel detector IDs
+    - event_time_offset: Time-of-flight values (in microseconds)
+
+    Parameters
+    ----------
+    file_path : str or Path
+        Path to NeXus HDF5 file containing event data
+    detector_bank : str
+        Specific detector bank to load (e.g., 'bank100').
+    detector_shape : tuple[int, int], optional
+        Detector dimensions (height, width) for unrolling event_id to x, y.
+        Default: (512, 512) for SNS VENUS detectors
+    max_events : int, optional
+        Maximum number of events to load (for testing/memory limits)
+        If None, loads all events
+
+    Returns
+    -------
+    EventData
+        Pydantic model containing event arrays (tof in ns, x, y) and metadata
+
+    Raises
+    ------
+    FileNotFoundError
+        If file doesn't exist
+    KeyError
+        If NeXus structure or required fields not found
+    ValueError
+        If detector_bank specified but not found
+
+    Examples
+    --------
+    >>> # Auto-detect detector bank
+    >>> events = load_event_nexus('VENUS_15159.nxs.h5')
+
+    >>> # Specify detector bank
+    >>> events = load_event_nexus('VENUS_15159.nxs.h5', detector_bank='bank100')
+
+    >>> # Custom detector size
+    >>> events = load_event_nexus('file.nxs.h5', detector_size=(256, 256))
+    """
+    file_path = Path(file_path)
+
+    if not file_path.exists():
+        raise FileNotFoundError(f"NeXus file not found: {file_path}")
+
+    logger.info(f"Loading SNS NeXus event data from {file_path.name}")
+
+    with h5py.File(file_path, "r") as f:
+        # Navigate to entry group
+        if "entry" not in f:
+            raise KeyError("NeXus 'entry' group not found in file")
+
+        entry = f["entry"]
+
+        # Find event bank group
+        bank_key = f"{detector_bank}_events" if not detector_bank.endswith("_events") else detector_bank
+        event_bank_group = event_bank_group = entry[bank_key]
+
+        if event_bank_group is None:
+            raise KeyError(f"No '*_events' groups found under 'entry'. Available groups: {list(entry.keys())}")
+
+        logger.info(f"  Using detector bank: {detector_bank}")
+
+        # Check for required datasets
+        required_fields = ["event_id", "event_time_offset"]
+        for field in required_fields:
+            if field not in event_bank_group:
+                raise KeyError(
+                    f"Dataset '{field}' not found in {detector_bank}_events. Found: {list(event_bank_group.keys())}"
+                )
+
+        # Get total event count
+        total_events_in_file = event_bank_group["event_id"].shape[0]
+
+        # Determine how many events to load
+        if max_events is not None:
+            n_events = min(max_events, total_events_in_file)
+            logger.info(f"  Loading {n_events:,} / {total_events_in_file:,} events (max_events={max_events:,})")
+        else:
+            n_events = total_events_in_file
+            logger.info(f"  Loading {n_events:,} events")
+
+        # Load event_id and time_offset
+        event_id = event_bank_group["event_id"][:n_events].astype(np.int32)
+        tof_raw = event_bank_group["event_time_offset"][:n_events].astype(np.float64)
+
+    # Unroll event_id to x, y pixel coordinates
+    # event_id is linearized: pixel_id = y * width + x
+    height, width = detector_shape
+    y = (event_id // width).astype(np.int32)
+    x = (event_id % width).astype(np.int32)
+
+    # Convert TOF from microseconds to nanoseconds
+    tof_ns = (tof_raw * 1000).astype(np.int64)
+
+    logger.info(f"  TOF range: {tof_ns.min():,} - {tof_ns.max():,} ns")
+    logger.info(f"  X range: [{x.min()}, {x.max()}]")
+    logger.info(f"  Y range: [{y.min()}, {y.max()}]")
+
+    # Create EventData model
+    events = EventData(
+        tof=tof_ns,
+        x=x,
+        y=y,
+        file_path=file_path,
+        total_events=n_events,
+    )
+
+    logger.success(f"✓ Loaded {events.total_events:,} events from {file_path.name}")
+
+    return events
