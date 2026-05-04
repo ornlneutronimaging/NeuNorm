@@ -151,6 +151,12 @@ class TestVenusTPX3EventPipeline:
                 np.testing.assert_equal(hf["y"], np.arange(33))
                 assert "tof" in hf
                 np.testing.assert_equal(hf["tof"], np.arange(100000, 130000, 5000))  # ns
+                assert "wavelength" in hf
+                np.testing.assert_allclose(
+                    hf["wavelength"], np.array([0.807, 0.808, 0.809, 0.809, 0.810, 0.811]), atol=0.001
+                )
+                assert "energy" in hf
+                np.testing.assert_allclose(hf["energy"], np.array([125.6, 125.4, 125.1, 124.9, 124.6, 124.4]), atol=0.1)
                 # Check masks
                 assert "masks/dead" in hf
                 np.testing.assert_equal(hf["masks/dead"], np.zeros((32, 32), dtype=bool))
@@ -246,7 +252,7 @@ class TestVenusTPX3EventPipeline:
         assert transmission.shape == (5, 20, 20)
         for i in range(5):
             expected_value = np.full((20, 20), (5 + i) / (10 + i) * 2)
-            expected_value[8 - 5, 22 - 5] = np.inf  # dead pixel should be zero after dark subtraction and normalization
+            expected_value[8 - 5, 22 - 5] = np.inf  # dead pixel is expected to normalize to inf and be masked
             expected_value[19 - 5, 7 - 5] = (5 + i) / (1000) * 2  # hot pixel
             np.testing.assert_allclose(transmission.values[i], expected_value)
 
@@ -289,3 +295,121 @@ class TestVenusTPX3EventPipeline:
 
         # The variances should be less than the variance from a single run due to combining multiple runs
         np.testing.assert_allclose(transmission.variances, 0.117, rtol=0.1)
+
+    def test_venus_tpx3_event_pipeline_spatial_rebin(self):
+        """
+        Test the rebin_by_spatial function. Just look at the return DataArray and not the output file
+        """
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+
+            transmission = run_venus_tpx3_event_pipeline(
+                sample_paths=[self.sample],
+                ob_paths=[self.ob],
+                binning=self.binning,
+                output_path=output_path,
+                detector_shape=(32, 32),
+                rebin_by_spatial=8,
+            )
+
+            assert output_path.exists()
+
+        assert transmission.shape == (5, 4, 4)  # original was (5, 32, 32) so 8x8 rebin should give (5, 4, 4)
+
+        # values should be the same but variances should be reduced because of the rebinning
+        for i in range(5):
+            np.testing.assert_allclose(transmission.values[i], (5 + i) / (10 + i) * 2)
+
+        np.testing.assert_allclose(transmission.variances, 0.0047, rtol=0.1)
+
+    def test_venus_tpx3_event_pipeline_tof_rebin(self):
+        """
+        Test the rebin_by_tof function. Just look at the return DataArray and not the output file
+        """
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+
+            transmission = run_venus_tpx3_event_pipeline(
+                sample_paths=[self.sample],
+                ob_paths=[self.ob],
+                binning=self.binning,
+                output_path=output_path,
+                detector_shape=(32, 32),
+                rebin_by_tof=2,
+            )
+
+            assert output_path.exists()
+
+        assert transmission.shape == (
+            3,
+            32,
+            32,
+        )  # original was (5, 32, 32) so rebin by factor of 2 should give (3, 32, 32)
+
+        np.testing.assert_allclose(transmission.values[0], (5 + 6) / (10 + 11) * 2)
+        np.testing.assert_allclose(transmission.values[1], (7 + 8) / (12 + 13) * 2)
+        np.testing.assert_allclose(transmission.values[2], 9 / 14 * 2)
+
+        np.testing.assert_allclose(transmission.variances[0], 0.15, rtol=0.1)
+        np.testing.assert_allclose(transmission.variances[1], 0.15, rtol=0.1)
+        np.testing.assert_allclose(transmission.variances[2], 0.3, rtol=0.1)
+
+        np.testing.assert_allclose(transmission.coords["tof"].values, [100000, 110000, 120000, 125000])
+        np.testing.assert_allclose(transmission.coords["wavelength"].values, [0.807, 0.8089, 0.810, 0.811], atol=0.011)
+        np.testing.assert_allclose(transmission.coords["energy"].values, [125.6, 125.1, 124.6, 124.4], atol=0.1)
+
+    def test_venus_tpx3_event_pipeline_tof_rebin_auto(self):
+        """
+        Test the rebin_by_tof function with analyze statistics to get recommended rebinning factor.
+        Just look at the return DataArray and not the output file
+        """
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+
+            transmission = run_venus_tpx3_event_pipeline(
+                sample_paths=[self.sample],
+                binning=self.binning,
+                ob_paths=[self.ob],
+                output_path=output_path,
+                detector_shape=(32, 32),
+                rebin_by_tof=True,
+            )
+
+            assert output_path.exists()
+
+        assert transmission.shape == (
+            5,
+            32,
+            32,
+        )  # should be unchanged because the recommended rebinning factor based on the test TOF data is 1 (no rebinning)
+
+        # values and variances should be the same
+        for i in range(5):
+            np.testing.assert_allclose(transmission.values[i], (5 + i) / (10 + i) * 2)
+
+        np.testing.assert_allclose(transmission.variances, 0.3, rtol=0.1)
+
+        np.testing.assert_allclose(transmission.coords["tof"].values, [100000, 105000, 110000, 115000, 120000, 125000])
+
+    def test_venus_tpx3_event_pipeline_air_region_correction(self):
+        """
+        Test the air region correction function. Just look at the return DataArray and not the output file
+        """
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+
+            transmission = run_venus_tpx3_event_pipeline(
+                sample_paths=[self.sample],
+                ob_paths=[self.ob],
+                binning=self.binning,
+                output_path=output_path,
+                detector_shape=(32, 32),
+                air_roi=(0, 0, 10, 10),
+            )
+
+            assert output_path.exists()
+
+        assert transmission.shape == (5, 32, 32)
+        # Since all the data are the same for a single tof the air correction should just normalize 1.
+        np.testing.assert_allclose(transmission.values, 1)
+        np.testing.assert_allclose(transmission.variances, 0.244, rtol=0.25)

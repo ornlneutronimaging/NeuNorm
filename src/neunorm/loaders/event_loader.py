@@ -104,7 +104,7 @@ def load_event_data(
 
 def load_event_nexus(  # noqa: C901
     file_path: Union[str, Path],
-    detector_bank: Optional[str] = "bank1",
+    detector_bank: str = "bank1",
     detector_shape: tuple[int, int] = (512, 512),
     max_events: Optional[int] = None,
 ) -> EventData:
@@ -123,7 +123,7 @@ def load_event_nexus(  # noqa: C901
     detector_bank : str
         Specific detector bank to load (e.g., 'bank100').
     detector_shape : tuple[int, int], optional
-        Detector dimensions (height, width) for unrolling event_id to x, y.
+        Detector dimensions (x_bins, y_bins) for unrolling event_id to x, y.
         Default: (512, 512) for SNS VENUS detectors
     max_events : int, optional
         Maximum number of events to load (for testing/memory limits)
@@ -151,8 +151,8 @@ def load_event_nexus(  # noqa: C901
     >>> # Specify detector bank
     >>> events = load_event_nexus('VENUS_15159.nxs.h5', detector_bank='bank100')
 
-    >>> # Custom detector size
-    >>> events = load_event_nexus('file.nxs.h5', detector_size=(256, 256))
+    >>> # Custom detector shape
+    >>> events = load_event_nexus('file.nxs.h5', detector_shape=(256, 256))
     """
     file_path = Path(file_path)
 
@@ -170,10 +170,12 @@ def load_event_nexus(  # noqa: C901
 
         # Find event bank group
         bank_key = f"{detector_bank}_events" if not detector_bank.endswith("_events") else detector_bank
-        event_bank_group = event_bank_group = entry[bank_key]
 
-        if event_bank_group is None:
-            raise KeyError(f"No '*_events' groups found under 'entry'. Available groups: {list(entry.keys())}")
+        if bank_key not in entry:
+            raise KeyError(
+                f"Detector bank '{bank_key}' not found under 'entry'. Available groups: {list(entry.keys())}"
+            )
+        event_bank_group = entry[bank_key]
 
         logger.info(f"  Using detector bank: {detector_bank}")
 
@@ -201,10 +203,10 @@ def load_event_nexus(  # noqa: C901
         tof_raw = event_bank_group["event_time_offset"][:n_events].astype(np.float64)
 
     # Unroll event_id to x, y pixel coordinates
-    # event_id is linearized: pixel_id = y * width + x
-    height, width = detector_shape
-    y = (event_id // width).astype(np.int32)
-    x = (event_id % width).astype(np.int32)
+    # event_id is linearized: pixel_id = y * y_bins + x
+    x_bins, y_bins = detector_shape
+    y = (event_id // y_bins).astype(np.int32)
+    x = (event_id % y_bins).astype(np.int32)
 
     # Convert TOF from microseconds to nanoseconds
     tof_ns = (tof_raw * 1000).astype(np.int64)

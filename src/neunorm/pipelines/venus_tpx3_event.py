@@ -21,6 +21,7 @@ from neunorm.processing.normalizer import normalize_transmission
 from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.run_combiner import combine_runs
 from neunorm.processing.spatial_rebinner import rebin_spatial
+from neunorm.tof.coordinate_converter import convert_tof_to_energy, convert_tof_to_wavelength
 from neunorm.tof.event_converter import convert_events_to_histogram
 from neunorm.tof.histogram_rebinner import rebin_tof
 from neunorm.tof.pixel_detector import detect_dead_pixels, detect_hot_pixels
@@ -185,6 +186,16 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     # Air region correction (optional)
     if air_roi is not None:
         transmission = apply_air_region_correction(transmission, air_roi)
+
+    # Add wavelength and energy coordinates converted from TOF using the detector distance
+    # and time offset from the metadata
+    if "detector_time_offset" in sample.coords:
+        distance = sc.scalar(25.0, unit="m")  # distance for VENUS
+        time_offset = sample.coords["detector_time_offset"]
+        transmission.coords["wavelength"] = convert_tof_to_wavelength(transmission.coords["tof"], distance, time_offset)
+        transmission.coords["energy"] = convert_tof_to_energy(transmission.coords["tof"], distance, time_offset)
+    else:
+        logger.warning("Time offset not found in metadata. Cannot add wavelength and energy coordinates.")
 
     # Write output
     metadata = {
