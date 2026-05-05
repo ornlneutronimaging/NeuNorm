@@ -106,6 +106,7 @@ def load_event_nexus(  # noqa: C901
     file_path: Union[str, Path],
     detector_bank: str = "bank1",
     detector_shape: tuple[int, int] = (512, 512),
+    event_id_offset: int = 0,
     max_events: Optional[int] = None,
 ) -> EventData:
     """
@@ -205,8 +206,8 @@ def load_event_nexus(  # noqa: C901
     # Unroll event_id to x, y pixel coordinates
     # event_id is linearized: pixel_id = y * y_bins + x
     x_bins, y_bins = detector_shape
-    y = (event_id // y_bins).astype(np.int32)
-    x = (event_id % y_bins).astype(np.int32)
+    y = ((event_id - event_id_offset) // y_bins).astype(np.int32)
+    x = ((event_id - event_id_offset) % y_bins).astype(np.int32)
 
     # Convert TOF from microseconds to nanoseconds
     tof_ns = (tof_raw * 1000).astype(np.int64)

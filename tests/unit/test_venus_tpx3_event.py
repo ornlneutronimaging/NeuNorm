@@ -22,10 +22,11 @@ class TestVenusTPX3EventPipeline:
         cls._tmpdir = tempfile.TemporaryDirectory(delete=False)
         tmp_dir = Path(cls._tmpdir.name)
 
+        offset = 1_000_000  # add offset to match VENUS TPX3 event_id format
         # for our test data we have 32x32 detector
         x_values = np.tile(np.arange(32), (32, 1)).flatten()
         y_values = np.tile(np.arange(32), (32, 1)).T.flatten()
-        event_ids = x_values + y_values * 32
+        event_ids = x_values + y_values * 32 + offset
 
         # create sample HDF5 with metadata.
         cls.sample = tmp_dir / "sample.hdf5"
@@ -87,9 +88,9 @@ class TestVenusTPX3EventPipeline:
             for i in range(5):
                 tofs = np.full(32 * 32, 100 + i * 5, dtype=np.int64)  # us
                 for tof, event_id in zip(tofs, event_ids):
-                    if event_id == 8 + 22 * 32:  # dead pixel (8, 22)
+                    if event_id == 8 + 22 * 32 + offset:  # dead pixel (8, 22)
                         continue  # skip events for dead pixel
-                    elif event_id == 19 + 7 * 32:  # hot pixel (19, 7)
+                    elif event_id == 19 + 7 * 32 + offset:  # hot pixel (19, 7)
                         t.extend([tof] * 1000)  # add many events for hot pixel
                         ids.extend([event_id] * 1000)
                     else:

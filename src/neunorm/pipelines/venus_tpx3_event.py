@@ -38,6 +38,8 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     rebin_by_tof: Optional[bool | int] = False,
     rebin_by_spatial: Optional[int | tuple[int, int]] = None,
     detector_shape: tuple[int, int] = (514, 514),
+    event_id_offset: int = 1_000_000,
+    bank_name: str = "bank100",
 ) -> sc.DataArray:
     """Execute VENUS TPX3 event normalization pipeline.
 
@@ -79,6 +81,11 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
         rebinning factor. If None, no spatial rebinning is applied.
     detector_shape : tuple[int, int]
         Shape of the TPX3 detector (default: (514, 514))
+    event_id_offset : int
+        Offset to apply when unrolling event_id to x, y coordinates.
+        This accounts for any non-zero starting point in the event_ids.
+    bank_name : str
+        Name of the detector bank in the NeXus file to load (default: "bank100")
 
     Notes
     -----
@@ -99,7 +106,9 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
 
     for run in sample_paths:
         sample = convert_events_to_histogram(
-            load_event_nexus(run, detector_bank="bank100", detector_shape=detector_shape),
+            load_event_nexus(
+                run, detector_bank=bank_name, detector_shape=detector_shape, event_id_offset=event_id_offset
+            ),
             binning,
             flight_path,
             x_bins,
@@ -114,7 +123,9 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     obs = []
     for run in ob_paths:
         ob = convert_events_to_histogram(
-            load_event_nexus(run, detector_bank="bank100", detector_shape=detector_shape),
+            load_event_nexus(
+                run, detector_bank=bank_name, detector_shape=detector_shape, event_id_offset=event_id_offset
+            ),
             binning,
             flight_path,
             x_bins,
