@@ -25,7 +25,7 @@ jobs:
       - name: Setup pixi
         uses: prefix-dev/setup-pixi@v0.9.4
         with:
-          pixi-version: v0.63.2
+          pixi-version: v0.70.1
           manifest-path: pyproject.toml
           frozen: true
 
@@ -40,7 +40,10 @@ jobs:
 
       - name: Dependency check
         run: |
-          pixi run audit-deps --ignore-vuln CVE-2026-3219 # temporary ignore until fixed version of pip
+          # Temporary ignores until fixed versions reach conda-forge:
+          #   CVE-2026-3219                  -> pip
+          #   CVE-2026-47265, CVE-2026-34993 -> aiohttp (fixed in 3.14.0, not yet on conda-forge)
+          pixi run audit-deps --ignore-vuln CVE-2026-3219 --ignore-vuln CVE-2026-47265 --ignore-vuln CVE-2026-34993
 
   conda-build:
     name: Build conda package
@@ -55,7 +58,7 @@ jobs:
       - name: Setup pixi
         uses: prefix-dev/setup-pixi@v0.9.4
         with:
-          pixi-version: v0.63.2
+          pixi-version: v0.70.1
           manifest-path: pyproject.toml
           frozen: true
 
@@ -94,7 +97,7 @@ jobs:
       - name: Setup Pixi
         uses: prefix-dev/setup-pixi@v0.9.4
         with:
-          pixi-version: v0.63.2
+          pixi-version: v0.70.1
           manifest-path: pyproject.toml
           frozen: true
 
@@ -131,7 +134,7 @@ jobs:
       - name: Setup pixi
         uses: prefix-dev/setup-pixi@v0.9.4
         with:
-          pixi-version: v0.63.2
+          pixi-version: v0.70.1
           manifest-path: pyproject.toml
           frozen: true
 

@@ -125,7 +125,8 @@ plopp = ">=25.10.0" # Scipp visualization
 h5py = ">=3.0"
 pillow = ">=12.2.0"
 astropy = "*"
-aiohttp = ">=3.13.4" # required by astropy, setting minimum to avoid vulnerabilities
+aiohttp = ">=3.13.4" # required by astropy; 3.14.0 (CVE fix) not yet on conda-forge, see audit-deps ignore list
+idna = ">=3.15"      # required by aiohttp/requests, setting minimum to avoid vulnerabilities
 # Data validation
 pydantic = ">=2.0"
 # Logging
@@ -187,7 +188,7 @@ numba = ">=0.60"    # For testing performance module
 
 [tool.pixi.feature.package.dependencies]
 anaconda-client = ">=1.13.0,<2"
-pyjwt = ">=2.12.0"              # required by anaconda-client, setting minimum to avoid vulnerabilities
+pyjwt = ">=2.13.0"              # required by anaconda-client, setting minimum to avoid vulnerabilities
 requests = ">=2.33.0"           # required by anaconda-client, setting minimum to avoid vulnerabilities
 python-dotenv = ">=1.2.2"       # required by anaconda-client, setting minimum to avoid vulnerabilities
 twine = ">=6.1.0,<7"
@@ -196,13 +197,13 @@ hatch = "*"
 cryptography = ">=46.0.7"       # required by twine and hatch, setting minimum to avoid vulnerabilities
 "jaraco.context" = ">=6.1.0"    # required by twine and hatch, setting minimum to avoid vulnerabilities
 filelock = ">=3.20.1"           # required by hatch, setting minimum to avoid vulnerabilities
-urllib3 = ">=2.6.3"             # required by twine, setting minimum to avoid vulnerabilities
+urllib3 = ">=2.7.0"             # required by twine, setting minimum to avoid vulnerabilities
 
 [tool.pixi.feature.package.pypi-dependencies]
 toml-cli = "*"
 
 [tool.pixi.feature.developer.dependencies]
-pip = ">=26.0"
+pip = ">=26.1"           # CVE-2026-6357 fixed in 26.1
 wheel = ">=0.46.2"       # required by pip, setting minimum to avoid vulnerabilities
 pip-audit = "*"
 pre-commit = "*"
@@ -216,6 +217,7 @@ sphinx_rtd_theme = "*"
 myst-parser = "*"
 nbsphinx = "*"
 nbconvert = ">=7.17.1" # required by nbsphinx, setting minimum to avoid vulnerabilities
+mistune = ">=3.2.1"    # required by nbconvert, setting minimum to avoid vulnerabilities
 pygments = ">=2.20.0"  # required by sphinx, setting minimum to avoid vulnerabilities
 
 [tool.pixi.feature.viz.dependencies]
