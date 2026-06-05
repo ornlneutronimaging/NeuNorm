@@ -27,6 +27,8 @@ jobs:
       - name: Update lockfiles
         run: |
           set -o pipefail
+          # `pixi exec` fetches and runs pixi-diff-to-markdown in an ephemeral
+          # environment, so no separate install step is needed.
           pixi update --json | pixi exec pixi-diff-to-markdown >> diff.md
 
       - name: Create pull request

@@ -5,7 +5,7 @@ on:
     branches: [next, qa, main]
   pull_request:
     # must be a subset of the push branches above
-    branches: [next]
+    branches: [next, qa, main]
   schedule:
     - cron: "33 13 * * 5" # Fridays 13:33 UTC
 
