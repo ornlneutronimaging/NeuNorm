@@ -1,0 +1,16 @@
+# Dependabot version updates.
+# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+version: 2
+updates:
+  - package-ecosystem: "github-actions" # workflow files under .github/workflows
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      all-actions:
+        patterns:
+          - "*" # bump all actions together in a single PR
+  - package-ecosystem: "pip" # [project.dependencies] floors in pyproject.toml
+    directory: "/"
+    schedule:
+      interval: "weekly"

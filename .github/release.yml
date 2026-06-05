@@ -1,0 +1,10 @@
+# Configuration for GitHub's auto-generated release notes.
+# Keeps the changelog focused on human-authored changes by excluding bot PRs.
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+    authors:
+      - dependabot
+      - dependabot[bot]
+      - pre-commit-ci[bot]
