@@ -10,7 +10,3 @@ updates:
       all-actions:
         patterns:
           - "*" # bump all actions together in a single PR
-  - package-ecosystem: "pip" # [project.dependencies] floors in pyproject.toml
-    directory: "/"
-    schedule:
-      interval: "weekly"
