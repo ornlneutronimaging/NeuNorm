@@ -1,3 +1,9 @@
+"""Metadata loaders for NeuNorm.
+
+Reads acquisition metadata (proton charge, duration, detector, TOF binning) from
+VENUS NeXus files, plus optional shutter-count and spectra-TOF sidecar text files.
+"""
+
 import glob
 from pathlib import Path
 from typing import Union
@@ -98,7 +104,7 @@ def load_shutter_counts(image_path: Union[str, Path]) -> sc.Variable:
     ----------
     image_path : str or Path
         Path to the directory containing the image files, where we expect to find a shutter count file
-        named *_ShutterCount.txt
+        named ``*_ShutterCount.txt``
 
     Returns
     -------
@@ -147,7 +153,7 @@ def load_spectra_tof(image_path: Union[str, Path]) -> sc.Variable:  # noqa: C901
     ----------
     image_path : str or Path
         Path to the directory containing the image files, where we expect to find a spectra file
-        named *_Spectra.txt
+        named ``*_Spectra.txt``
 
     Returns
     -------

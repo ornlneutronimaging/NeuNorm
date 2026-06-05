@@ -20,7 +20,7 @@ This directory contains detector-centric data reduction workflows for scoping Ne
 | [VENUS CCD/CMOS](venus_ccd_cmos.md) | CCD/CMOS | No | Medium |
 | [VENUS TPX1](venus_tpx1.md) | Timepix1 | Yes | Medium |
 | [VENUS TPX3](venus_tpx3.md) | Timepix3 | Yes | High |
-| [VENUS TPX4](venus_tpx4.md) | Timepix4 | Yes | High (planned) |
+| VENUS TPX4 | Timepix4 | Yes | High (planned) |
 
 ---
 

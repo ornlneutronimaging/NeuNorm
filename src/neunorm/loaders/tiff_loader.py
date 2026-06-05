@@ -31,6 +31,7 @@ def load_tiff_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
     -------
     sc.DataArray
         DataArray with dimensions (TOF/image, y, x)
+
         - dims: ['TOF', 'y', 'x'] if tof_edges provided, else ['N_image', 'y', 'x']
         - coords: y, x pixel indices, and optionally TOF.
           Additionally, TIFF metadata is added as coordinates with dimension of the stack.

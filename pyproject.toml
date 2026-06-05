@@ -51,10 +51,10 @@ viz = ["plopp>=25.10.0", "matplotlib"]
 performance = ["numba>=0.60"]
 
 [project.urls]
-homepage = "https://github.com/neutrons/NeuNorm"
-repository = "https://github.com/neutrons/NeuNorm"
+homepage = "https://github.com/ornlneutronimaging/NeuNorm"
+repository = "https://github.com/ornlneutronimaging/NeuNorm"
 documentation = "https://neunorm.readthedocs.io"
-issues = "https://github.com/neutrons/NeuNorm/issues"
+issues = "https://github.com/ornlneutronimaging/NeuNorm/issues"
 
 ####################
 ### Build config ###

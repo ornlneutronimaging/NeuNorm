@@ -1,3 +1,5 @@
+"""Per-TOF-bin counting-statistics analysis and rebinning recommendations."""
+
 from dataclasses import dataclass
 
 import numpy as np
@@ -6,6 +8,22 @@ import scipp as sc
 
 @dataclass
 class StatisticsReport:
+    """Summary of per-TOF-bin counting statistics.
+
+    Attributes
+    ----------
+    counts_per_bin : np.ndarray
+        Total counts in each TOF bin.
+    snr_per_bin : np.ndarray
+        Signal-to-noise ratio per bin (``sqrt(N)`` for Poisson statistics).
+    low_statistics_bins : np.ndarray
+        Indices of bins whose SNR is below the requested minimum.
+    recommended_rebinning : int
+        Suggested rebinning factor to reach the target SNR.
+    preserve_regions : list[tuple[int, int]]
+        ``(start, end)`` index ranges flagged to preserve (e.g. Bragg edges).
+    """
+
     counts_per_bin: np.ndarray
     snr_per_bin: np.ndarray
     low_statistics_bins: np.ndarray  # indices

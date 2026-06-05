@@ -27,16 +27,17 @@ def write_hdf5(  # noqa: C901
     Write TOF bin edges (for hyperspectral data)
     Store full processing metadata/provenance
 
-    Output Structure
+    Output Structure::
 
-    /transmission     # (θ, [TOF,] y, x) float32
-    /uncertainty      # (θ, [TOF,] y, x) float32
-    /masks/dead       # (y, x) bool
-    /masks/hot        # (y, x) bool (optional)
-    /tof_bin_edges    # (N+1,) float64 (optional)
-    /metadata/        # processing provenance
+        /transmission     # (θ, [TOF,] y, x) float32
+        /uncertainty      # (θ, [TOF,] y, x) float32
+        /masks/dead       # (y, x) bool
+        /masks/hot        # (y, x) bool (optional)
+        /tof_bin_edges    # (N+1,) float64 (optional)
+        /metadata/        # processing provenance
 
     Metadata contents:
+
     - Input file paths
     - Processing timestamp
     - Gamma filter parameters used

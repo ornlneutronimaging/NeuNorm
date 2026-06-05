@@ -129,7 +129,7 @@ class TestVenusTPX1Pipeline:
                 assert "y" in hf
                 np.testing.assert_equal(hf["y"], np.arange(32))
                 assert "tof" in hf
-                np.testing.assert_equal(hf["tof"], np.arange(0.1, 0.7, 0.1))
+                np.testing.assert_allclose(hf["tof"], np.arange(0.1, 0.7, 0.1))
                 assert "wavelength" in hf
                 np.testing.assert_allclose(hf["wavelength"], np.array([16.6, 32.4, 48.3, 64.1, 79.9, 95.7]), atol=0.1)
                 assert "energy" in hf
