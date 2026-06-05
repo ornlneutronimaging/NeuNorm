@@ -38,7 +38,7 @@ dependencies = [
   "pillow",    # TIFF I/O
   "astropy",   # FITS I/O
   # Data validation and configuration
-  "pydantic>=2.0",
+  "pydantic>=2.13.4",
   # Logging
   "loguru>=0.7",
   # Progress bars
