@@ -64,6 +64,7 @@ class ResonanceDetectionConfig(BaseModel):
     @field_validator("max_peak_width")
     @classmethod
     def validate_max_greater_than_min(cls, v, info):
+        """Validate that ``max_peak_width`` exceeds ``min_peak_width``."""
         if "min_peak_width" in info.data and v <= info.data["min_peak_width"]:
             raise ValueError(f"max_peak_width ({v}) must be > min_peak_width ({info.data['min_peak_width']})")
         return v

@@ -19,6 +19,7 @@ def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
     Load FITS stack as scipp DataArray with metadata and optional TOF coordinates.
 
     Handles:
+
     - List of FITS files (stacked along the first dimension)
     - Metadata extraction from FITS headers
 
@@ -35,6 +36,7 @@ def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
     -------
     sc.DataArray
         DataArray with dimensions (TOF/image, y, x)
+
         - dims: ['TOF', 'y', 'x'] if tof_edges provided, else ['N_image', 'y', 'x']
         - coords: y, x pixel indices, and optionally TOF.
           Additionally, FITS header keys are added as coordinates with dimension of the stack.

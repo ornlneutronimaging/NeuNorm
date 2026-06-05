@@ -13,13 +13,15 @@ def apply_gamma_filter(
 ) -> sc.DataArray:
     """Remove gamma contamination by replacing outliers with local median.
 
-    Formula:
-    FOR each pixel (i, j):
-    IF value > median(neighborhood) + k * σ(neighborhood):
-        Replace with median(neighborhood)
-        Update variance estimate
+    Formula::
 
-    Handles
+        FOR each pixel (i, j):
+            IF value > median(neighborhood) + k * σ(neighborhood):
+                Replace with median(neighborhood)
+                Update variance estimate
+
+    The filter will:
+
     - Detect gamma spikes (statistical outliers above threshold)
     - Replace detected spikes with local median (3x3 or 5x5 neighborhood)
     - Support both single images and stacks

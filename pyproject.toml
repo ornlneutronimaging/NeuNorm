@@ -51,10 +51,10 @@ viz = ["plopp>=25.10.0", "matplotlib"]
 performance = ["numba>=0.60"]
 
 [project.urls]
-homepage = "https://github.com/neutrons/NeuNorm"
-repository = "https://github.com/neutrons/NeuNorm"
+homepage = "https://github.com/ornlneutronimaging/NeuNorm"
+repository = "https://github.com/ornlneutronimaging/NeuNorm"
 documentation = "https://neunorm.readthedocs.io"
-issues = "https://github.com/neutrons/NeuNorm/issues"
+issues = "https://github.com/ornlneutronimaging/NeuNorm/issues"
 
 ####################
 ### Build config ###
@@ -233,7 +233,7 @@ ipywidgets = "*"
 
 [tool.pixi.tasks]
 # Documentation
-build-docs = { cmd = 'sphinx-build -b html docs docs/_build', description = "Build documentation" }
+build-docs = { cmd = 'sphinx-build -b html -W --keep-going docs docs/_build', description = "Build documentation (warnings are errors)" }
 test-docs = { cmd = "sphinx-build -M doctest docs docs/_build", description = "Test building the documentation" }
 # Testing
 test = { description = "Run the test suite", cmd = "pytest" }
