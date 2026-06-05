@@ -29,7 +29,7 @@ maintainers = [
 dependencies = [
   # Core scientific stack
   "numpy>=2.0,<3",
-  "scipy>=1.11",
+  "scipy>=1.17.1",
   # Scipp for labeled multi-dimensional data
   "scipp>=25.8.0",
   "scitiff>=26.1",
