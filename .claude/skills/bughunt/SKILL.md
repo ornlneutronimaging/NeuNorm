@@ -34,4 +34,17 @@ is available.
    `file:line` and a fix suggestion, plus a short "what was checked / what each
    reviewer contributed" summary.
 
+## Deep audit (exhaustive, for pre-release)
+
+The steps above are the lightweight, interactive default. For an exhaustive,
+reproducible pass — e.g. the pre-release audit — escalate to the deterministic
+**`bughunt-deep`** workflow (`.claude/workflows/bughunt-deep.js`): it fans out one
+finder per subsystem **in parallel**, adds the Codex lane, dedups across all
+finders, then has **three independent skeptics verify every finding** (majority
+keeps it), returning only confirmed findings grouped by severity.
+
+Run it with the Workflow tool (`name: "bughunt-deep"`, optional `args` = a scope
+string). It is **multi-agent and token-heavy**, so it requires explicit user
+opt-in — use it for release gates, not routine checks.
+
 Do **not** fix anything in this skill — fixing is a separate, explicit step.
