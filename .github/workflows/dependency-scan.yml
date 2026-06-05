@@ -1,0 +1,53 @@
+name: Dependency scan (Grype)
+
+# Complements the pip-audit check in test_and_deploy.yaml with a Grype scan of
+# the built conda package's full dependency closure. Non-gating; scheduled +
+# on pushes to the promotion branches.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [next, qa, main]
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+permissions:
+  contents: read
+  security-events: write # for SARIF upload to code scanning
+  actions: read
+
+jobs:
+  dependency-scan:
+    name: Scan dependencies with Grype
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@v0.9.4
+        with:
+          pixi-version: v0.70.1
+          manifest-path: pyproject.toml
+          frozen: true
+
+      - name: Build conda package
+        run: |
+          pixi run conda-build
+          mkdir -p /tmp/local-channel/linux-64
+          cp *.conda /tmp/local-channel/linux-64
+
+      - name: Install built conda package
+        id: install
+        uses: neutrons/conda-actions/pkg-install@v2
+        with:
+          package-name: neunorm
+          local-channel: /tmp/local-channel
+
+      - name: Scan installed environment with Grype
+        uses: neutrons/conda-actions/grype@v2
+        with:
+          path: ${{ steps.install.outputs.conda_install_dir }}

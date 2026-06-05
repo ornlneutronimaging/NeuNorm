@@ -1,0 +1,44 @@
+name: Update lockfiles
+
+permissions:
+  contents: write
+  pull-requests: write
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 1 * *" # 05:00 UTC on the 1st of each month
+
+jobs:
+  pixi-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@v0.9.4
+        with:
+          # Pin to the same pixi the rest of CI uses, so the regenerated
+          # lockfile stays in a format the pinned CI pixi can read.
+          pixi-version: v0.70.1
+          run-install: false
+
+      - name: Update lockfiles
+        run: |
+          set -o pipefail
+          # `pixi exec` fetches and runs pixi-diff-to-markdown in an ephemeral
+          # environment, so no separate install step is needed.
+          pixi update --json | pixi exec pixi-diff-to-markdown >> diff.md
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: Update pixi lockfile
+          title: Update pixi lockfile
+          body-path: diff.md
+          branch: update-pixi
+          labels: pixi
+          delete-branch: true
+          add-paths: pixi.lock

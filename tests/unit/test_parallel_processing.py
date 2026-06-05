@@ -637,14 +637,10 @@ class TestParallelPerformance:
         result_seq = reconstruct_pulse_ids(tof, chip_id=chip_id, n_jobs=1)
         result_par = reconstruct_pulse_ids(tof, chip_id=chip_id, n_jobs=4)
 
-        # Results must be identical
+        # Results must be identical. This test verifies correctness, not timing:
+        # at test-data sizes process-spawn overhead dominates the computation, so
+        # an absolute wall-clock bound here is flaky on shared CI runners.
         np.testing.assert_array_equal(result_seq, result_par)
-
-        # Both should complete in reasonable time (< 1 second)
-        start = time.perf_counter()
-        _ = reconstruct_pulse_ids(tof, chip_id=chip_id, n_jobs=4)
-        elapsed = time.perf_counter() - start
-        assert elapsed < 1.0, f"Parallel processing took {elapsed:.3f}s, expected < 1s"
 
     @pytest.mark.slow
     def test_parallel_scales_with_larger_data(self):

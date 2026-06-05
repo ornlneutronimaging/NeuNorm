@@ -1,0 +1,6 @@
+# Code owners for NeuNorm. Listed owners are automatically requested for review
+# on pull requests that modify matching paths.
+# https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owners for everything in the repository.
+* @JeanBilheux @KedoKudo
