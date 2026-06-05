@@ -35,8 +35,8 @@ dependencies = [
   "scitiff>=26.1",
   # Data I/O
   "h5py>=3.16.0",
-  "pillow",    # TIFF I/O
-  "astropy",   # FITS I/O
+  "pillow",       # TIFF I/O
+  "astropy",      # FITS I/O
   # Data validation and configuration
   "pydantic>=2.0",
   # Logging
