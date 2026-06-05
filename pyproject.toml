@@ -31,7 +31,7 @@ dependencies = [
   "numpy>=2.0,<3",
   "scipy>=1.11",
   # Scipp for labeled multi-dimensional data
-  "scipp>=25.8.0",
+  "scipp>=26.3.1",
   "scitiff>=26.1",
   # Data I/O
   "h5py>=3.0",
