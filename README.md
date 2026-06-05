@@ -1,12 +1,18 @@
 # NeuNorm 2.0 - Modern Neutron Imaging Normalization
 
-> **⚠️ DEVELOPMENT BRANCH**: This is the NeuNorm 2.0 development branch featuring a complete architectural rewrite. For the stable NeuNorm 1.x release, see the [`main` branch](https://github.com/ornlneutronimaging/NeuNorm/tree/main).
-
 [![PyPI version](https://badge.fury.io/py/NeuNorm.svg)](https://badge.fury.io/py/NeuNorm)
 [![codecov](https://codecov.io/gh/ornlneutronimaging/NeuNorm/branch/next/graph/badge.svg)](https://codecov.io/gh/ornlneutronimaging/NeuNorm)
 [![Documentation Status](https://readthedocs.org/projects/neunorm/badge/?version=latest)](http://neunorm.readthedocs.io/en/latest/?badge=latest)
 [![DOI](https://zenodo.org/badge/97755175.svg)](https://zenodo.org/badge/latestdoi/97755175)
 [![DOI](http://joss.theoj.org/papers/10.21105/joss.00815/status.svg)](https://doi.org/10.21105/joss.00815)
+
+NeuNorm normalizes neutron imaging data and processes time-of-flight (TOF) data
+for ORNL imaging facilities — MARS at HFIR and VENUS at SNS.
+
+> **NeuNorm 2.0 is a complete, scipp-based rewrite and a breaking change from the
+> 1.x series.** Code written against the 1.x `NeuNorm.normalization.Normalization`
+> API will not run unchanged on 2.0. Pin `NeuNorm<2` to keep using the legacy API —
+> see [NeuNorm 1.x (Legacy)](#neunorm-1x-legacy).
 
 ---
 
@@ -26,6 +32,64 @@ NeuNorm 2.0 is a ground-up rewrite for modern neutron imaging workflows at ORNL 
 - **Automatic Uncertainty Propagation**: Via scipp's variance tracking
 - **Dual-Facility Support**: Unified API for MARS and VENUS workflows
 - **Modern Architecture**: Pydantic v2 data models, scipp-based processing
+
+---
+
+## Installation
+
+From PyPI:
+
+```bash
+pip install NeuNorm
+# optional extras: visualization (plopp/matplotlib) and Numba acceleration
+pip install "NeuNorm[viz,performance]"
+```
+
+From conda (the `neutrons` channel):
+
+```bash
+conda install -c neutrons neunorm
+```
+
+From source, for development (uses [pixi](https://pixi.sh)):
+
+```bash
+git clone https://github.com/ornlneutronimaging/NeuNorm.git
+cd NeuNorm
+pixi install
+pixi run test
+```
+
+---
+
+## Quick Start
+
+Each detector/facility combination has a ready-made pipeline in `neunorm.pipelines`
+that loads the data, applies the appropriate corrections, and writes the normalized
+transmission — with uncertainty, detector masks, and provenance metadata — to HDF5
+(or TIFF):
+
+```python
+from pathlib import Path
+from neunorm.pipelines.mars_ccd import run_mars_ccd_pipeline
+
+# Each inner list is one acquisition "run" to combine before processing.
+transmission = run_mars_ccd_pipeline(
+    sample_paths=[["sample_0001.tiff", "sample_0002.tiff"]],
+    ob_paths=[["ob_0001.tiff", "ob_0002.tiff"]],
+    dark_paths=[["dark_0001.tiff"]],
+    output_path=Path("normalized.hdf5"),
+)
+```
+
+Other pipelines follow the same shape — `run_mars_tpx3_pipeline`,
+`run_venus_ccd_pipeline`, `run_venus_tpx1_pipeline`,
+`run_venus_tpx3_histogram_pipeline`, and `run_venus_tpx3_event_pipeline` — see
+[Supported Workflows](#supported-workflows). Verify your install with:
+
+```bash
+python -c "import neunorm; print(neunorm.__version__)"
+```
 
 ---
 
@@ -95,69 +159,6 @@ This enables **hyperspectral imaging** with wavelength-resolved transmission T(�
 
 ---
 
-## Development Plan
-
-### Roadmap
-
-Development officially starts **February 18, 2026** with target completion in **May 2026**.
-
-| Phase | Milestone | Due Date | Description |
-|-------|-----------|----------|-------------|
-| 0 | Core Infrastructure | Mar 6, 2026 | TIFF/FITS loaders, dark corrector, gamma filter, exporters |
-| 1 | MARS CCD/CMOS | Mar 20, 2026 | First complete end-to-end pipeline |
-| 2 | MARS TPX3 | Apr 3, 2026 | Event-mode support (no TOF) |
-| 3 | VENUS CCD/CMOS | Apr 17, 2026 | p_charge beam correction |
-| 4 | VENUS TPX1 | May 1, 2026 | Histogram-mode TOF with rebinning |
-| 5 | VENUS TPX3 | May 15, 2026 | Event-mode TOF (most complex) |
-
-### Project Board
-
-Track progress: [NeuNorm v2.0 Development](https://github.com/orgs/ornlneutronimaging/projects/7)
-
-### Module Status
-
-#### Implemented
-- `data_models/core.py` - EventData (Pydantic v2)
-- `data_models/tof.py` - BinningConfig
-- `loaders/event_loader.py` - HDF5 TPX3/TPX4 events
-- `tof/pulse_reconstruction.py` - Pulse ID with Numba JIT
-- `tof/event_converter.py` - Events → 3D histogram
-- `tof/pixel_detector.py` - Dead/hot pixel detection
-- `processing/normalizer.py` - T = Sample/OB with p_charge
-- `processing/uncertainty_calculator.py` - Poisson + systematic
-
-#### To Be Implemented
-- TIFF/FITS loaders (using [scitiff](https://github.com/scipp/scitiff))
-- Dark current correction
-- Gamma filtering
-- Air region correction
-- Run combiner
-- ROI clipper
-- Statistics analyzer / Histogram rebinner
-- Output writers (HDF5, TIFF)
-
----
-
-## Installation
-
-### Development Setup
-
-```bash
-git clone https://github.com/ornlneutronimaging/NeuNorm.git
-cd NeuNorm
-git checkout neunorm-2.0-base
-pixi install
-```
-
-### Quick Start
-
-```python
-import NeuNorm
-print(NeuNorm.__version__)  # 2.0.0a0
-```
-
----
-
 ## Architecture
 
 ### Technology Stack
@@ -165,8 +166,8 @@ print(NeuNorm.__version__)  # 2.0.0a0
 - **Data Models**: Pydantic v2 for validation
 - **Array Processing**: scipp with automatic variance propagation
 - **TIFF I/O**: scitiff (scipp ecosystem)
-- **Performance**: Numba JIT for hot paths
-- **Testing**: pytest with hypothesis
+- **Performance**: Numba JIT for hot paths (optional, via the `performance` extra)
+- **Testing**: pytest with coverage
 
 ### Key Design Principles
 
@@ -177,21 +178,28 @@ print(NeuNorm.__version__)  # 2.0.0a0
 
 ---
 
+## Documentation
+
+Full documentation — user guides plus an autodoc API reference — is hosted at
+[neunorm.readthedocs.io](https://neunorm.readthedocs.io). The per-workflow guides
+live under [`docs/workflows/`](docs/workflows/).
+
+---
+
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
-
-### Branch Strategy
-
-- `main`: Stable NeuNorm 1.x releases
-- `neunorm-2.0-base`: Active v2.0 development (target branch for PRs)
-- `next`: Integration branch for v2.0
+See [CONTRIBUTING.md](CONTRIBUTING.md). Development uses **pixi**; please run
+`pixi run test` and `pixi run pre-commit run --all-files` before opening a pull
+request. Branches follow the promotion path **`next` → `qa` → `main`** (`next` is
+the default development branch).
 
 ---
 
 ## NeuNorm 1.x (Legacy)
 
-For users of NeuNorm 1.x, see the [archived documentation](archive/neunorm-1.x/README.md).
+NeuNorm 1.x — the `from NeuNorm.normalization import Normalization` API — is the
+previous stable line. To keep using it, pin `NeuNorm<2` in your environment.
+Archived 1.x documentation: [archive/neunorm-1.x/README.md](archive/neunorm-1.x/README.md).
 
 ---
 
