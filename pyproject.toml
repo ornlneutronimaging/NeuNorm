@@ -34,7 +34,7 @@ dependencies = [
   "scipp>=25.8.0",
   "scitiff>=26.1",
   # Data I/O
-  "h5py>=3.0",
+  "h5py>=3.16.0",
   "pillow",    # TIFF I/O
   "astropy",   # FITS I/O
   # Data validation and configuration
