@@ -233,7 +233,7 @@ ipywidgets = "*"
 
 [tool.pixi.tasks]
 # Documentation
-build-docs = { cmd = 'sphinx-build -b html docs docs/_build', description = "Build documentation" }
+build-docs = { cmd = 'sphinx-build -b html -W --keep-going docs docs/_build', description = "Build documentation (warnings are errors)" }
 test-docs = { cmd = "sphinx-build -M doctest docs docs/_build", description = "Test building the documentation" }
 # Testing
 test = { description = "Run the test suite", cmd = "pytest" }
