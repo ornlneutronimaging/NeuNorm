@@ -15,6 +15,13 @@ Pin `NeuNorm<2` if you depend on the legacy API.
 ```
 
 ```{toctree}
+:maxdepth: 1
+:caption: Upgrading
+
+migration
+```
+
+```{toctree}
 :maxdepth: 2
 :caption: Workflows
 
