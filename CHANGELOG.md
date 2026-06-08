@@ -32,9 +32,9 @@ legacy API.
   with proton-charge correction, ROI clipping, run combination, air-region
   correction, spatial rebinning, and Poisson/systematic uncertainty helpers
   (`neunorm.processing`).
-- **HDF5 as the primary output format** (`neunorm.exporters.write_hdf5`), with
-  detector masks and provenance metadata; TIFF export retained as secondary
-  (`write_tiff_stack`, via scitiff).
+- **HDF5 as the primary output format** (`neunorm.exporters.hdf5_writer.write_hdf5`),
+  with detector masks and provenance metadata; TIFF export retained as secondary
+  (`neunorm.exporters.tiff_writer.write_tiff_stack`, via scitiff).
 - **Loaders** for TIFF, FITS, NeXus event, and NeXus metadata
   (`neunorm.loaders`), including shutter-count and TOF-spectra readers.
 - **Resonance / Bragg-edge analysis and TOF statistics** (`neunorm.tof.resonance`,

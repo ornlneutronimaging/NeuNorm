@@ -104,13 +104,13 @@ transmission = normalize_transmission(sample, ob)  # T = sample / ob, variances 
 | 1.x | 2.0 |
 |---|---|
 | `Normalization()` (stateful object) | a `run_*_pipeline(...)` call, or composable functions |
-| `.load(..., data_type="sample"/"ob")` | pipeline `sample_paths` / `ob_paths`, or `neunorm.loaders.load_stack` / `load_tiff_stack` / `load_fits_stack` |
-| `.load(..., data_type="df")` (dark/"df") | pipeline `dark_paths`, or `neunorm.processing.subtract_dark(data, dark)` |
-| `.normalization(roi=...)` | `run_*_pipeline(..., roi=...)`, or `neunorm.processing.normalize_transmission(sample, ob, ...)` |
-| `.df_correction()` | `neunorm.processing.subtract_dark(data, dark)` |
-| `.crop(roi=ROI(...))` | `neunorm.processing.apply_roi(data, (x0, y0, x1, y1))` |
-| auto/manual gamma filtering on `load()` | `neunorm.filters.apply_gamma_filter(...)`, or pipeline `gamma_filter=True` |
-| `.export(folder=..., file_type="tif")` | `neunorm.exporters.write_hdf5(...)` (primary) or `write_tiff_stack(...)`; pipelines write automatically via `output_path` |
+| `.load(..., data_type="sample"/"ob")` | pipeline `sample_paths` / `ob_paths`, or `neunorm.loaders.stack_loader.load_stack` / `tiff_loader.load_tiff_stack` / `fits_loader.load_fits_stack` |
+| `.load(..., data_type="df")` (dark/"df") | pipeline `dark_paths`, or `neunorm.processing.dark_corrector.subtract_dark(data, dark)` |
+| `.normalization(roi=...)` | `run_*_pipeline(..., roi=...)`, or `neunorm.processing.normalizer.normalize_transmission(sample, ob, ...)` |
+| `.df_correction()` | `neunorm.processing.dark_corrector.subtract_dark(data, dark)` |
+| `.crop(roi=ROI(...))` | `neunorm.processing.roi_clipper.apply_roi(data, (x0, y0, x1, y1))` |
+| auto/manual gamma filtering on `load()` | `neunorm.filters.gamma_filter.apply_gamma_filter(...)`, or pipeline `gamma_filter=True` |
+| `.export(folder=..., file_type="tif")` | `neunorm.exporters.hdf5_writer.write_hdf5(...)` (primary) or `tiff_writer.write_tiff_stack(...)`; pipelines write automatically via `output_path` |
 | `.get_normalized_data()` | the pipeline **returns** a `scipp.DataArray`; use `.values` for the NumPy array |
 | `from NeuNorm.roi import ROI; ROI(x0, y0, x1, y1)` | a plain tuple `(x0, y0, x1, y1)` |
 | `NeuNorm.normalization.DataType` | not needed — inputs are explicit function arguments |
