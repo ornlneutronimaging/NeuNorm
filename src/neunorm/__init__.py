@@ -5,18 +5,18 @@ A modern Python library for neutron imaging data processing at ORNL facilities
 (MARS at HFIR and VENUS at SNS).
 
 Features:
-- Time-of-flight (TOF) event data processing
-- Energy-resolved histogramming
-- In-situ time-resolved workflows
-- Resonance and Bragg edge detection
-- Phase decomposition with NMF
-- Traditional flat-field normalization (1.x compatibility)
+- Time-of-flight (TOF) event-mode data processing and pulse reconstruction
+- Energy/wavelength-resolved histogramming and TOF rebinning
+- Resonance and Bragg-edge analysis
+- Flat-field (open-beam) normalization with automatic uncertainty propagation
+- Dark/gamma correction, ROI clipping, and run combination
+- End-to-end MARS/VENUS detector pipelines writing HDF5 (primary) and TIFF
 
 Examples
 --------
 >>> from neunorm import __version__
->>> print(__version__)
-2.0.0a0
+>>> isinstance(__version__, str)
+True
 """
 
 try:
