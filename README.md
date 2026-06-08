@@ -82,9 +82,15 @@ transmission = run_mars_ccd_pipeline(
 )
 ```
 
-Other pipelines follow the same shape — `run_mars_tpx3_pipeline`,
+Each detector/facility has its own pipeline — `run_mars_tpx3_pipeline`,
 `run_venus_ccd_pipeline`, `run_venus_tpx1_pipeline`,
-`run_venus_tpx3_histogram_pipeline`, and `run_venus_tpx3_event_pipeline` — see
+`run_venus_tpx3_histogram_pipeline`, and `run_venus_tpx3_event_pipeline`. They
+share the same load → correct → normalize → write-to-HDF5/TIFF flow, but each
+takes detector-appropriate inputs — TPX detectors skip `dark_paths`, the TOF
+pipelines add `rebin_by_tof`/`rebin_by_spatial`, and
+`run_venus_tpx3_event_pipeline` takes a `BinningConfig` and flat (per-run) path
+lists. Check each function's signature in the
+[API reference](https://neunorm.readthedocs.io) or the per-workflow guides under
 [Supported Workflows](#supported-workflows). Verify your install with:
 
 ```bash
