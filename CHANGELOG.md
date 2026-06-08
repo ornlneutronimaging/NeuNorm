@@ -1,0 +1,81 @@
+# Changelog
+
+All notable changes to NeuNorm are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+<!-- When cutting the release, replace "Unreleased" below with the tag date (YYYY-MM-DD). -->
+
+## [2.0.0] - Unreleased
+
+NeuNorm 2.0 is a complete, [scipp](https://scipp.github.io/)-based rewrite of the
+library. It is a **breaking change**: code written against the 1.x
+`NeuNorm.normalization.Normalization` API will not run unchanged. See the
+[1.x → 2.0 migration guide](docs/migration.md), and pin `NeuNorm<2` to stay on the
+legacy API.
+
+### Added
+
+- **Scipp-native processing.** All data are `scipp.DataArray` objects that carry
+  variances, so uncertainty is propagated automatically through every step.
+- **Time-of-flight (TOF) support** for the VENUS pulsed source — wavelength-resolved
+  (hyperspectral) transmission `T(λ, x, y)`, TOF binning, and histogram rebinning.
+- **Event-mode processing** for Timepix3 detectors: NeXus/HDF5 event loading and
+  pulse reconstruction (`neunorm.loaders.event_loader`, `neunorm.tof`).
+- **End-to-end detector pipelines** in `neunorm.pipelines`, one per
+  detector/facility combination: `run_mars_ccd_pipeline`, `run_mars_tpx3_pipeline`,
+  `run_venus_ccd_pipeline`, `run_venus_tpx1_pipeline`,
+  `run_venus_tpx3_histogram_pipeline`, and `run_venus_tpx3_event_pipeline`.
+- **Composable processing functions** for building custom workflows: dark
+  subtraction, reference (open-beam/dark) preparation, transmission normalization
+  with proton-charge correction, ROI clipping, run combination, air-region
+  correction, spatial rebinning, and Poisson/systematic uncertainty helpers
+  (`neunorm.processing`).
+- **HDF5 as the primary output format** (`neunorm.exporters.hdf5_writer.write_hdf5`),
+  with detector masks and provenance metadata; TIFF export retained as secondary
+  (`neunorm.exporters.tiff_writer.write_tiff_stack`, via scitiff).
+- **Loaders** for TIFF, FITS, NeXus event, and NeXus metadata
+  (`neunorm.loaders`), including shutter-count and TOF-spectra readers.
+- **Resonance / Bragg-edge analysis and TOF statistics** (`neunorm.tof.resonance`,
+  `neunorm.tof.statistics_analyzer`).
+- **Pydantic v2 configuration models** (e.g. `BinningConfig`, `EventData`) for
+  explicit, validated configuration.
+- **Sphinx + autodoc documentation** published at
+  [neunorm.readthedocs.io](https://neunorm.readthedocs.io), with per-workflow guides
+  and a full API reference.
+
+### Changed
+
+- **Import name is now `neunorm` (lowercase)**, not `NeuNorm`. The PyPI/conda
+  distribution name remains `NeuNorm`, so `pip install NeuNorm` is unchanged, but
+  `import NeuNorm` becomes `import neunorm`.
+- **Minimum Python is now 3.11.**
+- **Development uses [pixi](https://pixi.sh)** (`pyproject.toml` `[tool.pixi.*]` +
+  `pixi.lock`); the 1.x conda `environment.yml` / `conda.recipe` are retired and
+  archived under `archive/neunorm-1.x/`.
+- **Optional features are exposed as extras**: `viz` (plopp/matplotlib) and
+  `performance` (Numba acceleration); Numba is optional and degrades to a no-op
+  when absent.
+
+### Removed
+
+- **The entire 1.x stateful API**, including `NeuNorm.normalization.Normalization`
+  and `NeuNorm.roi.ROI`. There is no drop-in compatibility shim — the flat-field
+  normalization physics is preserved, but the API is new. The 1.x source is kept
+  for reference under `archive/neunorm-1.x/`.
+
+### Migration
+
+See the [1.x → 2.0 migration guide](docs/migration.md) for a step-by-step mapping
+from the legacy `Normalization` workflow to the 2.0 pipelines and composable
+functions.
+
+---
+
+NeuNorm 1.x release history predates this changelog. The 1.x source, tests, and
+documentation are archived under
+[`archive/neunorm-1.x/`](archive/neunorm-1.x/); released 1.x versions remain
+available on PyPI and the `conda-forge` channel (`pip install "NeuNorm<2"`).
+
+[2.0.0]: https://github.com/ornlneutronimaging/NeuNorm/releases/tag/v2.0.0

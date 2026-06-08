@@ -11,8 +11,10 @@ for ORNL imaging facilities — MARS at HFIR and VENUS at SNS.
 
 > **NeuNorm 2.0 is a complete, scipp-based rewrite and a breaking change from the
 > 1.x series.** Code written against the 1.x `NeuNorm.normalization.Normalization`
-> API will not run unchanged on 2.0. Pin `NeuNorm<2` to keep using the legacy API —
-> see [NeuNorm 1.x (Legacy)](#neunorm-1x-legacy).
+> API will not run unchanged on 2.0. See the
+> [1.x → 2.0 migration guide](docs/migration.md) to port your code, or pin
+> `NeuNorm<2` to keep using the legacy API — see
+> [NeuNorm 1.x (Legacy)](#neunorm-1x-legacy).
 
 ---
 
@@ -188,7 +190,9 @@ This enables **hyperspectral imaging** with wavelength-resolved transmission T(�
 
 Full documentation — user guides plus an autodoc API reference — is hosted at
 [neunorm.readthedocs.io](https://neunorm.readthedocs.io). The per-workflow guides
-live under [`docs/workflows/`](docs/workflows/).
+live under [`docs/workflows/`](docs/workflows/). Release history is in
+[CHANGELOG.md](CHANGELOG.md), and the
+[1.x → 2.0 migration guide](docs/migration.md) covers porting legacy code.
 
 ---
 
@@ -206,6 +210,8 @@ the default development branch).
 NeuNorm 1.x — the `from NeuNorm.normalization import Normalization` API — is the
 previous stable line. To keep using it, pin `NeuNorm<2` in your environment.
 Archived 1.x documentation: [archive/neunorm-1.x/README.md](archive/neunorm-1.x/README.md).
+To port existing 1.x code to 2.0, see the
+[migration guide](docs/migration.md).
 
 ---
 
