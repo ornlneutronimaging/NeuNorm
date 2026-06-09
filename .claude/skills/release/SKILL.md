@@ -23,14 +23,20 @@ Ask the user for the target version (e.g. `2.0.0`) if not provided, then:
 - Prerequisites (ask the user to confirm — do NOT assume):
   - PyPI **trusted publisher** configured for `ornlneutronimaging/NeuNorm` +
     workflow `test_and_deploy.yaml`.
-  - `ANACONDA_TOKEN` (and `CODECOV_TOKEN`) repository secrets present.
+  - `ANACONDA_TOKEN` repository secret present. (No `CODECOV_TOKEN` — Codecov
+    was dropped in #138; see #139.)
 - Recommended: run `/bughunt`; ensure `CHANGELOG.md` is updated.
 
 ## 2. Promote
 
-- Open and merge PRs `next -> qa`, then `qa -> main`, each with green CI.
-  Branches are protected — respect required review; do not self-merge unless the
-  user directs it.
+- Promotion is **fast-forward only** (see AGENTS.md): `qa` and `main` carry no
+  unique commits, so promotion is an admin fast-forward push, not a merge:
+  `git push origin next:qa`, verify CI green on `qa`, then
+  `git push origin qa:main`. The maintainer runs these pushes (protected
+  branches); the agent prepares and verifies but does not force-push.
+- If the push is rejected as non-fast-forward, STOP: something landed directly
+  on `qa`/`main`. Reconcile it back into `next` first — never force-push or
+  merge to work around it.
 
 ## 3. Tag
 

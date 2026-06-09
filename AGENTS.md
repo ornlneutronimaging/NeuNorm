@@ -70,6 +70,13 @@ docs/            Sphinx (autodoc) + MyST workflow guides
 
 - Promotion path: **`next` → `qa` → `main`**. `next` is the default branch;
   protected branches require PRs.
+- **Promotion is fast-forward only.** `qa` and `main` never receive direct
+  commits or merge commits — they are promoted by fast-forwarding to `next`
+  (`git push origin next:qa`, then `git push origin qa:main`, admin push).
+  This keeps all three branches on one linear history with no merge bubbles.
+  If a fast-forward is rejected, something was committed directly to `qa`/`main`
+  — stop and reconcile that commit back into `next` first; never force-push
+  or merge to "make it fit".
 - Commit attribution: end AI-assisted commits with an `Assisted-With: <model>`
   trailer. Do **not** use `Co-Authored-By:` for AI assistants. Real human
   co-authors keep their `Co-Authored-By:` trailers.
