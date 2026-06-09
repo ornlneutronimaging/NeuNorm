@@ -120,6 +120,9 @@ jobs:
     name: Upload release to PyPI
     runs-on: ubuntu-latest
     needs: tests
+    # Must match the "Environment name" on the PyPI trusted publisher exactly;
+    # the publish step's OIDC claims include this environment.
+    environment: pypi
     permissions:
       # IMPORTANT: this permission is mandatory for trusted publishing
       id-token: write
