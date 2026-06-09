@@ -76,6 +76,48 @@ def test_write_hdf5():
             np.testing.assert_equal(f["metadata/software_version"].asstr()[()], "1.0.0")
 
 
+def test_write_hdf5_skips_ragged_nested_metadata():
+    """Ragged list-of-lists metadata (e.g. per-run file paths) must not crash the writer.
+
+    Regression for https://github.com/ornlneutronimaging/NeuNorm/issues/140: h5py raises
+    TypeError on a ragged nested list, which previously aborted write_hdf5 *after* the bulk
+    arrays were written, leaving a corrupt partial file. The guard skips such keys with a
+    warning so the array data and scalar metadata still write correctly.
+    """
+    from neunorm.exporters.hdf5_writer import write_hdf5
+
+    values = np.arange(3 * 5 * 5).reshape((3, 5, 5))
+    data = sc.DataArray(
+        data=sc.array(dims=["tof_edges", "x", "y"], values=values, unit="counts", dtype="float64"),
+        coords={
+            "tof_edges": sc.linspace("tof_edges", 1e5, 1e7, num=4, unit="ns"),
+            "y": sc.arange("y", 5, unit=None),
+            "x": sc.arange("x", 5, unit=None),
+        },
+    )
+    data.variances = values * 2.0
+
+    metadata = {
+        # Two runs with UNEQUAL file counts -> ragged nested list (the production shape).
+        "sample_paths": [["s_0001.tiff", "s_0002.tiff"], ["s_0003.tiff"]],
+        "num_runs_combined": 2,  # a normal scalar that must still be written
+    }
+
+    with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+        # Must NOT raise (previously TypeError on the ragged list).
+        write_hdf5(f.name, data, metadata=metadata)
+
+        with h5py.File(f.name, "r") as f:
+            # The bulk array was written (file is not a corrupt partial).
+            assert "transmission" in f
+            np.testing.assert_allclose(f["transmission"][:], values)
+            # The ragged nested key was skipped, not written.
+            assert "metadata/sample_paths" not in f
+            # Scalar metadata after it still wrote.
+            assert "metadata/num_runs_combined" in f
+            np.testing.assert_equal(f["metadata/num_runs_combined"], np.array(2))
+
+
 def test_write_hdf5_4d():
     """Test writing HDF5 file with 4D data (e.g. with TOF dimension)"""
     from neunorm.exporters.hdf5_writer import write_hdf5

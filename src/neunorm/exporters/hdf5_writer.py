@@ -95,6 +95,20 @@ def write_hdf5(  # noqa: C901
             for key, value in metadata.items():
                 if isinstance(value, str):
                     f.create_dataset(f"metadata/{key}", data=value, dtype=h5py.string_dtype(encoding="utf-8"))
+                elif isinstance(value, (list, tuple)) and any(isinstance(item, (list, tuple)) for item in value):
+                    # Nested (list-of-lists) metadata, e.g. per-run file paths. h5py cannot
+                    # store a ragged nested list and raises TypeError mid-write, which would
+                    # leave a corrupt, partially-written file. Until the proper fix (serialize
+                    # the nested provenance) lands, skip the key with a warning rather than
+                    # crash, so the array data and scalar metadata still write correctly.
+                    # See https://github.com/ornlneutronimaging/NeuNorm/issues/140
+                    logger.warning(
+                        "Skipping nested-list metadata '{}' in HDF5 output: h5py cannot store "
+                        "ragged per-run lists (would abort the write and corrupt the file). "
+                        "Array data and scalar metadata are still written. "
+                        "See https://github.com/ornlneutronimaging/NeuNorm/issues/140",
+                        key,
+                    )
                 else:
                     f.create_dataset(f"metadata/{key}", data=value)
 
