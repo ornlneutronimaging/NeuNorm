@@ -5,9 +5,7 @@ All notable changes to NeuNorm are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-<!-- When cutting the release, replace "Unreleased" below with the tag date (YYYY-MM-DD). -->
-
-## [2.0.0] - Unreleased
+## [2.0.0] - 2026-06-09
 
 NeuNorm 2.0 is a complete, [scipp](https://scipp.github.io/)-based rewrite of the
 library. It is a **breaking change**: code written against the 1.x
