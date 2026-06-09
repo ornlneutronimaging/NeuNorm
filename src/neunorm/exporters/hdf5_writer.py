@@ -96,6 +96,28 @@ def write_hdf5(  # noqa: C901
                 if isinstance(value, str):
                     f.create_dataset(f"metadata/{key}", data=value, dtype=h5py.string_dtype(encoding="utf-8"))
                 else:
-                    f.create_dataset(f"metadata/{key}", data=value)
+                    name = f"metadata/{key}"
+                    try:
+                        f.create_dataset(name, data=value)
+                    except (TypeError, ValueError) as exc:
+                        # h5py cannot store some values — notably a RAGGED nested list, e.g.
+                        # per-run file paths with unequal run sizes (sample_paths=[[...],[...]]).
+                        # Without this guard the error aborts the write *after* the bulk arrays
+                        # are written, leaving a corrupt, partial file. Rectangular nested lists
+                        # still write normally; only genuinely unstorable values are skipped here.
+                        # Note: h5py registers the dataset name before failing on the data, so a
+                        # malformed partial dataset is left behind — delete it before continuing.
+                        # Proper fix (serialize the nested provenance) is tracked in
+                        # https://github.com/ornlneutronimaging/NeuNorm/issues/140
+                        if name in f:
+                            del f[name]
+                        logger.warning(
+                            "Skipping metadata '{}' in HDF5 output: h5py cannot store this value "
+                            "(e.g. a ragged per-run list), which would otherwise abort the write and "
+                            "corrupt the file. Array data and other metadata are still written. "
+                            "See https://github.com/ornlneutronimaging/NeuNorm/issues/140 ({})",
+                            key,
+                            exc,
+                        )
 
     logger.info("HDF5 file written to {}", output_path)
