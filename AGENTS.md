@@ -84,4 +84,5 @@ docs/            Sphinx (autodoc) + MyST workflow guides
 - Versioning is dynamic (**versioningit**): the release tag (`vX.Y.Z`) drives the
   version. Never hand-edit `src/neunorm/_version.py` (it is generated).
 - Releases are driven by the `/release` skill; CI publishes on `v*` tags to PyPI
-  (trusted publishing) and the `neutrons` Anaconda channel.
+  (trusted publishing) and the `neutronimaging` Anaconda channel
+  (`conda install neutronimaging::neunorm` — same channel as the 1.x package).

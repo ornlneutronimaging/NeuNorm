@@ -8,7 +8,7 @@ description: Cut a NeuNorm release — pre-flight checks, promote next->qa->main
 Drives a NeuNorm release end to end. NeuNorm uses dynamic versioning
 (**versioningit**): the **git tag** `vX.Y.Z` is the single source of the version,
 and CI (`.github/workflows/test_and_deploy.yaml`) publishes on `v*` tags to PyPI
-(trusted publishing) and the `neutrons` Anaconda channel. Promotion path:
+(trusted publishing) and the `neutronimaging` Anaconda channel. Promotion path:
 `next -> qa -> main`.
 
 Ask the user for the target version (e.g. `2.0.0`) if not provided, then:
@@ -52,7 +52,7 @@ Ask the user for the target version (e.g. `2.0.0`) if not provided, then:
 
 ## 5. Verify artifacts
 
-- `pip install NeuNorm==X.Y.Z` (PyPI) and `conda install -c neutrons neunorm=X.Y.Z`.
+- `pip install NeuNorm==X.Y.Z` (PyPI) and `conda install neutronimaging::neunorm=X.Y.Z`.
 - Import smoke: `python -c "import neunorm; print(neunorm.__version__)"`.
 - Create the GitHub Release (notes from `CHANGELOG.md`; `.github/release.yml`
   filters bot PRs). Confirm Read the Docs built the new version.

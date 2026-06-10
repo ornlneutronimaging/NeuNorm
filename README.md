@@ -46,10 +46,10 @@ pip install NeuNorm
 pip install "NeuNorm[viz,performance]"
 ```
 
-From conda (the `neutrons` channel):
+From conda (the `neutronimaging` channel):
 
 ```bash
-conda install -c neutrons neunorm
+conda install neutronimaging::neunorm
 ```
 
 From source, for development (uses [pixi](https://pixi.sh)):
