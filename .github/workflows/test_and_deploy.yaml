@@ -36,14 +36,6 @@ jobs:
       - name: Run unit tests
         run: pixi run test
 
-      - name: Dependency check
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          # Temporary ignores until fixed versions reach conda-forge:
-          #   CVE-2026-3219                  -> pip
-          #   CVE-2026-47265, CVE-2026-34993 -> aiohttp (fixed in 3.14.0, not yet on conda-forge)
-          pixi run audit-deps --ignore-vuln CVE-2026-3219 --ignore-vuln CVE-2026-47265 --ignore-vuln CVE-2026-34993
-
   conda-build:
     name: Build conda package
     runs-on: ubuntu-latest

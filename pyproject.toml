@@ -125,7 +125,7 @@ plopp = ">=25.10.0" # Scipp visualization
 h5py = ">=3.0"
 pillow = ">=12.2.0"
 astropy = "*"
-aiohttp = ">=3.13.4" # required by astropy; 3.14.0 (CVE fix) not yet on conda-forge, see audit-deps ignore list
+aiohttp = ">=3.13.4" # required by astropy; 3.14.0 (CVE fix) not yet on conda-forge
 idna = ">=3.15"      # required by aiohttp/requests, setting minimum to avoid vulnerabilities
 # Data validation
 pydantic = ">=2.0"
@@ -205,7 +205,6 @@ toml-cli = "*"
 [tool.pixi.feature.developer.dependencies]
 pip = ">=26.1"           # CVE-2026-6357 fixed in 26.1
 wheel = ">=0.46.2"       # required by pip, setting minimum to avoid vulnerabilities
-pip-audit = "*"
 pre-commit = "*"
 virtualenv = ">=20.36.1" # required by pre-commit, setting minimum to avoid vulnerabilities
 ruff = "*"
@@ -223,7 +222,7 @@ pygments = ">=2.20.0"  # required by sphinx, setting minimum to avoid vulnerabil
 [tool.pixi.feature.viz.dependencies]
 matplotlib = "*"
 fonttools = ">=4.60.2" # required by matplotlib, setting minimum to avoid vulnerabilities
-tornado = ">=6.5.5"    # required by matplotlib, setting minimum to avoid vulnerabilities
+tornado = ">=6.5.6"    # required by matplotlib; >=6.5.6 for CVE-2026-49854
 ipympl = "*"
 
 [tool.pixi.feature.jupyter.dependencies]
@@ -260,8 +259,6 @@ conda-build = { description = "Build the conda package", depends-on = [
 conda-publish = { cmd = "anaconda upload *.conda", description = "Publish the .conda package to anaconda.org", depends-on = [
   "conda-build",
 ] }
-# Misc
-audit-deps = { cmd = "pip-audit --local -s osv", description = "Audit the package dependencies for vulnerabilities" }
 # Cleaning
 clean = { cmd = 'rm -rf .pytest_cache .ruff_cache **/*.egg-info **/dist **/__pycache__', description = "Clean up various caches and build artifacts" }
 clean-conda = { cmd = "rm -f *.conda", description = "Clean the local .conda build artifacts" }

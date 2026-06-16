@@ -1,11 +1,13 @@
 name: Dependency scan (Grype)
 
-# Complements the pip-audit check in test_and_deploy.yaml with a Grype scan of
-# the built conda package's full dependency closure. Non-gating; scheduled +
-# on pushes to the promotion branches.
+# The dependency-audit gate: a Grype scan of the built conda package's full
+# dependency closure. Replaced the pip-audit check in test_and_deploy.yaml
+# (2026-06-16) — gates on fixable findings (fail-build). Runs on PRs + pushes
+# to the promotion branches + a weekly schedule.
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
     branches: [next, qa, main]
   schedule:
@@ -51,3 +53,6 @@ jobs:
         uses: neutrons/conda-actions/grype@v2
         with:
           path: ${{ steps.install.outputs.conda_install_dir }}
+          # gate on fixable findings; only-fixed defaults true in the v2
+          # wrapper, so unfixable advisories never fail the build
+          fail-build: true

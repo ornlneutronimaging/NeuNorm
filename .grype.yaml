@@ -1,0 +1,30 @@
+# Grype ignore rules for the dependency-scan gate (see the org decision memo
+# audits/grype_vs_pip-audit_decision_memo_2026-06-10.md). Every entry needs a
+# reason and a revisit condition — this file is the reviewable record of
+# accepted risk. Fixable findings are bumped in the dependency tables, not
+# ignored here.
+
+ignore:
+  # CPython advisories fixed upstream but with no installable conda-forge patch
+  # in the current 3.x line yet. grype flags them as "fixable" because a fixed
+  # CPython exists, but it is not yet on conda-forge. Remove entries as
+  # conda-forge ships newer patch releases (the lockfile-update workflow will
+  # pick them up).
+  - vulnerability: CVE-2026-7210 # critical
+    package:
+      name: python
+  - vulnerability: CVE-2025-12781
+    package:
+      name: python
+  - vulnerability: CVE-2025-15366
+    package:
+      name: python
+  - vulnerability: CVE-2025-15367
+    package:
+      name: python
+  - vulnerability: CVE-2026-3276
+    package:
+      name: python
+  - vulnerability: CVE-2026-7774
+    package:
+      name: python
