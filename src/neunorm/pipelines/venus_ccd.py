@@ -27,8 +27,8 @@ from neunorm.tof.pixel_detector import detect_dead_pixels
 def run_venus_ccd_pipeline(  # noqa: C901
     sample_paths: Sequence[Sequence[str | Path]],
     ob_paths: Sequence[Sequence[str | Path]],
-    dark_paths: Sequence[Sequence[str | Path]],
-    output_path: Path,
+    dark_paths: Optional[Sequence[Sequence[str | Path]]] = None,
+    output_path: Optional[Path] = None,
     roi: Optional[tuple] = None,
     gamma_filter: bool = True,
     air_roi: Optional[tuple] = None,
@@ -43,7 +43,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
     - Average dark/OB
     - Dead pixel detection
     - Gamma filtering (optional, less critical than MARS)
-    - Dark correction
+    - Dark correction (optional)
     - p_charge beam correction
     - Normalization
     - Air region correction (optional)
@@ -58,11 +58,16 @@ def run_venus_ccd_pipeline(  # noqa: C901
     ob_paths : Sequence[Sequence[str | Path]]
         List of lists of paths to open beam TIFF or FITS files.
         Each inner list represents a run that should be combined before processing.
-    dark_paths : Sequence[Sequence[str | Path]]
+    dark_paths : Optional[Sequence[Sequence[str | Path]]]
         List of lists of paths to dark current TIFF or FITS files.
         Each inner list represents a run that should be combined before processing.
-    output_path : Path
-        Path to save the output file (HDF5 or TIFF)
+        Optional (default: None). If omitted (None or an empty list), dark
+        correction is skipped and the dark-frame variance does not contribute to
+        the propagated uncertainty.
+    output_path : Optional[Path]
+        Path to save the output file (HDF5 or TIFF). Required; a value of None
+        raises ``ValueError`` (the default exists only so ``dark_paths`` can keep
+        its positional slot).
     roi : Optional[tuple]
         Region of interest to apply (x_start, y_start, x_end, y_end)
     gamma_filter : bool
@@ -82,10 +87,12 @@ def run_venus_ccd_pipeline(  # noqa: C901
         Final normalized transmission DataArray with metadata and masks
     """
 
+    if output_path is None:
+        raise ValueError("output_path is required")
+
     # Load data
     samples = [load_stack(paths) for paths in sample_paths]
     ob = [load_stack(paths) for paths in ob_paths]
-    dark = [load_stack(paths) for paths in dark_paths]
 
     # Before combining, check that all sample runs have the same shape and some metadata keys match
     # Keys to check ManufacturerStr. IntegratedPCharge is included in metadata checks and is
@@ -105,21 +112,27 @@ def run_venus_ccd_pipeline(  # noqa: C901
         normalize_by_runs=True,
     )
 
-    dark = combine_runs(
-        dark,
-        metadata_keys_to_sum=("IntegratedPCharge",),
-        metadata_check_match=["ManufacturerStr"],
-        normalize_by_runs=True,
-    )
+    # Dark current is optional (issue #146): only load/combine it when dark paths are provided.
+    dark = None
+    if dark_paths:
+        dark_runs = [load_stack(paths) for paths in dark_paths]
+        dark = combine_runs(
+            dark_runs,
+            metadata_keys_to_sum=("IntegratedPCharge",),
+            metadata_check_match=["ManufacturerStr"],
+            normalize_by_runs=True,
+        )
 
     # Apply ROI if specified
     if roi:
         sample = apply_roi(sample, roi)
         ob = apply_roi(ob, roi)
-        dark = apply_roi(dark, roi)
+        if dark is not None:
+            dark = apply_roi(dark, roi)
 
     # Average dark and OB
-    dark = prepare_reference(dark, dim="N_image")
+    if dark is not None:
+        dark = prepare_reference(dark, dim="N_image")
     ob = prepare_reference(ob, dim="N_image")
 
     # Dead pixel detection
@@ -129,9 +142,14 @@ def run_venus_ccd_pipeline(  # noqa: C901
     if gamma_filter:
         sample = apply_gamma_filter(sample)
 
-    # Dark correction
-    sample_dark_corrected = subtract_dark(sample, dark)
-    ob_dark_corrected = subtract_dark(ob, dark)
+    # Dark correction (optional)
+    if dark is not None:
+        sample_dark_corrected = subtract_dark(sample, dark)
+        ob_dark_corrected = subtract_dark(ob, dark)
+    else:
+        logger.info("No dark current provided; skipping dark correction")
+        sample_dark_corrected = sample
+        ob_dark_corrected = ob
 
     # Normalization
     transmission = normalize_transmission(
@@ -149,11 +167,15 @@ def run_venus_ccd_pipeline(  # noqa: C901
     metadata = {
         "sample_paths": [[str(p) for p in run] for run in sample_paths],
         "ob_paths": [[str(p) for p in run] for run in ob_paths],
-        "dark_paths": [[str(p) for p in run] for run in dark_paths],
         "gamma_filter_applied": gamma_filter,
+        "dark_correction_applied": dark is not None,
         "processing_timestamp": datetime.now().isoformat(),
         "version": __version__,
     }
+
+    # Only record dark_paths when dark correction was actually applied.
+    if dark_paths:
+        metadata["dark_paths"] = [[str(p) for p in run] for run in dark_paths]
 
     if roi:
         metadata["roi_applied"] = roi

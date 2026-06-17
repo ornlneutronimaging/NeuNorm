@@ -5,6 +5,18 @@ All notable changes to NeuNorm are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Dark current is now optional for the CCD pipelines.** `run_mars_ccd_pipeline`
+  and `run_venus_ccd_pipeline` accept `dark_paths=None` (the new default) or an
+  empty list to skip dark-current correction; the dark-frame variance then does
+  not contribute to the propagated uncertainty. Passing dark frames is unchanged
+  and fully backward compatible. Output provenance gains a `dark_correction_applied`
+  flag, and `dark_paths` is recorded only when dark frames were supplied.
+  ([#146](https://github.com/ornlneutronimaging/NeuNorm/issues/146))
+
 ## [2.0.0] - 2026-06-09
 
 NeuNorm 2.0 is a complete, [scipp](https://scipp.github.io/)-based rewrite of the

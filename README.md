@@ -78,7 +78,7 @@ from neunorm.pipelines.mars_ccd import run_mars_ccd_pipeline
 transmission = run_mars_ccd_pipeline(
     sample_paths=[["sample_0001.tiff", "sample_0002.tiff"]],
     ob_paths=[["ob_0001.tiff", "ob_0002.tiff"]],
-    dark_paths=[["dark_0001.tiff"]],
+    dark_paths=[["dark_0001.tiff"]],  # optional — omit to skip dark correction
     output_path=Path("normalized.hdf5"),
 )
 ```
@@ -87,7 +87,9 @@ Each detector/facility has its own pipeline — `run_mars_tpx3_pipeline`,
 `run_venus_ccd_pipeline`, `run_venus_tpx1_pipeline`,
 `run_venus_tpx3_histogram_pipeline`, and `run_venus_tpx3_event_pipeline`. They
 share the same load → correct → normalize → write-to-HDF5/TIFF flow, but each
-takes detector-appropriate inputs — TPX detectors skip `dark_paths`, the TOF
+takes detector-appropriate inputs — `dark_paths` is optional for the CCD
+pipelines (omit it to skip dark correction) and TPX detectors skip it entirely,
+the TOF
 pipelines add `rebin_by_tof`/`rebin_by_spatial`, and
 `run_venus_tpx3_event_pipeline` takes a `BinningConfig` and flat (per-run) path
 lists. Check each function's signature in the

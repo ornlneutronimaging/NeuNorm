@@ -132,7 +132,7 @@ flowchart TD
 |-------|--------|----------|-------------|
 | Sample images | TIFF/FITS stack | Yes | Raw neutron transmission images |
 | Open Beam (OB) | TIFF/FITS stack | Yes | Reference without sample |
-| Dark Current | TIFF/FITS stack | Yes | Electronic noise baseline (beam off) |
+| Dark Current | TIFF/FITS stack | No | Electronic noise baseline (beam off). Optional — omit `dark_paths` (or pass `[]`) to skip dark correction. |
 | ROI | (x0, y0, x1, y1) | No | Region of interest to crop |
 | Reference ROI | (x0, y0, x1, y1) | No | ROI for beam stability correction |
 
