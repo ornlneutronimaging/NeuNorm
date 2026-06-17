@@ -36,11 +36,11 @@ def run_venus_ccd_pipeline(  # noqa: C901
     """Execute VENUS CCD/CMOS normalization pipeline.
 
     Pipeline Steps (12 total)
-    - Load TIFF/FITS (sample, OB, dark)
+    - Load TIFF/FITS (sample, OB, dark [optional])
     - Load p_charge metadata
     - Run combine (critical for VENUS)
     - ROI clip (optional)
-    - Average dark/OB
+    - Average dark (optional) / OB
     - Dead pixel detection
     - Gamma filtering (optional, less critical than MARS)
     - Dark correction (optional)

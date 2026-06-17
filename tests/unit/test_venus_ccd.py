@@ -405,8 +405,11 @@ class TestVenusCCDPipeline:
         1. The pipeline's no-dark output (values AND variances) matches a direct
            composition of the same library functions with dark subtraction omitted,
            proving no spurious variance term is added or dropped.
-        2. Removing the dark removes its variance contribution, so the no-dark
-           uncertainty is strictly smaller than the with-dark uncertainty everywhere.
+        2. Removing the dark removes its variance contribution, so for these uniform
+           fixtures the no-dark uncertainty is smaller than the with-dark uncertainty
+           everywhere. (Fixture-specific, not a universal law — dark subtraction also
+           shrinks the numerator/denominator; the pinned oracle above is what guards
+           the general Var(T) property.)
         """
         with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
             no_dark = run_venus_ccd_pipeline(
@@ -448,7 +451,7 @@ class TestVenusCCDPipeline:
         np.testing.assert_allclose(no_dark.variances, expected_var, rtol=1e-3)
 
         # With dark, the dark-frame variance is folded into both numerator and
-        # denominator, raising the uncertainty everywhere.
+        # denominator, raising the uncertainty for these fixtures.
         with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
             with_dark = run_venus_ccd_pipeline(
                 sample_paths=[self.sample_paths],

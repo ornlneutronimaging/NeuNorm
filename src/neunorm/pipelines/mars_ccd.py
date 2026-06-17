@@ -34,10 +34,10 @@ def run_mars_ccd_pipeline(  # noqa: C901
     """Execute MARS CCD/CMOS normalization pipeline.
 
     Pipeline Steps (10 total)
-    - Load TIFF/FITS (sample, OB, dark)
+    - Load TIFF/FITS (sample, OB, dark [optional])
     - Run combine (optional)
     - ROI clip (optional)
-    - Average dark/OB
+    - Average dark (optional) / OB
     - Dead pixel detection (existing tof/pixel_detector.py)
     - Gamma filtering (filters/gamma_filter.py)
     - Dark correction (optional, processing/dark_corrector.py)
