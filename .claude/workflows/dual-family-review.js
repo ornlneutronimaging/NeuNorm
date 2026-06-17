@@ -346,7 +346,10 @@ function verifyVotes(tier) {
   // Cross-family independence is achieved with a single vote from the OTHER
   // family. Extra votes (budget-scaled, diverse lenses) harden the P0s only.
   if (tier === 'P0') {
-    if (budget && budget.total) return Math.min(3, 2 + Math.floor((budget.remaining() || 0) / 400000))
+    // `budget` is a workflow-runtime global; guard with typeof so the engine
+    // also runs in hosts that do not inject it (a bare reference would throw).
+    if (typeof budget !== 'undefined' && budget.total)
+      return Math.min(3, 2 + Math.floor((budget.remaining() || 0) / 400000))
     return 2
   }
   if (tier === 'P1') return 1
