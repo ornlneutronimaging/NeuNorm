@@ -3,12 +3,17 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import pytest
 import scipp as sc
 from PIL import Image
 from scitiff.io import load_scitiff
 
 from neunorm import __version__
+from neunorm.loaders.stack_loader import load_stack
 from neunorm.pipelines.venus_ccd import run_venus_ccd_pipeline
+from neunorm.processing.normalizer import normalize_transmission
+from neunorm.processing.reference_preparer import prepare_reference
+from neunorm.processing.run_combiner import combine_runs
 
 
 class TestVenusCCDPipeline:
@@ -140,6 +145,8 @@ class TestVenusCCDPipeline:
                 np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[:], [[str(p) for p in self.ob_paths]])
                 assert "metadata/dark_paths" in hf
                 np.testing.assert_equal(hf["metadata/dark_paths"].asstr()[:], [[str(p) for p in self.dark_paths]])
+                assert "metadata/dark_correction_applied" in hf
+                np.testing.assert_equal(hf["metadata/dark_correction_applied"][()], True)
                 assert "metadata/gamma_filter_applied" in hf
                 np.testing.assert_equal(hf["metadata/gamma_filter_applied"][()], True)
                 assert "metadata/processing_timestamp" in hf
@@ -337,3 +344,120 @@ class TestVenusCCDPipeline:
         np.testing.assert_equal(
             transmission.coords["IntegratedPCharge"].values, [0.1]
         )  # should be unchanged since we are normalizing by the number of runs
+
+    def test_venus_ccd_pipeline_no_dark(self):
+        """Dark current is optional (issue #146): omitting dark_paths skips dark correction.
+
+        Without dark subtraction the transmission is T = (S / pc_s) / (OB / pc_ob),
+        i.e. (81 + i) / 100 * 2 for these fixtures (vs (81 + i - 5) / (100 - 5) * 2 with dark).
+        """
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+
+            transmission = run_venus_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+            )
+
+            assert output_path.exists()
+            assert transmission.shape == (5, 32, 32)
+
+            with h5py.File(output_path, "r") as hf:
+                assert hf["transmission"].shape == (5, 32, 32)
+                # No dark subtraction: T = (S / pc_s) / (OB / pc_ob) = (81 + i) / 100 * 2
+                for i in range(5):
+                    np.testing.assert_allclose(hf["transmission"][i], (81 + i) / 100 * 2)
+                # Uncertainty is present, positive and finite
+                assert "uncertainty" in hf
+                assert np.all(np.isfinite(hf["uncertainty"][:]))
+                assert np.all(hf["uncertainty"][:] > 0)
+                # Provenance: dark correction not applied, dark_paths omitted entirely
+                assert "metadata/dark_correction_applied" in hf
+                np.testing.assert_equal(hf["metadata/dark_correction_applied"][()], False)
+                assert "metadata/dark_paths" not in hf
+
+    def test_venus_ccd_pipeline_empty_dark_paths(self):
+        """An empty dark_paths list is treated the same as omitting dark (issue #146)."""
+        with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+            transmission = run_venus_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                dark_paths=[],
+                output_path=Path(f.name),
+            )
+        assert transmission.shape == (5, 32, 32)
+        for i in range(5):
+            np.testing.assert_allclose(transmission.values[i], (81 + i) / 100 * 2)
+
+    def test_venus_ccd_pipeline_requires_output_path(self):
+        """output_path is required even though it carries a default for signature compatibility."""
+        with pytest.raises(ValueError, match="output_path is required"):
+            run_venus_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+            )
+
+    def test_venus_ccd_pipeline_no_dark_uncertainty(self):
+        """No-dark UQ equals the dark-free propagation, with no dark-frame variance term (issue #146).
+
+        Two independent checks:
+        1. The pipeline's no-dark output (values AND variances) matches a direct
+           composition of the same library functions with dark subtraction omitted,
+           proving no spurious variance term is added or dropped.
+        2. Removing the dark removes its variance contribution, so for these uniform
+           fixtures the no-dark uncertainty is smaller than the with-dark uncertainty
+           everywhere. (Fixture-specific, not a universal law — dark subtraction also
+           shrinks the numerator/denominator; the pinned oracle above is what guards
+           the general Var(T) property.)
+        """
+        with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+            no_dark = run_venus_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=Path(f.name),
+                gamma_filter=False,
+            )
+
+        # Independent dark-free propagation using the same composable functions the pipeline uses.
+        sample = combine_runs(
+            [load_stack(self.sample_paths)],
+            metadata_keys_to_sum=("IntegratedPCharge",),
+            metadata_check_match=["ManufacturerStr"],
+            normalize_by_runs=True,
+        )
+        ob = combine_runs(
+            [load_stack(self.ob_paths)],
+            metadata_keys_to_sum=("IntegratedPCharge",),
+            metadata_check_match=["ManufacturerStr"],
+            normalize_by_runs=True,
+        )
+        ob = prepare_reference(ob, dim="N_image")
+        expected = normalize_transmission(
+            sample=sample,
+            ob=ob,
+            proton_charge_sample=sample.coords["IntegratedPCharge"],
+            proton_charge_ob=ob.coords["IntegratedPCharge"],
+        )
+        np.testing.assert_allclose(no_dark.values, expected.values)
+        np.testing.assert_allclose(no_dark.variances, expected.variances)
+
+        # Independent (non-circular) oracle: pin the no-dark variance to literal
+        # values, NOT recomposed from the same helpers. A regression inside the
+        # shared variance propagation would shift `expected` in lock-step but not
+        # these constants, so this is what actually guards the Var(T) property.
+        expected_var_per_image = np.array([0.041279, 0.0419, 0.042523, 0.043149, 0.043778])
+        expected_var = np.broadcast_to(expected_var_per_image[:, None, None], no_dark.variances.shape)
+        np.testing.assert_allclose(no_dark.variances, expected_var, rtol=1e-3)
+
+        # With dark, the dark-frame variance is folded into both numerator and
+        # denominator, raising the uncertainty for these fixtures.
+        with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+            with_dark = run_venus_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                dark_paths=[self.dark_paths],
+                output_path=Path(f.name),
+                gamma_filter=False,
+            )
+        assert np.all(no_dark.variances < with_dark.variances)
