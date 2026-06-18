@@ -26,6 +26,7 @@ from neunorm.tof.event_converter import convert_events_to_histogram
 from neunorm.tof.histogram_rebinner import rebin_tof
 from neunorm.tof.pixel_detector import detect_dead_pixels, detect_hot_pixels
 from neunorm.tof.statistics_analyzer import analyze_statistics
+from neunorm.utils.constants import VENUS_FLIGHT_PATH_M
 
 
 def run_venus_tpx3_event_pipeline(  # noqa: C901
@@ -40,6 +41,7 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     detector_shape: tuple[int, int] = (514, 514),
     event_id_offset: int = 1_000_000,
     bank_name: str = "bank100",
+    flight_path: sc.Variable = sc.scalar(VENUS_FLIGHT_PATH_M, unit="m"),
 ) -> sc.DataArray:
     """Execute VENUS TPX3 event normalization pipeline.
 
@@ -86,6 +88,10 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
         This accounts for any non-zero starting point in the event_ids.
     bank_name : str
         Name of the detector bank in the NeXus file to load (default: "bank100")
+    flight_path : sc.Variable
+        Source-to-detector flight path used for both energy/wavelength binning and the
+        TOF→energy/wavelength coordinate labeling. Defaults to ``VENUS_FLIGHT_PATH_M`` (25 m);
+        set it per detector/sample position (the VENUS L2 varies ~24.5–25.5 m).
 
     Notes
     -----
@@ -98,13 +104,14 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
         Final normalized transmission DataArray with metadata and masks
     """
 
-    flight_path = sc.scalar(25.0, unit="m")  # Example flight path for energy/wavelength binning
     x_bins, y_bins = detector_shape
 
-    # Load data, metadata and convert to histogram
+    # Load metadata before histogramming so the detector time offset can be applied to
+    # energy/wavelength bin edges (issue #141); a missing offset defaults to zero.
     samples = []
-
     for run in sample_paths:
+        metadata = load_metadata(run)
+        time_offset = metadata.get("detector_time_offset", sc.scalar(0.0, unit="us"))
         sample = convert_events_to_histogram(
             load_event_nexus(
                 run, detector_bank=bank_name, detector_shape=detector_shape, event_id_offset=event_id_offset
@@ -113,8 +120,8 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
             flight_path,
             x_bins,
             y_bins,
+            detector_time_offset=time_offset,
         )
-        metadata = load_metadata(run)
         for key, value in metadata.items():
             sample.coords[key] = value
             sample.coords.set_aligned(key, False)
@@ -122,6 +129,8 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
 
     obs = []
     for run in ob_paths:
+        metadata = load_metadata(run)
+        time_offset = metadata.get("detector_time_offset", sc.scalar(0.0, unit="us"))
         ob = convert_events_to_histogram(
             load_event_nexus(
                 run, detector_bank=bank_name, detector_shape=detector_shape, event_id_offset=event_id_offset
@@ -130,8 +139,8 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
             flight_path,
             x_bins,
             y_bins,
+            detector_time_offset=time_offset,
         )
-        metadata = load_metadata(run)
         for key, value in metadata.items():
             ob.coords[key] = value
             ob.coords.set_aligned(key, False)
@@ -198,13 +207,14 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     if air_roi is not None:
         transmission = apply_air_region_correction(transmission, air_roi)
 
-    # Add wavelength and energy coordinates converted from TOF using the detector distance
-    # and time offset from the metadata
+    # Add wavelength and energy coordinates converted from TOF using the same flight path as
+    # the binning step and the time offset from the metadata (issue #141).
     if "detector_time_offset" in sample.coords:
-        distance = sc.scalar(25.0, unit="m")  # distance for VENUS
         time_offset = sample.coords["detector_time_offset"]
-        transmission.coords["wavelength"] = convert_tof_to_wavelength(transmission.coords["tof"], distance, time_offset)
-        transmission.coords["energy"] = convert_tof_to_energy(transmission.coords["tof"], distance, time_offset)
+        transmission.coords["wavelength"] = convert_tof_to_wavelength(
+            transmission.coords["tof"], flight_path, time_offset
+        )
+        transmission.coords["energy"] = convert_tof_to_energy(transmission.coords["tof"], flight_path, time_offset)
     else:
         logger.warning("Time offset not found in metadata. Cannot add wavelength and energy coordinates.")
 

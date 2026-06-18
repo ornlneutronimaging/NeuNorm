@@ -369,3 +369,135 @@ def test_wavelength_energy_de_broglie_constant():
         # Should match: E = DE_BROGLIE_EV_ANGSQ / λ²
         expected_ev = DE_BROGLIE_EV_ANGSQ / (wl_val**2)
         assert abs(energy.value - expected_ev) / expected_ev < 1e-6
+
+
+# --- issue #141: energy/wavelength binning must apply detector_time_offset ---
+
+
+def test_convert_energy_to_tof_is_inverse_of_tof_to_energy():
+    """convert_energy_to_tof is the exact inverse of convert_tof_to_energy, offset included.
+
+    This is what makes the energy bin edges consistent with the coordinate labeling (#141).
+    """
+    from neunorm.tof.coordinate_converter import (
+        convert_energy_to_tof,
+        convert_tof_to_energy,
+        convert_tof_to_wavelength,
+        convert_wavelength_to_tof,
+    )
+
+    flight_path = sc.scalar(25.0, unit="m")
+    offset = sc.scalar(5.0, unit="us")
+
+    energy = sc.array(dims=["energy"], values=[1.0, 10.0, 100.0], unit="eV")
+    energy_rt = convert_tof_to_energy(convert_energy_to_tof(energy, flight_path, offset), flight_path, offset)
+    np.testing.assert_allclose(sc.to_unit(energy_rt, "eV").values, [1.0, 10.0, 100.0], rtol=1e-9)
+
+    wl = sc.array(dims=["wavelength"], values=[0.5, 1.8, 5.0], unit="angstrom")
+    wl_rt = convert_tof_to_wavelength(convert_wavelength_to_tof(wl, flight_path, offset), flight_path, offset)
+    np.testing.assert_allclose(sc.to_unit(wl_rt, "angstrom").values, [0.5, 1.8, 5.0], rtol=1e-9)
+
+
+def test_create_tof_bins_offset_shifts_edges_into_raw_space():
+    """A non-zero detector_time_offset shifts the energy/wavelength TOF edges by exactly -offset.
+
+    Regression for #141: the bin edges must live in raw detector-TOF space so they match the
+    raw event TOF histogrammed into them; offset=0 reproduces the old physical-TOF edges.
+    """
+    from neunorm.data_models.tof import BinningConfig
+    from neunorm.tof.binning import create_tof_bins
+
+    flight_path = sc.scalar(25.0, unit="m")
+    offset = sc.scalar(5.0, unit="us")  # 5000 ns
+
+    e_cfg = BinningConfig(bins=100, bin_space="energy", energy_range=(1.0, 100.0), use_log_bin=True)
+    e0 = sc.to_unit(create_tof_bins(e_cfg, flight_path), "ns").values
+    e_off = sc.to_unit(create_tof_bins(e_cfg, flight_path, offset), "ns").values
+    np.testing.assert_allclose(e_off, e0 - 5000.0, rtol=1e-9)
+
+    w_cfg = BinningConfig(bins=100, bin_space="wavelength", wavelength_range=(0.5, 5.0), use_log_bin=False)
+    w0 = sc.to_unit(create_tof_bins(w_cfg, flight_path), "ns").values
+    w_off = sc.to_unit(create_tof_bins(w_cfg, flight_path, offset), "ns").values
+    np.testing.assert_allclose(w_off, w0 - 5000.0, rtol=1e-9)
+
+
+def test_event_energy_binning_places_events_by_raw_tof_with_offset():
+    """Events histogrammed in energy space land in the bin bracketing their RAW TOF (#141).
+
+    With the offset applied, the energy bin edges are in raw detector-TOF space, so a peak at
+    a known raw TOF falls in the bin whose raw-TOF edges bracket it — consistent with the
+    later coordinate labeling. Without the offset (the old behavior) the edges are shifted, so
+    the peak lands in a different bin.
+    """
+    from neunorm.data_models.core import EventData
+    from neunorm.data_models.tof import BinningConfig
+    from neunorm.tof.event_converter import convert_events_to_histogram
+
+    flight_path = sc.scalar(25.0, unit="m")
+    offset = sc.scalar(20.0, unit="us")  # >> bin width here, so the offset clearly moves the peak bin
+    raw_tof_ns = 500_000.0  # within the TOF span of the (1, 100) eV range at L=25 m
+    n = 1000
+    events = EventData(
+        tof=np.full(n, raw_tof_ns, dtype=np.int64),
+        x=np.full(n, 5, dtype=np.int32),
+        y=np.full(n, 5, dtype=np.int32),
+        file_path="synthetic.h5",
+        total_events=n,
+    )
+    cfg = BinningConfig(bins=300, bin_space="energy", energy_range=(1.0, 100.0), use_log_bin=True)
+
+    hist = convert_events_to_histogram(
+        events, cfg, flight_path, x_bins=10, y_bins=10, compute_variance=False, detector_time_offset=offset
+    )
+    counts = hist.sum(("x", "y")).data.values
+    peak = int(np.argmax(counts))
+    assert counts[peak] == n  # all events fell in a single bin
+    edges = sc.to_unit(hist.coords["tof"], "ns").values
+    # The populated bin's raw-TOF edges bracket the raw event TOF.
+    assert edges[peak] <= raw_tof_ns <= edges[peak + 1]
+
+    # Old behavior (offset=0): edges are shifted, so the same events land in a different bin.
+    hist0 = convert_events_to_histogram(events, cfg, flight_path, x_bins=10, y_bins=10, compute_variance=False)
+    peak0 = int(np.argmax(hist0.sum(("x", "y")).data.values))
+    assert peak0 != peak
+
+
+def test_get_energy_and_wavelength_histogram_apply_offset():
+    """get_energy_histogram / get_wavelength_histogram label TOF with detector_time_offset (#141).
+
+    The public histogram-relabeling helpers must use the same offset-aware converter as the bin
+    construction, so a histogram built with an offset is labeled consistently. Without the offset
+    the labels differ.
+    """
+    from neunorm.tof.binning import get_energy_histogram, get_wavelength_histogram
+    from neunorm.tof.coordinate_converter import convert_tof_to_energy, convert_tof_to_wavelength
+
+    flight_path = sc.scalar(25.0, unit="m")
+    offset = sc.scalar(20.0, unit="us")
+    tof_edges = sc.linspace("tof", 1.0e5, 1.0e6, num=6, unit="ns")
+    hist = sc.DataArray(
+        data=sc.ones(dims=["tof", "x", "y"], shape=[5, 2, 2], unit="counts"),
+        coords={"tof": tof_edges, "x": sc.arange("x", 2), "y": sc.arange("y", 2)},
+    )
+
+    # Energy: edges match the offset-aware converter (in eV), reversed (high TOF = low energy).
+    he = get_energy_histogram(hist, flight_path, offset)
+    expected_e = sc.to_unit(convert_tof_to_energy(tof_edges, flight_path, offset), "eV").values[::-1]
+    np.testing.assert_allclose(he.coords["energy"].values, expected_e, rtol=1e-9)
+    # Independent (non-circular) physics anchor for one edge: E = 0.5*m_n*(L/(t+offset))^2.
+    # The lowest TOF edge (1e5 ns) maps to the highest energy -> last edge after the reversal.
+    t_plus_offset_s = (1.0e5 + 20_000.0) * 1e-9  # tof 1e5 ns + 20 us offset, in seconds
+    e_hand_ev = 0.5 * scipy_const.m_n * (25.0 / t_plus_offset_s) ** 2 / scipy_const.e
+    np.testing.assert_allclose(he.coords["energy"].values[-1], e_hand_ev, rtol=1e-5)
+    he0 = get_energy_histogram(hist, flight_path)  # offset=0 -> different labels
+    assert not np.allclose(he.coords["energy"].values, he0.coords["energy"].values)
+
+    # Wavelength: edges match the offset-aware converter (in angstrom), not reversed.
+    hw = get_wavelength_histogram(hist, flight_path, offset)
+    expected_w = sc.to_unit(convert_tof_to_wavelength(tof_edges, flight_path, offset), "angstrom").values
+    np.testing.assert_allclose(hw.coords["wavelength"].values, expected_w, rtol=1e-9)
+    # Independent physics anchor: lambda = h*(t+offset)/(m_n*L); lowest TOF -> first (shortest) edge.
+    w_hand_angstrom = scipy_const.h * t_plus_offset_s / (scipy_const.m_n * 25.0) * 1e10
+    np.testing.assert_allclose(hw.coords["wavelength"].values[0], w_hand_angstrom, rtol=1e-5)
+    hw0 = get_wavelength_histogram(hist, flight_path)  # offset=0 -> different labels
+    assert not np.allclose(hw.coords["wavelength"].values, hw0.coords["wavelength"].values)
