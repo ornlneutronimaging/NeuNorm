@@ -2,6 +2,7 @@
 HDF5 writer for Neunorm outputs, including provenance metadata.
 """
 
+import json
 import os
 from pathlib import Path
 from typing import Optional, Union
@@ -10,6 +11,74 @@ import h5py
 import numpy as np
 import scipp as sc
 from loguru import logger
+
+
+def _is_nested_sequence(value) -> bool:
+    """Return True if ``value`` is a list/tuple that contains a list/tuple element.
+
+    Nested sequences (e.g. per-run file-path provenance ``[[...], [...]]``) cannot be
+    stored natively by h5py when ragged, so they are JSON-serialized instead (#140).
+    """
+    return isinstance(value, (list, tuple)) and any(isinstance(item, (list, tuple)) for item in value)
+
+
+def _write_json_metadata(f: h5py.File, name: str, value) -> None:
+    """Store ``value`` as a JSON string dataset tagged with ``encoding="json"`` (issue #140).
+
+    Non-string leaves are coerced via ``str()`` (``json`` ``default=str``); the round-trip is
+    therefore lossless only for string-valued data such as the per-run file-path provenance
+    the pipelines emit. May raise (e.g. on a circular reference, or an invalid dataset name);
+    the caller backstops any failure so a single bad key never aborts the write.
+    """
+    ds = f.create_dataset(name, data=json.dumps(value, default=str), dtype=h5py.string_dtype("utf-8"))
+    ds.attrs["encoding"] = "json"
+
+
+def _write_metadata_value(f: h5py.File, name: str, value) -> None:
+    """Write one metadata value, choosing the best HDF5 representation (issue #140).
+
+    Strings, scalars, and flat arrays are stored natively; nested list/tuple provenance is
+    stored as a round-trippable JSON string. May raise; the caller backstops failures so a
+    single un-writable key never aborts the write or corrupts the file.
+    """
+    if isinstance(value, str):
+        f.create_dataset(name, data=value, dtype=h5py.string_dtype("utf-8"))
+    elif _is_nested_sequence(value):
+        _write_json_metadata(f, name, value)
+    else:
+        try:
+            f.create_dataset(name, data=value)
+        except (TypeError, ValueError):
+            # h5py cannot store this value natively; remove the partial dataset it registered
+            # before failing (only a dataset, never a pre-existing group), then JSON-encode it.
+            if name in f and isinstance(f[name], h5py.Dataset):
+                del f[name]
+            _write_json_metadata(f, name, value)
+
+
+def _discard_failed_metadata(f: h5py.File, name: Optional[str], key, exc: Exception, created_here: bool) -> None:
+    """Best-effort cleanup + warning for a metadata key that could not be written (issue #140).
+
+    Never raises: provenance is best-effort and must not abort the bulk-data write. Removes a
+    leftover dataset only when this key's write actually created it (``created_here``) — never a
+    pre-existing dataset or group — so a colliding or duplicate name cannot drop earlier
+    metadata. Logs a pre-formatted string (no live key/exception objects) so a pathological key
+    or exception cannot make logging itself raise.
+    """
+    try:
+        if created_here and name is not None and name in f and isinstance(f[name], h5py.Dataset):
+            del f[name]
+    except Exception:  # noqa: BLE001 - cleanup is best-effort; an h5py name error here must not propagate
+        pass
+    try:
+        detail = f"key {key!r}: {exc}"
+    except Exception:  # noqa: BLE001 - a pathological key/exception repr must not break logging
+        detail = "an un-formattable key or error"
+    logger.warning(
+        "Skipping unwritable metadata in HDF5 output ({}). Array data and other metadata are still "
+        "written. See https://github.com/ornlneutronimaging/NeuNorm/issues/140",
+        detail,
+    )
 
 
 def write_hdf5(  # noqa: C901
@@ -35,6 +104,12 @@ def write_hdf5(  # noqa: C901
         /masks/hot        # (y, x) bool (optional)
         /tof_bin_edges    # (N+1,) float64 (optional)
         /metadata/        # processing provenance
+
+    Metadata values are stored as native datasets (strings, scalars, flat arrays).
+    Nested values such as per-run file-path lists (``sample_paths=[[...], [...]]``) are
+    stored as a JSON string with a ``encoding="json"`` dataset attribute; read them back
+    with ``json.loads(dataset.asstr()[()])``. The round-trip is lossless for string-valued
+    provenance (what the pipelines emit); non-string leaves are coerced via ``str()``.
 
     Metadata contents:
 
@@ -90,34 +165,24 @@ def write_hdf5(  # noqa: C901
         if hot_pixel_mask in transmission.masks:
             f.create_dataset("masks/hot", data=transmission.masks[hot_pixel_mask].values)
 
-        # Write metadata
+        # Write metadata. Provenance is best-effort: a single un-writable key — a bad value
+        # (ragged/unserializable) or a malformed/colliding name — must never abort the write or
+        # leave a corrupt, partially-written file (issue #140). Nested list/tuple values are
+        # serialized as round-trippable JSON (read back with json.loads(dataset.asstr()[()])).
         if metadata:
             for key, value in metadata.items():
-                if isinstance(value, str):
-                    f.create_dataset(f"metadata/{key}", data=value, dtype=h5py.string_dtype(encoding="utf-8"))
-                else:
+                name = None
+                created_here = False
+                try:
                     name = f"metadata/{key}"
-                    try:
-                        f.create_dataset(name, data=value)
-                    except (TypeError, ValueError) as exc:
-                        # h5py cannot store some values — notably a RAGGED nested list, e.g.
-                        # per-run file paths with unequal run sizes (sample_paths=[[...],[...]]).
-                        # Without this guard the error aborts the write *after* the bulk arrays
-                        # are written, leaving a corrupt, partial file. Rectangular nested lists
-                        # still write normally; only genuinely unstorable values are skipped here.
-                        # Note: h5py registers the dataset name before failing on the data, so a
-                        # malformed partial dataset is left behind — delete it before continuing.
-                        # Proper fix (serialize the nested provenance) is tracked in
-                        # https://github.com/ornlneutronimaging/NeuNorm/issues/140
-                        if name in f:
-                            del f[name]
-                        logger.warning(
-                            "Skipping metadata '{}' in HDF5 output: h5py cannot store this value "
-                            "(e.g. a ragged per-run list), which would otherwise abort the write and "
-                            "corrupt the file. Array data and other metadata are still written. "
-                            "See https://github.com/ornlneutronimaging/NeuNorm/issues/140 ({})",
-                            key,
-                            exc,
-                        )
+                    if name in f:
+                        # Two metadata keys collide under str() (e.g. int 1 and str "1" both ->
+                        # "metadata/1"). Keep the first and skip the later one — never overwrite or
+                        # delete the earlier value. `created_here` stays False so cleanup won't touch it.
+                        raise ValueError(f"duplicate metadata path {name!r}")
+                    created_here = True
+                    _write_metadata_value(f, name, value)
+                except Exception as exc:  # noqa: BLE001 - metadata is best-effort; never abort the bulk-data write (#140)
+                    _discard_failed_metadata(f, name, key, exc, created_here)
 
     logger.info("HDF5 file written to {}", output_path)
