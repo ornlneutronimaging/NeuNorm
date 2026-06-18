@@ -1,3 +1,4 @@
+import json
 import tempfile
 from pathlib import Path
 
@@ -134,13 +135,13 @@ class TestMarsCCDPipeline:
                 # Check masks
                 assert "masks/dead" in hf
                 np.testing.assert_equal(hf["masks/dead"], np.zeros((32, 32), dtype=bool))
-                # Check metadata
+                # Check metadata (nested per-run paths stored as round-trippable JSON, issue #140)
                 assert "metadata/sample_paths" in hf
-                np.testing.assert_equal(hf["metadata/sample_paths"].asstr()[:], [[str(p) for p in self.sample_paths]])
+                assert json.loads(hf["metadata/sample_paths"].asstr()[()]) == [[str(p) for p in self.sample_paths]]
                 assert "metadata/ob_paths" in hf
-                np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[:], [[str(p) for p in self.ob_paths]])
+                assert json.loads(hf["metadata/ob_paths"].asstr()[()]) == [[str(p) for p in self.ob_paths]]
                 assert "metadata/dark_paths" in hf
-                np.testing.assert_equal(hf["metadata/dark_paths"].asstr()[:], [[str(p) for p in self.dark_paths]])
+                assert json.loads(hf["metadata/dark_paths"].asstr()[()]) == [[str(p) for p in self.dark_paths]]
                 assert "metadata/dark_correction_applied" in hf
                 np.testing.assert_equal(hf["metadata/dark_correction_applied"][()], True)
                 assert "metadata/gamma_filter_applied" in hf
@@ -527,13 +528,13 @@ class TestMarsCCDPipelineFITS:
                 # Check masks
                 assert "masks/dead" in hf
                 np.testing.assert_equal(hf["masks/dead"], np.zeros((32, 32), dtype=bool))
-                # Check metadata
+                # Check metadata (nested per-run paths stored as round-trippable JSON, issue #140)
                 assert "metadata/sample_paths" in hf
-                np.testing.assert_equal(hf["metadata/sample_paths"].asstr()[()], [[str(p) for p in self.sample_paths]])
+                assert json.loads(hf["metadata/sample_paths"].asstr()[()]) == [[str(p) for p in self.sample_paths]]
                 assert "metadata/ob_paths" in hf
-                np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[()], [[str(p) for p in self.ob_paths]])
+                assert json.loads(hf["metadata/ob_paths"].asstr()[()]) == [[str(p) for p in self.ob_paths]]
                 assert "metadata/dark_paths" in hf
-                np.testing.assert_equal(hf["metadata/dark_paths"].asstr()[()], [[str(p) for p in self.dark_paths]])
+                assert json.loads(hf["metadata/dark_paths"].asstr()[()]) == [[str(p) for p in self.dark_paths]]
                 assert "metadata/gamma_filter_applied" in hf
                 np.testing.assert_equal(hf["metadata/gamma_filter_applied"][()], True)
                 assert "metadata/processing_timestamp" in hf
