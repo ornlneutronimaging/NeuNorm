@@ -163,6 +163,12 @@ def run_mars_ccd_pipeline(  # noqa: C901
     # Normalization
     transmission = normalize_transmission(sample_dark_corrected, ob_dark_corrected)
 
+    # Guarantee a float32 normalized data product (issue #147), regardless of any
+    # intermediate dtype promotion. .astype converts values and variances. MARS has
+    # no proton-charge division, so this is already float32; the cast keeps the two
+    # CCD pipelines symmetric and is robust to future changes.
+    transmission = transmission.astype("float32")
+
     # Write output
     metadata = {
         "sample_paths": [[str(p) for p in run] for run in sample_paths],

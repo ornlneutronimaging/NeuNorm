@@ -32,6 +32,10 @@ def test_load_fits_stack():
     assert da.variances.shape == (3, 5, 5)
     assert da.variances.max() == 5
 
+    # float32 is sufficient for neutron imaging; loading in float32 halves memory (issue #147)
+    assert da.values.dtype == np.float32
+    assert da.variances.dtype == np.float32
+
     assert len(da.coords) == 8
     assert "SIMPLE" in da.coords
 

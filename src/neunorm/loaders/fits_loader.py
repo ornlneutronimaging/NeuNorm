@@ -57,8 +57,10 @@ def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
                 hdul.info(output=info_buf)
                 logger.debug("FITS info for {}:\n{}", path, info_buf.getvalue().rstrip())
 
-                # Assume data is in primary HDU
-                arr = hdul[0].data.astype(np.float64)
+                # Assume data is in primary HDU. float32 is sufficient for neutron
+                # imaging (16-bit detectors) and halves the in-memory footprint of
+                # large stacks (issue #147).
+                arr = hdul[0].data.astype(np.float32)
                 data_list.append(arr)
 
                 # Store header from first file
