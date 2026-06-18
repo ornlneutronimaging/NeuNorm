@@ -48,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `run_venus_tpx1_pipeline` / `run_venus_tpx3_histogram_pipeline` pipelines also take a
   configurable `flight_path`. The default bin-in-TOF path is unaffected.
   ([#141](https://github.com/ornlneutronimaging/NeuNorm/issues/141))
+- **Shared dark-frame variance is no longer double-counted in CCD transmission
+  uncertainty.** With the same averaged dark subtracted from both sample and open beam,
+  `T = (S−D)/(O−D)` was propagated as if numerator and denominator were independent, so
+  `Var(D)` entered twice. A new `normalize_with_dark` computes the dark correction and
+  normalization together and removes the spurious shared-dark covariance term, so the
+  reported uncertainty is slightly smaller (the **transmission values are unchanged**). The
+  CCD pipelines use it on the with-dark path; the no-dark path is unchanged.
+  ([#142](https://github.com/ornlneutronimaging/NeuNorm/issues/142))
 
 ## [2.0.0] - 2026-06-09
 

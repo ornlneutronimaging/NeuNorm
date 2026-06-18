@@ -145,6 +145,120 @@ def test_normalize_transmission_with_proton_charge():
     assert transmission.variances is not None
 
 
+# --- issue #142: shared-dark variance must not be double-counted ---
+
+
+def _ccd_frames(sample_counts, ob_counts, dark_counts):
+    """Build (sample 3D, ob 2D, dark 2D) DataArrays with Poisson variance for one pixel value."""
+    s, o, d = float(sample_counts), float(ob_counts), float(dark_counts)
+    sample = sc.DataArray(sc.array(dims=["N_image", "y", "x"], values=[[[s]]], variances=[[[s]]], unit="counts"))
+    ob = sc.DataArray(sc.array(dims=["y", "x"], values=[[o]], variances=[[o]], unit="counts"))
+    dark = sc.DataArray(sc.array(dims=["y", "x"], values=[[d]], variances=[[d]], unit="counts"))
+    return sample, ob, dark
+
+
+def test_normalize_with_dark_values_match_old_path():
+    """normalize_with_dark returns the SAME transmission values as subtract_dark+normalize (#142)."""
+    from neunorm.processing.dark_corrector import subtract_dark
+    from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
+
+    sample, ob, dark = _ccd_frames(800, 1500, 60)
+    # MARS (no proton charge)
+    old = normalize_transmission(subtract_dark(sample, dark), subtract_dark(ob, dark))
+    new = normalize_with_dark(sample, ob, dark)
+    np.testing.assert_allclose(new.values, old.values, rtol=1e-12)
+
+    # VENUS (proton charge): values still identical
+    pc_s = sc.array(dims=["N_image"], values=[0.1], unit="C")
+    pc_o = sc.scalar(0.2, unit="C")
+    old_v = normalize_transmission(subtract_dark(sample, dark), subtract_dark(ob, dark), pc_s, pc_o)
+    new_v = normalize_with_dark(sample, ob, dark, pc_s, pc_o)
+    np.testing.assert_allclose(new_v.values, old_v.values, rtol=1e-12)
+
+
+def test_normalize_with_dark_variance_matches_monte_carlo():
+    """The corrected Var(T) matches a shared-dark Monte Carlo and is smaller than the old
+    double-counted value by exactly 2*N*Var(D)/M^3 (MARS) (issue #142)."""
+    from neunorm.processing.dark_corrector import subtract_dark
+    from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
+
+    sample_counts, ob_counts, dark_counts = 800.0, 1500.0, 60.0
+    sample, ob, dark = _ccd_frames(sample_counts, ob_counts, dark_counts)
+
+    old = normalize_transmission(subtract_dark(sample, dark), subtract_dark(ob, dark))
+    new = normalize_with_dark(sample, ob, dark)
+    var_old = float(old.variances.ravel()[0])
+    var_new = float(new.variances.ravel()[0])
+
+    # Monte Carlo ground truth: the SAME dark draw feeds numerator and denominator.
+    # 500k trials keep this a fast unit test; the exact analytic check below is the precise oracle.
+    rng = np.random.default_rng(42)
+    n = 500_000
+    s = rng.normal(sample_counts, np.sqrt(sample_counts), n)
+    o = rng.normal(ob_counts, np.sqrt(ob_counts), n)
+    d = rng.normal(dark_counts, np.sqrt(dark_counts), n)
+    var_mc = ((s - d) / (o - d)).var()
+
+    # Corrected variance matches MC far better than the double-counted one.
+    assert abs(var_new - var_mc) / var_mc < 0.01
+    assert abs(var_old - var_mc) / var_mc > 0.03
+    # The exact over-count removed is 2 * numerator * Var(D) / denominator^3.
+    numerator, denominator = sample_counts - dark_counts, ob_counts - dark_counts
+    np.testing.assert_allclose(var_old - var_new, 2 * numerator * dark_counts / denominator**3, rtol=1e-6)
+
+
+def test_normalize_with_dark_reduces_variance_with_proton_charge():
+    """VENUS path: the correction also reduces the variance (no double-counted Var(dark))."""
+    from neunorm.processing.dark_corrector import subtract_dark
+    from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
+
+    sample, ob, dark = _ccd_frames(800, 1500, 60)
+    pc_s = sc.array(dims=["N_image"], values=[0.1], unit="C")
+    pc_o = sc.scalar(0.2, unit="C")
+    old = normalize_transmission(subtract_dark(sample, dark), subtract_dark(ob, dark), pc_s, pc_o)
+    new = normalize_with_dark(sample, ob, dark, pc_s, pc_o)
+    assert float(new.variances.ravel()[0]) < float(old.variances.ravel()[0])
+    assert float(new.variances.ravel()[0]) > 0.0
+
+
+def test_normalize_with_dark_pc_overcount_per_image_exact():
+    """VENUS: the removed over-count equals 2*k^2*(S-D)*Var(D)/(O-D)^3 with per-image k (#142).
+
+    Pins the exact k^2 = (pc_ob/pc_sample)^2 magnitude and the per-image broadcast for a
+    multi-image sample with VARYING per-image proton charge (not just directional reduction).
+    """
+    from neunorm.processing.dark_corrector import subtract_dark
+    from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
+
+    sample_vals = np.array([800.0, 820.0, 840.0])
+    ob_val, dark_val = 1500.0, 60.0
+    sample = sc.DataArray(
+        sc.array(
+            dims=["N_image", "y", "x"],
+            values=sample_vals.reshape(3, 1, 1),
+            variances=sample_vals.reshape(3, 1, 1),
+            unit="counts",
+        )
+    )
+    ob = sc.DataArray(sc.array(dims=["y", "x"], values=[[ob_val]], variances=[[ob_val]], unit="counts"))
+    dark = sc.DataArray(sc.array(dims=["y", "x"], values=[[dark_val]], variances=[[dark_val]], unit="counts"))
+    pc_sample_vals = np.array([0.10, 0.15, 0.20])
+    pc_ob_val = 0.20
+    pc_s = sc.array(dims=["N_image"], values=pc_sample_vals, unit="C")
+    pc_o = sc.scalar(pc_ob_val, unit="C")
+
+    old = normalize_transmission(subtract_dark(sample, dark), subtract_dark(ob, dark), pc_s, pc_o)
+    new = normalize_with_dark(sample, ob, dark, pc_s, pc_o)
+
+    # Independent analytic oracle (per image): over_count = 2*k^2*(S-D)*Var(D)/(O-D)^3.
+    k = pc_ob_val / pc_sample_vals
+    s = sample_vals - dark_val
+    o = ob_val - dark_val
+    expected = 2 * k**2 * s * dark_val / o**3
+    diff = old.variances.ravel() - new.variances.ravel()
+    np.testing.assert_allclose(diff, expected, rtol=1e-6)
+
+
 def test_normalize_transmission_2d_ob():
     """Test basic transmission normalization: T = Sample / OB with an averaged 2D OB"""
     from neunorm.processing.normalizer import normalize_transmission

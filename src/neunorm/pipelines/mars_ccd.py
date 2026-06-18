@@ -15,8 +15,7 @@ from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
 from neunorm.loaders.stack_loader import load_stack
-from neunorm.processing.dark_corrector import subtract_dark
-from neunorm.processing.normalizer import normalize_transmission
+from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.run_combiner import combine_runs
@@ -151,17 +150,14 @@ def run_mars_ccd_pipeline(  # noqa: C901
     if gamma_filter:
         sample = apply_gamma_filter(sample)
 
-    # Dark correction (optional)
+    # Dark correction (optional) + normalization. With a shared dark frame, normalize_with_dark
+    # subtracts the dark and normalizes in one step so the dark variance is not double-counted
+    # in the transmission uncertainty (issue #142). Without dark, normalize directly.
     if dark is not None:
-        sample_dark_corrected = subtract_dark(sample, dark)
-        ob_dark_corrected = subtract_dark(ob, dark)
+        transmission = normalize_with_dark(sample, ob, dark)
     else:
         logger.info("No dark current provided; skipping dark correction")
-        sample_dark_corrected = sample
-        ob_dark_corrected = ob
-
-    # Normalization
-    transmission = normalize_transmission(sample_dark_corrected, ob_dark_corrected)
+        transmission = normalize_transmission(sample, ob)
 
     # Guarantee a float32 normalized data product (issue #147), regardless of any
     # intermediate dtype promotion. .astype converts values and variances. MARS has
