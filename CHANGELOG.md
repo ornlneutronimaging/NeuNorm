@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-06-18
+
 ### Changed
 
 - **CCD pipelines now compute in float32 end-to-end instead of float64.** The
@@ -128,4 +130,5 @@ documentation are archived under
 [`archive/neunorm-1.x/`](archive/neunorm-1.x/); released 1.x versions remain
 available on PyPI and the `conda-forge` channel (`pip install "NeuNorm<2"`).
 
+[2.1.0]: https://github.com/ornlneutronimaging/NeuNorm/releases/tag/v2.1.0
 [2.0.0]: https://github.com/ornlneutronimaging/NeuNorm/releases/tag/v2.0.0
