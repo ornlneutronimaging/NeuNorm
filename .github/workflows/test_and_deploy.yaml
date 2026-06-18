@@ -19,6 +19,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-14] # macos-14 = Apple Silicon (osx-arm64)
+    env:
+      # Scoped to this job so the upload step can gate on the secret's presence
+      # (secrets are withheld on fork PRs); avoids mapping it into other jobs.
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -35,6 +39,17 @@ jobs:
 
       - name: Run unit tests
         run: pixi run test
+
+      # Uploads coverage.xml (produced by --cov-report=xml) to Codecov. Skipped when
+      # CODECOV_TOKEN is absent (e.g. fork PRs, where secrets are withheld) so it does
+      # not emit warnings; fail_ci_if_error=false keeps CI green regardless. See #139.
+      - name: Upload coverage to codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        if: matrix.os == 'ubuntu-latest' && github.actor != 'dependabot[bot]' && env.CODECOV_TOKEN != ''
+        with:
+          token: ${{ env.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          fail_ci_if_error: false
 
   conda-build:
     name: Build conda package
