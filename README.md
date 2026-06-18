@@ -3,7 +3,7 @@
 [![PyPI version](https://badge.fury.io/py/NeuNorm.svg)](https://badge.fury.io/py/NeuNorm)
 [![codecov](https://codecov.io/gh/ornlneutronimaging/NeuNorm/branch/next/graph/badge.svg)](https://codecov.io/gh/ornlneutronimaging/NeuNorm)
 [![Documentation Status](https://readthedocs.org/projects/neunorm/badge/?version=latest)](http://neunorm.readthedocs.io/en/latest/?badge=latest)
-[![DOI](https://zenodo.org/badge/97755175.svg)](https://zenodo.org/badge/latestdoi/97755175)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20753780.svg)](https://doi.org/10.5281/zenodo.20753780)
 [![DOI](http://joss.theoj.org/papers/10.21105/joss.00815/status.svg)](https://doi.org/10.21105/joss.00815)
 
 NeuNorm normalizes neutron imaging data and processes time-of-flight (TOF) data
