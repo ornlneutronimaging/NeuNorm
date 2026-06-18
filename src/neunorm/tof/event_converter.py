@@ -23,6 +23,7 @@ def convert_events_to_histogram(
     y_bins: int = 514,
     chunk_size: int = 500_000_000,
     compute_variance: bool = True,
+    detector_time_offset: sc.Variable = sc.scalar(0, unit="us"),
 ) -> sc.DataArray:
     """
     Convert event-mode data to 3D TOF histogram.
@@ -47,6 +48,10 @@ def convert_events_to_histogram(
         Larger = faster but more memory
     compute_variance : bool, optional
         Attach Poisson variance (var = counts). Default: True
+    detector_time_offset : sc.Variable, optional
+        Detector time offset (e.g. TIDelay) applied when building energy/wavelength bin edges
+        so they live in raw detector-TOF space, matching the raw event TOF histogrammed into
+        them (issue #141). Default: 0 us. Has no effect for ``bin_space='tof'``.
 
     Returns
     -------
@@ -69,8 +74,9 @@ def convert_events_to_histogram(
     logger.info(f"  TOF bins: {binning.bins}, Spatial: {x_bins}×{y_bins}")
     logger.info(f"  Bin space: {binning.bin_space}, Log: {binning.use_log_bin}")
 
-    # Create TOF bin edges
-    tof_bins = create_tof_bins(binning, flight_path)
+    # Create TOF bin edges (raw detector-TOF; detector_time_offset shifts energy/wavelength
+    # edges so binning agrees with the later coordinate labeling — issue #141).
+    tof_bins = create_tof_bins(binning, flight_path, detector_time_offset)
     logger.info(f"  TOF range: {tof_bins.values.min():.1f} - {tof_bins.values.max():.1f} ns")
 
     # Create spatial bin edges (explicit to ensure consistency across chunks)

@@ -36,6 +36,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arrays were written (corrupt partial file); the interim guard avoided the crash by
   silently **dropping** that provenance. Flat lists, scalars, and strings are
   unchanged. ([#140](https://github.com/ornlneutronimaging/NeuNorm/issues/140))
+- **Event-pipeline energy/wavelength binning now applies the detector time offset and a
+  configurable flight path.** When `run_venus_tpx3_event_pipeline` histograms directly in
+  `bin_space='energy'`/`'wavelength'`, the energy/wavelength bin edges are now built in raw
+  detector-TOF space (applying `detector_time_offset`, the exact inverse of the coordinate
+  labeling), so events land in the correct bins instead of being shifted by the offset. The
+  flight path is now a single configurable `flight_path` parameter (default
+  `VENUS_FLIGHT_PATH_M`) used for both binning and labeling, replacing the hardcoded 25 m
+  literals. The public `get_energy_histogram` / `get_wavelength_histogram` helpers gained an
+  `offset` argument so they label consistently with offset-aware bins, and the
+  `run_venus_tpx1_pipeline` / `run_venus_tpx3_histogram_pipeline` pipelines also take a
+  configurable `flight_path`. The default bin-in-TOF path is unaffected.
+  ([#141](https://github.com/ornlneutronimaging/NeuNorm/issues/141))
 
 ## [2.0.0] - 2026-06-09
 

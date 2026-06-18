@@ -15,6 +15,12 @@ import scipp as sc
 import scipp.constants as sc_const
 
 from neunorm.data_models.tof import BinningConfig
+from neunorm.tof.coordinate_converter import (
+    convert_energy_to_tof,
+    convert_tof_to_energy,
+    convert_tof_to_wavelength,
+    convert_wavelength_to_tof,
+)
 
 
 def tof_to_energy(tof: sc.Variable, flight_path: sc.Variable) -> sc.Variable:
@@ -195,7 +201,11 @@ def energy_to_wavelength(energy: sc.Variable) -> sc.Variable:
     return wavelength_angstrom
 
 
-def create_tof_bins(config: BinningConfig, flight_path: Optional[sc.Variable] = None) -> sc.Variable:
+def create_tof_bins(
+    config: BinningConfig,
+    flight_path: Optional[sc.Variable] = None,
+    offset: sc.Variable = sc.scalar(0, unit="us"),
+) -> sc.Variable:
     """
     Create TOF bin edges from binning configuration.
 
@@ -210,6 +220,10 @@ def create_tof_bins(config: BinningConfig, flight_path: Optional[sc.Variable] = 
         Binning configuration specifying domain and range
     flight_path : sc.Variable, optional
         Flight path in meters. Required for energy/wavelength modes.
+    offset : sc.Variable, optional
+        Detector time offset (e.g. TIDelay) applied so energy/wavelength bin edges live in
+        raw detector-TOF space — matching the raw event TOF that is histogrammed into them
+        and the later coordinate labeling (issue #141). Default: 0 us. Ignored for 'tof' mode.
 
     Returns
     -------
@@ -226,12 +240,12 @@ def create_tof_bins(config: BinningConfig, flight_path: Optional[sc.Variable] = 
     if config.bin_space == "energy":
         if flight_path is None:
             raise ValueError("flight_path required for energy binning")
-        return _energy_bins_to_tof(config, flight_path)
+        return _energy_bins_to_tof(config, flight_path, offset)
 
     elif config.bin_space == "wavelength":
         if flight_path is None:
             raise ValueError("flight_path required for wavelength binning")
-        return _wavelength_bins_to_tof(config, flight_path)
+        return _wavelength_bins_to_tof(config, flight_path, offset)
 
     elif config.bin_space == "tof":
         return _create_tof_bins_direct(config)
@@ -240,8 +254,15 @@ def create_tof_bins(config: BinningConfig, flight_path: Optional[sc.Variable] = 
         raise ValueError(f"Invalid bin_space: {config.bin_space}")
 
 
-def _energy_bins_to_tof(config: BinningConfig, flight_path: sc.Variable) -> sc.Variable:
-    """Create energy bins and convert to TOF bins (reversed)"""
+def _energy_bins_to_tof(
+    config: BinningConfig, flight_path: sc.Variable, offset: sc.Variable = sc.scalar(0, unit="us")
+) -> sc.Variable:
+    """Create energy bins and convert to raw detector-TOF bins (reversed).
+
+    Uses ``convert_energy_to_tof`` — the exact inverse of the labeling conversion — so the
+    edges live in raw detector-TOF space (``t = L*sqrt(m_n/(2E)) - offset``) and match the
+    raw event TOF histogrammed into them (issue #141).
+    """
     emin, emax = config.energy_range
 
     # Create energy bins
@@ -250,11 +271,7 @@ def _energy_bins_to_tof(config: BinningConfig, flight_path: sc.Variable) -> sc.V
     else:
         energy_bins = sc.linspace("energy", emin, emax, num=config.bins + 1, unit="eV")
 
-    # Convert to TOF: t = L * sqrt(m_n / (2*E))
-    energy_j = energy_bins.to(unit="J", copy=False)
-    velocity = sc.sqrt(2.0 * energy_j / sc_const.m_n)
-    tof_s = flight_path / velocity
-    tof_ns = tof_s.to(unit="ns")
+    tof_ns = sc.to_unit(convert_energy_to_tof(energy_bins, flight_path, offset), "ns")
 
     # Reverse: high energy = low TOF
     tof_bins_reversed = sc.array(dims=["tof"], values=tof_ns.values[::-1].copy(), unit="ns")
@@ -262,8 +279,15 @@ def _energy_bins_to_tof(config: BinningConfig, flight_path: sc.Variable) -> sc.V
     return tof_bins_reversed
 
 
-def _wavelength_bins_to_tof(config: BinningConfig, flight_path: sc.Variable) -> sc.Variable:
-    """Create wavelength bins and convert to TOF bins (ascending)"""
+def _wavelength_bins_to_tof(
+    config: BinningConfig, flight_path: sc.Variable, offset: sc.Variable = sc.scalar(0, unit="us")
+) -> sc.Variable:
+    """Create wavelength bins and convert to raw detector-TOF bins (ascending).
+
+    Uses ``convert_wavelength_to_tof`` — the exact inverse of the labeling conversion — so the
+    edges live in raw detector-TOF space (``t = λ*m_n*L/h - offset``) and match the raw event
+    TOF histogrammed into them (issue #141).
+    """
     wl_min, wl_max = config.wavelength_range
 
     # Create wavelength bins
@@ -272,10 +296,7 @@ def _wavelength_bins_to_tof(config: BinningConfig, flight_path: sc.Variable) -> 
     else:
         wl_bins = sc.linspace("wavelength", wl_min, wl_max, num=config.bins + 1, unit="angstrom")
 
-    # Convert to TOF: t = λ * m_n * L / h
-    tof_s = wl_bins.to(unit="m") * sc_const.m_n * flight_path / sc_const.h
-
-    tof_ns = tof_s.to(unit="ns")
+    tof_ns = sc.to_unit(convert_wavelength_to_tof(wl_bins, flight_path, offset), "ns")
 
     # NO reversal: low wavelength = low TOF (both ascending)
     return tof_ns.rename_dims({"wavelength": "tof"})
@@ -305,7 +326,9 @@ def _create_tof_bins_direct(config: BinningConfig) -> sc.Variable:
     return tof_bins
 
 
-def get_energy_histogram(hist_tof: sc.DataArray, flight_path: sc.Variable) -> sc.DataArray:
+def get_energy_histogram(
+    hist_tof: sc.DataArray, flight_path: sc.Variable, offset: sc.Variable = sc.scalar(0, unit="us")
+) -> sc.DataArray:
     """
     Convert TOF histogram to energy histogram.
 
@@ -318,6 +341,10 @@ def get_energy_histogram(hist_tof: sc.DataArray, flight_path: sc.Variable) -> sc
         Histogram with 'tof' dimension
     flight_path : sc.Variable
         Flight path in meters
+    offset : sc.Variable
+        Detector time offset (e.g. TIDelay) applied during TOF→energy labeling so it matches
+        offset-aware bin edges (issue #141). Default: 0 us. Pass the same offset used to build
+        the histogram's energy bins.
 
     Returns
     -------
@@ -328,9 +355,9 @@ def get_energy_histogram(hist_tof: sc.DataArray, flight_path: sc.Variable) -> sc
     -----
     Preserves variance if present. Both data and variance are reversed.
     """
-    # Convert TOF edges to energy
+    # Convert TOF edges to energy (offset-aware, the same inverse as the bin construction).
     tof_edges = hist_tof.coords["tof"]
-    energy_edges = tof_to_energy(tof_edges, flight_path)
+    energy_edges = sc.to_unit(convert_tof_to_energy(tof_edges, flight_path, offset), "eV")
 
     # Reverse data along TOF dimension (high TOF = low energy)
     hist_reversed = hist_tof.copy()
@@ -359,7 +386,9 @@ def get_energy_histogram(hist_tof: sc.DataArray, flight_path: sc.Variable) -> sc
     return hist_energy
 
 
-def get_wavelength_histogram(hist_tof: sc.DataArray, flight_path: sc.Variable) -> sc.DataArray:
+def get_wavelength_histogram(
+    hist_tof: sc.DataArray, flight_path: sc.Variable, offset: sc.Variable = sc.scalar(0, unit="us")
+) -> sc.DataArray:
     """
     Convert TOF histogram to wavelength histogram.
 
@@ -372,6 +401,10 @@ def get_wavelength_histogram(hist_tof: sc.DataArray, flight_path: sc.Variable) -
         Histogram with 'tof' dimension
     flight_path : sc.Variable
         Flight path in meters
+    offset : sc.Variable
+        Detector time offset (e.g. TIDelay) applied during TOF→wavelength labeling so it matches
+        offset-aware bin edges (issue #141). Default: 0 us. Pass the same offset used to build
+        the histogram's wavelength bins.
 
     Returns
     -------
@@ -382,9 +415,9 @@ def get_wavelength_histogram(hist_tof: sc.DataArray, flight_path: sc.Variable) -
     -----
     Preserves variance if present. No data reversal (unlike energy conversion).
     """
-    # Convert TOF edges to wavelength
+    # Convert TOF edges to wavelength (offset-aware, the same inverse as the bin construction).
     tof_edges = hist_tof.coords["tof"]
-    wavelength_edges = tof_to_wavelength(tof_edges, flight_path)
+    wavelength_edges = sc.to_unit(convert_tof_to_wavelength(tof_edges, flight_path, offset), "angstrom")
 
     # Copy histogram (no reversal needed)
     hist_wavelength = hist_tof.copy()

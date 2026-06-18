@@ -84,3 +84,30 @@ def convert_tof_to_energy(
     velocity = distance / (tof + sc.to_unit(offset, tof.unit))
     energy_joules = 0.5 * sc.constants.m_n * velocity**2
     return sc.to_unit(energy_joules, "meV")
+
+
+def convert_energy_to_tof(
+    energy: sc.Variable, distance: sc.Variable, offset: sc.Variable = sc.scalar(0, unit="us")
+) -> sc.Variable:
+    """Convert energy data to time-of-flight (TOF).
+
+    Energy → TOF (the exact inverse of :func:`convert_tof_to_energy`):
+    TOF = L / sqrt(2E / m_n) − offset
+
+    Parameters
+    ----------
+    energy : sc.Variable
+        Variable containing energy values with appropriate units (e.g., meV or eV).
+    distance : sc.Variable
+        Variable representing the distance from the source to the detector, with appropriate units (e.g., meters).
+    offset : sc.Variable
+        Variable representing the time offset, with appropriate units (e.g., microseconds).
+
+    Returns
+    -------
+    sc.Variable
+        Variable containing TOF values corresponding to the input energy data, in units matching the offset unit.
+    """
+
+    velocity = sc.sqrt(2.0 * sc.to_unit(energy, "J") / sc.constants.m_n)
+    return sc.to_unit(distance / velocity, offset.unit) - offset
