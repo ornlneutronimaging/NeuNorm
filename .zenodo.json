@@ -1,0 +1,39 @@
+{
+  "title": "NeuNorm: Neutron imaging normalization and time-of-flight data processing for ORNL facilities",
+  "description": "NeuNorm is a scipp-based Python library for neutron imaging normalization and time-of-flight (TOF) data processing at Oak Ridge National Laboratory imaging facilities (MARS at HFIR and VENUS at SNS). NeuNorm 2.0 is a complete, scipp-based rewrite of the original NeuNorm normalization library, adding HDF5 output, automatic uncertainty propagation, and TOF/event-mode processing.",
+  "upload_type": "software",
+  "access_right": "open",
+  "license": "BSD-3-Clause",
+  "creators": [
+    {
+      "name": "Whitfield, Ross",
+      "affiliation": "Oak Ridge National Laboratory"
+    },
+    {
+      "name": "Bilheux, Jean",
+      "affiliation": "Oak Ridge National Laboratory"
+    },
+    {
+      "name": "Zhang, Chen",
+      "affiliation": "Oak Ridge National Laboratory"
+    }
+  ],
+  "keywords": [
+    "neutron imaging",
+    "normalization",
+    "time-of-flight",
+    "scipp",
+    "MARS",
+    "VENUS",
+    "HFIR",
+    "SNS",
+    "neutron radiography"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "10.21105/joss.00815",
+      "relation": "isDocumentedBy",
+      "scheme": "doi"
+    }
+  ]
+}
