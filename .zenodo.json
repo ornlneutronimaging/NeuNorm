@@ -7,15 +7,18 @@
   "creators": [
     {
       "name": "Whitfield, Ross",
-      "affiliation": "Oak Ridge National Laboratory"
+      "affiliation": "Oak Ridge National Laboratory",
+      "orcid": "0000-0002-9852-1044"
     },
     {
       "name": "Bilheux, Jean",
-      "affiliation": "Oak Ridge National Laboratory"
+      "affiliation": "Oak Ridge National Laboratory",
+      "orcid": "0000-0003-2172-6487"
     },
     {
       "name": "Zhang, Chen",
-      "affiliation": "Oak Ridge National Laboratory"
+      "affiliation": "Oak Ridge National Laboratory",
+      "orcid": "0000-0001-8374-4467"
     }
   ],
   "keywords": [
