@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CCD pipelines now compute in float32 end-to-end instead of float64.** The
+  TIFF/FITS loaders load image data as `float32`, so `run_mars_ccd_pipeline` and
+  `run_venus_ccd_pipeline` propagate, normalize, and return `float32` transmission
+  (values and variances), roughly halving the in-memory footprint of large image
+  stacks. float32 is sufficient for neutron imaging (16-bit detectors) and matches
+  the already-float32 event/TOF path. On-disk HDF5/TIFF output was already written
+  as float32, so **file dtypes are unchanged**; written values may differ from
+  before by up to ~1e-7 (now computed in float32 rather than rounded from float64).
+  ([#147](https://github.com/ornlneutronimaging/NeuNorm/issues/147))
 - **Dark current is now optional for the CCD pipelines.** `run_mars_ccd_pipeline`
   and `run_venus_ccd_pipeline` accept `dark_paths=None` (the new default) or an
   empty list to skip dark-current correction; the dark-frame variance then does

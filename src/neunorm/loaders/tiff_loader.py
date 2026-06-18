@@ -46,7 +46,9 @@ def load_tiff_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
     try:
         for path in paths:
             with Image.open(path) as img:
-                data_list.append(np.asanyarray(img, dtype=np.float64))
+                # float32 is sufficient for neutron imaging (16-bit detectors) and
+                # halves the in-memory footprint of large stacks (issue #147).
+                data_list.append(np.asanyarray(img, dtype=np.float32))
                 metadata_list.append(img.tag_v2)
     except Exception as e:
         logger.error("Error loading TIFF stack: {}", e)

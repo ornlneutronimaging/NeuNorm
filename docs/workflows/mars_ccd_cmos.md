@@ -250,6 +250,11 @@ flowchart TD
 | Dead Pixel Mask | (y, x) | bool | True = dead pixel |
 | Metadata | dict | - | Processing provenance |
 
+The pipeline computes in **float32 end-to-end** — TIFF/FITS images are loaded as
+float32 and all processing (combine, dark correction, normalization, uncertainty
+propagation) stays float32. float32 is sufficient for neutron imaging (16-bit
+detectors) and halves the in-memory footprint of large stacks.
+
 **Metadata contents**:
 - Input file paths
 - Processing timestamp

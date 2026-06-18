@@ -151,17 +151,23 @@ def run_venus_ccd_pipeline(  # noqa: C901
         sample_dark_corrected = sample
         ob_dark_corrected = ob
 
-    # Normalization
+    # Normalization. Cast the proton-charge coords to float32 so the division does
+    # not silently re-promote the float32 image data back to float64 (issue #147);
+    # the coord is float64 because metadata is parsed via float().
     transmission = normalize_transmission(
         sample=sample_dark_corrected,
         ob=ob_dark_corrected,
-        proton_charge_sample=sample.coords["IntegratedPCharge"],
-        proton_charge_ob=ob.coords["IntegratedPCharge"],
+        proton_charge_sample=sample.coords["IntegratedPCharge"].astype("float32"),
+        proton_charge_ob=ob.coords["IntegratedPCharge"].astype("float32"),
     )
 
     # Air region correction (optional)
     if air_roi is not None:
         transmission = apply_air_region_correction(transmission, air_roi)
+
+    # Guarantee a float32 normalized data product (issue #147), regardless of any
+    # intermediate dtype promotion. .astype converts values and variances.
+    transmission = transmission.astype("float32")
 
     # Write output
     metadata = {

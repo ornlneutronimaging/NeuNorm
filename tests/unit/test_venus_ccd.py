@@ -123,7 +123,8 @@ class TestVenusCCDPipeline:
                 # T = (S - AVERAGE(D)) / (AVERAGE(OB) - AVERAGE(D))
                 # but will be two times because of the difference proton charge between sample and OB
                 for i in range(5):
-                    np.testing.assert_allclose(hf["transmission"][i], (81 + i - 5) / (100 - 5) * 2)
+                    # rtol consistent with float32 compute precision (issue #147)
+                    np.testing.assert_allclose(hf["transmission"][i], (81 + i - 5) / (100 - 5) * 2, rtol=1e-5)
                 assert hf["transmission"].attrs["units"] == "dimensionless"
                 assert hf["transmission"].dtype == np.float32
                 # Check uncertainty data exists and is reasonable
@@ -192,7 +193,8 @@ class TestVenusCCDPipeline:
         # T = (S - AVERAGE(D)) / (AVERAGE(OB) - AVERAGE(D))
         # but will be two times because of the difference proton charge between sample and OB
         for i in range(5):
-            np.testing.assert_allclose(image.values[i], (81 + i - 5) / (100 - 5) * 2)
+            # rtol consistent with float32 compute precision (issue #147)
+            np.testing.assert_allclose(image.values[i], (81 + i - 5) / (100 - 5) * 2, rtol=1e-5)
         # Check uncertainty data exists and is reasonable
         np.testing.assert_allclose(image.variances, 0.047, rtol=0.1)
         assert "scitiff-mask" in image.masks
@@ -241,7 +243,7 @@ class TestVenusCCDPipeline:
             expected_value = np.full((20, 20), (81 + i - 5) / (100 - 5) * 2)
             expected_value[22 - 5, 8 - 5] = 0  # dead pixel should be zero after dark subtraction and normalization
             # gamma spike should be replaced with the same values from that image
-            np.testing.assert_allclose(transmission.values[i], expected_value)
+            np.testing.assert_allclose(transmission.values[i], expected_value, rtol=1e-5)
 
         # check that the variances are higher for the gamma spike pixel and near zero for the dead pixel
         approximate_variances = np.full((5, 20, 20), 0.047)
@@ -283,7 +285,7 @@ class TestVenusCCDPipeline:
         # by the number of runs, so it should not change the final transmission values, just reduce the variance.
         for i in range(5):
             expected_value = np.full((20, 20), ((81 + i) - 5) / (100 - 5) * 2)
-            np.testing.assert_allclose(transmission.values[i], expected_value)
+            np.testing.assert_allclose(transmission.values[i], expected_value, rtol=1e-5)
 
         # check that the variances exist and are reasonable
         np.testing.assert_allclose(transmission.variances, 0.018, atol=0.001)
@@ -322,13 +324,13 @@ class TestVenusCCDPipeline:
             assert output_path.exists()
 
         assert transmission.shape == (1, 32, 32)
-        # air region should equal 1.0
-        np.testing.assert_allclose(transmission.values[:, 6:11, 6:11], 1)
+        # air region should equal 1.0 (rtol consistent with float32 compute precision, issue #147)
+        np.testing.assert_allclose(transmission.values[:, 6:11, 6:11], 1, rtol=1e-5)
         # check all values
         expected_value = np.full((1, 32, 32), (80 - 5) / (100 - 5) * 2)
         expected_value[:, 6:11, 6:11] = (100 - 5) / (100 - 5) * 2  # air region which equals 2
         expected_value /= 2  # air region should be normalized to 1.0
-        np.testing.assert_allclose(transmission.values, expected_value)
+        np.testing.assert_allclose(transmission.values, expected_value, rtol=1e-5)
 
         # check that the variances exist and are reasonable
         expected_variances = np.full((1, 32, 32), 0.0168)
@@ -367,7 +369,7 @@ class TestVenusCCDPipeline:
                 assert hf["transmission"].shape == (5, 32, 32)
                 # No dark subtraction: T = (S / pc_s) / (OB / pc_ob) = (81 + i) / 100 * 2
                 for i in range(5):
-                    np.testing.assert_allclose(hf["transmission"][i], (81 + i) / 100 * 2)
+                    np.testing.assert_allclose(hf["transmission"][i], (81 + i) / 100 * 2, rtol=1e-5)
                 # Uncertainty is present, positive and finite
                 assert "uncertainty" in hf
                 assert np.all(np.isfinite(hf["uncertainty"][:]))
@@ -388,7 +390,7 @@ class TestVenusCCDPipeline:
             )
         assert transmission.shape == (5, 32, 32)
         for i in range(5):
-            np.testing.assert_allclose(transmission.values[i], (81 + i) / 100 * 2)
+            np.testing.assert_allclose(transmission.values[i], (81 + i) / 100 * 2, rtol=1e-5)
 
     def test_venus_ccd_pipeline_requires_output_path(self):
         """output_path is required even though it carries a default for signature compatibility."""
@@ -433,12 +435,17 @@ class TestVenusCCDPipeline:
             normalize_by_runs=True,
         )
         ob = prepare_reference(ob, dim="N_image")
+        # Mirror the pipeline's float32 handling (issue #147): cast the proton-charge
+        # coords to float32 and the result to float32, so this structural check stays
+        # bit-tight against the float32 pipeline output (the independent first-principles
+        # guard is the pinned-constant oracle below, at rtol=1e-3).
         expected = normalize_transmission(
             sample=sample,
             ob=ob,
-            proton_charge_sample=sample.coords["IntegratedPCharge"],
-            proton_charge_ob=ob.coords["IntegratedPCharge"],
-        )
+            proton_charge_sample=sample.coords["IntegratedPCharge"].astype("float32"),
+            proton_charge_ob=ob.coords["IntegratedPCharge"].astype("float32"),
+        ).astype("float32")
+        assert no_dark.dtype == sc.DType.float32
         np.testing.assert_allclose(no_dark.values, expected.values)
         np.testing.assert_allclose(no_dark.variances, expected.variances)
 
@@ -460,4 +467,7 @@ class TestVenusCCDPipeline:
                 output_path=Path(f.name),
                 gamma_filter=False,
             )
+        # The with-dark, proton-charge path is the one that would silently re-promote
+        # to float64 if the pc coord were not cast to float32 (issue #147).
+        assert with_dark.dtype == sc.DType.float32
         assert np.all(no_dark.variances < with_dark.variances)

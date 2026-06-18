@@ -119,7 +119,7 @@ class TestMarsCCDPipeline:
                 # check that transmission values are correct based on the formula
                 # T = (S - AVERAGE(D)) / (AVERAGE(OB) - AVERAGE(D))
                 for i in range(5):
-                    np.testing.assert_allclose(hf["transmission"][i], (81 + i - 5) / (100 - 5))
+                    np.testing.assert_allclose(hf["transmission"][i], (81 + i - 5) / (100 - 5), rtol=1e-5)
                 assert hf["transmission"].attrs["units"] == "dimensionless"
                 assert hf["transmission"].dtype == np.float32
                 # Check uncertainty data exists and is reasonable
@@ -190,7 +190,7 @@ class TestMarsCCDPipeline:
         # check that transmission values are correct based on the formula
         # T = (S - AVERAGE(D)) / (AVERAGE(OB) - AVERAGE(D))
         for i in range(5):
-            np.testing.assert_allclose(image.values[i], (81 + i - 5) / (100 - 5))
+            np.testing.assert_allclose(image.values[i], (81 + i - 5) / (100 - 5), rtol=1e-5)
         # Check uncertainty data exists and is reasonable
         np.testing.assert_allclose(image.variances, 0.011, rtol=0.15)
         assert "scitiff-mask" in image.masks
@@ -239,7 +239,7 @@ class TestMarsCCDPipeline:
             expected_value = np.full((20, 20), (81 + i - 5) / (100 - 5))
             expected_value[22 - 5, 8 - 5] = 0  # dead pixel should be zero after dark subtraction and normalization
             # gamma spike should be replaced with the same values from that image
-            np.testing.assert_allclose(transmission.values[i], expected_value)
+            np.testing.assert_allclose(transmission.values[i], expected_value, rtol=1e-5)
 
         # check that the variances are higher for the gamma spike pixel and near zero for the dead pixel
         approximate_variances = np.full((5, 20, 20), 0.011)
@@ -281,7 +281,7 @@ class TestMarsCCDPipeline:
         # by the number of runs, so it should not change the final transmission values, just reduce the variance.
         for i in range(5):
             expected_value = np.full((20, 20), ((81 + i) - 5) / (100 - 5))
-            np.testing.assert_allclose(transmission.values[i], expected_value)
+            np.testing.assert_allclose(transmission.values[i], expected_value, rtol=1e-5)
 
         # check that the variances exist and are reasonable
         np.testing.assert_allclose(transmission.variances, 0.004, atol=0.002)
@@ -339,7 +339,7 @@ class TestMarsCCDPipeline:
                 assert hf["transmission"].shape == (5, 32, 32)
                 # No dark subtraction: T = S / OB = (81 + i) / 100
                 for i in range(5):
-                    np.testing.assert_allclose(hf["transmission"][i], (81 + i) / 100)
+                    np.testing.assert_allclose(hf["transmission"][i], (81 + i) / 100, rtol=1e-5)
                 # Uncertainty is present, positive and finite
                 assert "uncertainty" in hf
                 assert np.all(np.isfinite(hf["uncertainty"][:]))
@@ -360,7 +360,7 @@ class TestMarsCCDPipeline:
             )
         assert transmission.shape == (5, 32, 32)
         for i in range(5):
-            np.testing.assert_allclose(transmission.values[i], (81 + i) / 100)
+            np.testing.assert_allclose(transmission.values[i], (81 + i) / 100, rtol=1e-5)
 
     def test_mars_ccd_pipeline_requires_output_path(self):
         """output_path is required even though it carries a default for signature compatibility."""
@@ -414,6 +414,10 @@ class TestMarsCCDPipeline:
         )
         ob = prepare_reference(ob, dim="N_image")
         expected = normalize_transmission(sample, ob)
+        # The pipeline produces float32 normalized data end-to-end (issue #147). MARS
+        # has no proton-charge division, so loaders being float32 keeps the whole path
+        # float32 and this structural check stays bit-tight against the pipeline output.
+        assert no_dark.dtype == sc.DType.float32
         np.testing.assert_allclose(no_dark.values, expected.values)
         np.testing.assert_allclose(no_dark.variances, expected.variances)
 
@@ -435,6 +439,7 @@ class TestMarsCCDPipeline:
                 output_path=Path(f.name),
                 gamma_filter=False,
             )
+        assert with_dark.dtype == sc.DType.float32
         assert np.all(no_dark.variances < with_dark.variances)
 
 
@@ -507,7 +512,7 @@ class TestMarsCCDPipelineFITS:
                 # check that transmission values are correct based on the formula
                 # T = (S - AVERAGE(D)) / (AVERAGE(OB) - AVERAGE(D))
                 for i in range(5):
-                    np.testing.assert_allclose(hf["transmission"][i], (81 + i - 5) / (100 - 5))
+                    np.testing.assert_allclose(hf["transmission"][i], (81 + i - 5) / (100 - 5), rtol=1e-5)
                 assert hf["transmission"].attrs["units"] == "dimensionless"
                 assert hf["transmission"].dtype == np.float32
                 # Check uncertainty data exists and is reasonable
