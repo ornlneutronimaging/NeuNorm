@@ -288,8 +288,10 @@ class TestVenusCCDPipeline:
             expected_value = np.full((20, 20), ((81 + i) - 5) / (100 - 5) * 2)
             np.testing.assert_allclose(transmission.values[i], expected_value, rtol=1e-5)
 
-        # check that the variances exist and are reasonable
-        np.testing.assert_allclose(transmission.variances, 0.018, atol=0.001)
+        # Variances are reasonable and reduced by combining runs. Pinned to the corrected
+        # values (~0.0168–0.0180 across the 5 images) after fixing the shared-dark variance
+        # double-count (issue #142); previously ~0.018 with the over-counted Var(dark).
+        np.testing.assert_allclose(transmission.variances, 0.0174, atol=0.0006)
 
         # The mask should only have the dead pixel masked
         expected_dead_pixel_mask = np.zeros((20, 20), dtype=bool)

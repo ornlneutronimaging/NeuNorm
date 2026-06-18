@@ -16,8 +16,7 @@ from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
 from neunorm.loaders.stack_loader import load_stack
 from neunorm.processing.air_region_corrector import apply_air_region_correction
-from neunorm.processing.dark_corrector import subtract_dark
-from neunorm.processing.normalizer import normalize_transmission
+from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.run_combiner import combine_runs
@@ -142,24 +141,29 @@ def run_venus_ccd_pipeline(  # noqa: C901
     if gamma_filter:
         sample = apply_gamma_filter(sample)
 
-    # Dark correction (optional)
+    # Dark correction (optional) + normalization. The proton-charge coords are cast to float32
+    # so the division does not silently re-promote the float32 image data to float64 (issue
+    # #147; the coord is float64 because metadata is parsed via float()). With a shared dark
+    # frame, normalize_with_dark subtracts the dark and normalizes in one step so the dark
+    # variance is not double-counted in the transmission uncertainty (issue #142).
+    proton_charge_sample = sample.coords["IntegratedPCharge"].astype("float32")
+    proton_charge_ob = ob.coords["IntegratedPCharge"].astype("float32")
     if dark is not None:
-        sample_dark_corrected = subtract_dark(sample, dark)
-        ob_dark_corrected = subtract_dark(ob, dark)
+        transmission = normalize_with_dark(
+            sample,
+            ob,
+            dark,
+            proton_charge_sample=proton_charge_sample,
+            proton_charge_ob=proton_charge_ob,
+        )
     else:
         logger.info("No dark current provided; skipping dark correction")
-        sample_dark_corrected = sample
-        ob_dark_corrected = ob
-
-    # Normalization. Cast the proton-charge coords to float32 so the division does
-    # not silently re-promote the float32 image data back to float64 (issue #147);
-    # the coord is float64 because metadata is parsed via float().
-    transmission = normalize_transmission(
-        sample=sample_dark_corrected,
-        ob=ob_dark_corrected,
-        proton_charge_sample=sample.coords["IntegratedPCharge"].astype("float32"),
-        proton_charge_ob=ob.coords["IntegratedPCharge"].astype("float32"),
-    )
+        transmission = normalize_transmission(
+            sample=sample,
+            ob=ob,
+            proton_charge_sample=proton_charge_sample,
+            proton_charge_ob=proton_charge_ob,
+        )
 
     # Air region correction (optional)
     if air_roi is not None:
