@@ -26,6 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flag, and `dark_paths` is recorded only when dark frames were supplied.
   ([#146](https://github.com/ornlneutronimaging/NeuNorm/issues/146))
 
+### Fixed
+
+- **HDF5 writer no longer loses ragged provenance (and no longer crashes on it).**
+  Nested per-run path metadata (`sample_paths`/`ob_paths`/`dark_paths`) is now stored
+  as a round-trippable JSON string tagged with an `encoding="json"` dataset attribute
+  — read it back with `json.loads(dataset.asstr()[()])`. Previously, runs with unequal
+  file counts produced a ragged nested list that aborted `write_hdf5` *after* the bulk
+  arrays were written (corrupt partial file); the interim guard avoided the crash by
+  silently **dropping** that provenance. Flat lists, scalars, and strings are
+  unchanged. ([#140](https://github.com/ornlneutronimaging/NeuNorm/issues/140))
+
 ## [2.0.0] - 2026-06-09
 
 NeuNorm 2.0 is a complete, [scipp](https://scipp.github.io/)-based rewrite of the
