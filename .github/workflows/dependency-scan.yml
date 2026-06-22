@@ -30,7 +30,7 @@ jobs:
           fetch-tags: true
 
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@v0.9.6
+        uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11 # v0.9.6
         with:
           pixi-version: v0.70.1
           manifest-path: pyproject.toml
@@ -44,13 +44,13 @@ jobs:
 
       - name: Install built conda package
         id: install
-        uses: neutrons/conda-actions/pkg-install@v2
+        uses: neutrons/conda-actions/pkg-install@bba9ca89d48d9ae846db9650cc63fde736340b3d # v2
         with:
           package-name: neunorm
           local-channel: /tmp/local-channel
 
       - name: Scan installed environment with Grype
-        uses: neutrons/conda-actions/grype@v2
+        uses: neutrons/conda-actions/grype@bba9ca89d48d9ae846db9650cc63fde736340b3d # v2
         with:
           path: ${{ steps.install.outputs.conda_install_dir }}
           # gate on fixable findings; only-fixed defaults true in the v2

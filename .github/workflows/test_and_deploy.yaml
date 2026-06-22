@@ -31,7 +31,7 @@ jobs:
           fetch-tags: true
 
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@v0.9.6
+        uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11 # v0.9.6
         with:
           pixi-version: v0.70.1
           manifest-path: pyproject.toml
@@ -62,7 +62,7 @@ jobs:
           fetch-tags: true
 
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@v0.9.6
+        uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11 # v0.9.6
         with:
           pixi-version: v0.70.1
           manifest-path: pyproject.toml
@@ -75,7 +75,7 @@ jobs:
           cp *.conda /tmp/local-channel/linux-64
 
       - name: Verify conda package
-        uses: neutrons/conda-verify@main
+        uses: neutrons/conda-verify@e1b26a86406e34b371fd633f9993c390f662910d # main
         with:
           package-name: ${{ env.PKG_NAME }}
           module-name: ${{ env.MODULE_NAME }}
@@ -101,7 +101,7 @@ jobs:
           fetch-tags: true
 
       - name: Setup Pixi
-        uses: prefix-dev/setup-pixi@v0.9.6
+        uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11 # v0.9.6
         with:
           pixi-version: v0.70.1
           manifest-path: pyproject.toml
@@ -141,7 +141,7 @@ jobs:
           fetch-tags: true
 
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@v0.9.6
+        uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11 # v0.9.6
         with:
           pixi-version: v0.70.1
           manifest-path: pyproject.toml
@@ -155,7 +155,7 @@ jobs:
       # publish your distributions here (need to setup on PyPI first)
       - name: Publish package distributions to PyPI
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
         with:
           # Tolerate re-runs of a release tag: files already on PyPI are skipped
           # instead of failing the whole job (PyPI uploads are immutable).

@@ -9,6 +9,9 @@ on:
   schedule:
     - cron: "33 13 * * 5" # Fridays 13:33 UTC
 
+permissions:
+  contents: read
+
 jobs:
   analyze:
     name: Analyze (python)
