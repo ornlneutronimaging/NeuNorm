@@ -166,7 +166,7 @@ flowchart TD
 - **No dark current correction**: Counting detector (not integrating)
 - **Efficiency pre-corrected**: Input TIFFs already have detector efficiency correction applied (external auto-reduction)
 - **TOF bins fixed at acquisition**: Rebinning limited to combining adjacent bins
-- **Shutter counts**: Tracks pulses captured per frame (compensates for frame readout gaps)
+- **Shutter counts**: A metadata field (pulses per frame); **not currently loaded or used** by the TPX1 pipeline
 
 ---
 
@@ -257,11 +257,7 @@ flowchart TD
 │  p_charge correction:                                           │
 │    f_beam = p_charge_OB / p_charge_sample                       │
 │                                                                 │
-│  Shutter counts correlation check:                              │
-│    • p_charge and shutter_counts should correlate               │
-│    • Significant deviation indicates acquisition issues         │
-│    • Shutter counts track pulses captured per frame             │
-│      (compensates for frame readout gaps)                       │
+│  Note: shutter_counts is not loaded/used by the TPX1 pipeline.  │
 │                                                                 │
 │  Note: Correction factor applies uniformly across all TOF bins  │
 └─────────────────────────────────────────────────────────────────┘
@@ -269,10 +265,10 @@ flowchart TD
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 8: Normalization                                          │
 │  ─────────────────────                                          │
-│  FOR each rotation θ:                                           │
-│    FOR each TOF bin t:                                          │
+│  FOR each TOF bin t:                                            │
 │                                                                 │
-│      T[θ, t, y, x] = (Sample[θ, t, y, x] / OB[t, y, x]) × f_beam│
+│    T[t, y, x] = (Sample[t, y, x] / OB[y, x]) × f_beam           │
+│                                                                 │
 │                                                                 │
 │  Handle division:                                               │
 │    • Dead pixels carried as a scipp mask, not NaN-filled        │
@@ -438,8 +434,6 @@ InputData:
   - tof_edges: NDArray[float64]      # (N_bins + 1,)
   - p_charge_sample: float32
   - p_charge_OB: float32
-  - shutter_counts_sample: int
-  - shutter_counts_OB: int
   - flight_path_length: float32      # meters
   - roi: Optional[Tuple[int, int, int, int]]
   - metadata: Dict
@@ -449,8 +443,8 @@ RebinConfig:
   - spatial_factor: Optional[int]    # combine NxN pixels
 
 ProcessedData:
-  - transmission: NDArray[float32]   # (N, TOF, y, x)
-  - uncertainty: NDArray[float32]    # (N, TOF, y, x)
+  - transmission: NDArray[float32]   # (TOF, y, x)
+  - uncertainty: NDArray[float32]    # (TOF, y, x)
   - tof_edges: NDArray[float64]      # (N_bins + 1,) - updated if rebinned
   - dead_pixel_mask: NDArray[bool]   # (y, x)
   - metadata: Dict
@@ -461,10 +455,9 @@ ProcessedData:
 ## 8. Validation Criteria
 
 - [ ] Transmission values in expected range per TOF bin
-- [ ] No NaN values except where dead_mask=True
+- [ ] inf/nan only at zero-denominator (OB) pixels; masks are preserved, not value-filled
 - [ ] Uncertainty > 0 for all valid pixels and TOF bins
 - [ ] Dead pixel mask correctly identifies zero-count pixels
 - [ ] TOF bin edges monotonically increasing
 - [ ] Rebinning preserves total counts
 - [ ] Beam correction factor close to 1.0
-- [ ] p_charge and shutter_counts correlate (if both available)

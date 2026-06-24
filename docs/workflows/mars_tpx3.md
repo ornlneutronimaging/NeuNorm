@@ -146,10 +146,10 @@ flowchart TD
 │                                                                 │
 │  FOR each acquisition:                                          │
 │    • Bin events by (x, y) position                              │
-│    • Sample_hist[i] = histogram(events_sample, bins=(y, x))     │
+│    • Sample_hist[i] = histogram(events_sample, bins=(x, y))     │
 │    • Result: 2D count image per acquisition                     │
 │                                                                 │
-│  OB_hist = histogram(events_OB, bins=(y, x))                    │
+│  OB_hist = histogram(events_OB, bins=(x, y))                    │
 │                                                                 │
 │  Output: Sample and OB each stacked 3D (N_image, x, y);         │
 │  OB reduced to (x, y) later by reference preparation            │
@@ -351,7 +351,7 @@ ProcessedData:
 
 - [ ] Event-to-histogram conversion preserves total counts
 - [ ] Transmission values in expected range
-- [ ] No NaN values except where bad_pixels=True
+- [ ] inf/nan only at zero-denominator (OB) pixels; masks are preserved, not value-filled
 - [ ] Uncertainty > 0 for all valid pixels
 - [ ] Hot pixel mask identifies anomalous count pixels
 - [ ] Dead pixel mask identifies zero-count pixels

@@ -160,9 +160,9 @@ flowchart TD
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 5: Dead Pixel Detection                                   │
 │  ────────────────────────────                                   │
-│  • Identify Sample pixels with zero total (spectral-summed)     │
-│    counts                                                       │
-│  • dead_mask = (Sample.sum(spectral) == 0)                      │
+│  • Identify Sample pixels with zero total counts, summed over   │
+│    the image-stack dimension (N_image)                          │
+│  • dead_mask = (Sample.sum(N_image) == 0)                       │
 │  • Output: 2D boolean mask                                      │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
@@ -175,7 +175,7 @@ flowchart TD
 │    • Detect gamma spikes (outliers > threshold)                 │
 │    • Replace with local median (3x3 neighborhood)               │
 │                                                                 │
-│  Apply same filtering to OB_avg                                 │
+│  (Gamma filtering is applied to the Sample only, not the OB.)   │
 │                                                                 │
 │  Methods:                                                       │
 │    a) Automatic: threshold = data_max * factor                  │
@@ -320,7 +320,7 @@ ProcessedData:
 ## 6. Validation Criteria
 
 - [ ] Transmission values in expected range (typically 0-1, may exceed 1 due to scattering)
-- [ ] No NaN values except where dead_mask=True
+- [ ] inf/nan only at zero-denominator (OB) pixels; masks are preserved, not value-filled
 - [ ] Uncertainty > 0 for all valid pixels
 - [ ] Dead pixel mask correctly identifies zero-count pixels
 - [ ] Gamma filtering removes spikes without affecting valid data

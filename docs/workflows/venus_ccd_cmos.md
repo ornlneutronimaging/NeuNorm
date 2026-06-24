@@ -192,9 +192,9 @@ flowchart TD
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 5: Dead Pixel Detection                                   │
 │  ────────────────────────────                                   │
-│  • Detect on the SAMPLE: pixels whose spectral-summed counts    │
-│    are exactly zero                                             │
-│  • dead_mask = (Sample.sum(spectral) == 0)                      │
+│  • Detect on the SAMPLE: pixels whose total counts, summed over │
+│    the image-stack dimension (N_image), are exactly zero        │
+│  • dead_mask = (Sample.sum(N_image) == 0)                       │
 │  • Output: 2D boolean mask                                      │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
