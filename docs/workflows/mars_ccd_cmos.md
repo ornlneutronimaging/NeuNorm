@@ -139,8 +139,7 @@ flowchart TD
 │    • Aggregate sample images across runs                        │
 │    • Aggregate OB images across runs                            │
 │    • Aggregate dark images across runs                          │
-│    • Sum metadata (total acquisition time)                      │
-│    • Track partial dead pixels per run                          │
+│    • Average ExposureTime across runs (normalize_by_runs=True)  │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -161,8 +160,9 @@ flowchart TD
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 5: Dead Pixel Detection                                   │
 │  ────────────────────────────                                   │
-│  • Identify pixels with persistent zeros in OB_avg              │
-│  • dead_mask = (OB_avg == 0) | (OB_avg - Dark_avg <= 0)         │
+│  • Identify Sample pixels with zero total (spectral-summed)     │
+│    counts                                                       │
+│  • dead_mask = (Sample.sum(spectral) == 0)                      │
 │  • Output: 2D boolean mask                                      │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
@@ -204,8 +204,8 @@ flowchart TD
 │    T[i] = Sample_corr[i] / OB_corr                              │
 │                                                                 │
 │  Handle division:                                               │
-│    • Where dead_mask=True: T = NaN                              │
-│    • Where OB_corr <= 0: T = NaN                                │
+│    • dead_mask carried as a scipp mask (not NaN-filled)         │
+│    • Where OB_corr == 0: T is inf/nan (division artifact only)  │
 │                                                                 │
 │  Formula:                                                       │
 │    T = (I_sample - I_dark) / (I_OB - I_dark)                    │
@@ -219,12 +219,16 @@ flowchart TD
 │    σ_OB = √(OB_avg)                                             │
 │    σ_dark = √(Dark_avg)                                         │
 │                                                                 │
-│  Error propagation through subtraction and division:            │
+│  Error propagation through subtraction and division. The same  │
+│  dark is shared by numerator and denominator, so its variance   │
+│  is counted ONCE (issue #142): independent propagation is       │
+│  corrected by subtracting the over-counted term                 │
+│  2·S_corr·σ_D² / OB_corr³ from Var(T).                          │
 │                                                                 │
-│    σ_T = T × √[ (σ_S/S_corr)² + (σ_OB/OB_corr)² +               │
-│                 (σ_D)²×(1/S_corr² + 1/OB_corr²) ]               │
+│    Var(T) = σ_S²/OB_corr² + S_corr²·σ_OB²/OB_corr⁴              │
+│             − 2·S_corr·σ_D² / OB_corr³                          │
 │                                                                 │
-│  Where:                                                         │
+│  Where (σ_S², σ_OB² already include σ_D² from the subtraction):│
 │    S_corr = Sample - Dark                                       │
 │    OB_corr = OB - Dark                                          │
 └─────────────────────────────────────────────────────────────────┘
@@ -256,11 +260,11 @@ propagation) stays float32. float32 is sufficient for neutron imaging (16-bit
 detectors) and halves the in-memory footprint of large stacks.
 
 **Metadata contents**:
-- Input file paths
+- Input file paths (sample, OB, and dark if dark correction applied)
+- Whether gamma filtering was applied (`gamma_filter_applied`)
+- Whether dark correction was applied (`dark_correction_applied`)
 - Processing timestamp
-- Gamma filter parameters used
 - ROI applied (if any)
-- Number of runs combined (if any)
 - Software version
 
 ---
@@ -287,12 +291,12 @@ detectors) and halves the in-memory footprint of large stacks.
 | `loaders.fits_loader` | Load FITS stacks | P0 |
 | `processing.run_combiner` | Aggregate multiple runs | P1 |
 | `processing.roi_clipper` | Apply ROI to arrays | P1 |
-| `processing.dead_pixel_detector` | Identify dead pixels | P0 |
+| `tof.pixel_detector` | Identify dead pixels | P0 |
 | `filters.gamma_filter` | Remove gamma contamination | P0 |
 | `processing.dark_corrector` | Subtract dark current | P0 |
 | `processing.normalizer` | Compute transmission | P0 |
 | `processing.uncertainty_calculator` | Error propagation | P0 |
-| `exporters.output_writer` | Write results | P0 |
+| `exporters.hdf5_writer` / `exporters.tiff_writer` | Write results | P0 |
 
 ### Data Models
 

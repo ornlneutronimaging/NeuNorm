@@ -20,7 +20,7 @@ flowchart TD
 
     subgraph RunCombine["2. Run Combining"]
         RC1{Multiple Runs?}
-        RC2[Aggregate Data + Sum p_charge]
+        RC2[Aggregate Data + Average p_charge]
         RC3[Single Run]
     end
 
@@ -168,9 +168,8 @@ flowchart TD
 │    • Aggregate sample images across runs                        │
 │    • Aggregate OB images across runs                            │
 │    • Aggregate dark images across runs                          │
-│    • Sum p_charge values                                        │
-│    • Sum acquisition time                                       │
-│    • Track partial dead pixels per run                          │
+│    • Average p_charge across runs (normalize_by_runs=True)      │
+│    • Dead pixels detected once on the combined sample           │
 │                                                                 │
 │  Note: More important at VENUS due to lower integrated flux     │
 └─────────────────────────────────────────────────────────────────┘
@@ -187,14 +186,15 @@ flowchart TD
 │  ────────────────────────────────                               │
 │  • Average dark images: Dark_avg = mean(Dark, axis=0) → 2D      │
 │  • Average OB images: OB_avg = mean(OB, axis=0) → 2D            │
-│  • Track p_charge_OB = sum(p_charge for OB images)              │
+│  • Track p_charge_OB = mean(p_charge across OB runs)            │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 5: Dead Pixel Detection                                   │
 │  ────────────────────────────                                   │
-│  • Identify pixels with persistent zeros in OB_avg              │
-│  • dead_mask = (OB_avg == 0) | (OB_avg - Dark_avg <= 0)         │
+│  • Detect on the SAMPLE: pixels whose spectral-summed counts    │
+│    are exactly zero                                             │
+│  • dead_mask = (Sample.sum(spectral) == 0)                      │
 │  • Output: 2D boolean mask                                      │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
@@ -240,8 +240,8 @@ flowchart TD
 │    T[i] = (Sample_corr[i] / OB_corr) × f_beam[i]                │
 │                                                                 │
 │  Handle division:                                               │
-│    • Where dead_mask=True: T = NaN                              │
-│    • Where OB_corr <= 0: T = NaN                                │
+│    • dead_mask is carried as a scipp mask (values not rewritten)│
+│    • Where OB_corr == 0: T is inf/nan (division artifact)       │
 │                                                                 │
 │  Formula:                                                       │
 │    T = [(I_sample - I_dark) / (I_OB - I_dark)] × f_p_charge     │
@@ -275,9 +275,14 @@ flowchart TD
 │                                                                 │
 │  Combined error propagation:                                    │
 │                                                                 │
-│    σ_T = T × √[ (σ_S/S_corr)² + (σ_OB/OB_corr)² +               │
-│                 (σ_D)²×(1/S_corr² + 1/OB_corr²) +               │
-│                 (σ_p_sample/p_sample)² + (σ_p_OB/p_OB)² ]       │
+│  normalize_with_dark counts the shared dark ONCE (issue #142):  │
+│  it propagates Var(D) through S_corr and OB_corr, then          │
+│  subtracts the over-count 2·k²·S_corr·σ_D²/OB_corr³             │
+│  (k = p_OB/p_sample). The σ_S, σ_OB and p_charge terms are:     │
+│                                                                 │
+│    Var(T) = T² × [ (σ_S/S_corr)² + (σ_OB/OB_corr)²              │
+│                  + (σ_p_sample/p_sample)² + (σ_p_OB/p_OB)² ]    │
+│             + Var(D) dark term (shared-dark corrected, see #142) │
 │                                                                 │
 │  If air correction applied: add (σ_air/<T_air>)² term           │
 └─────────────────────────────────────────────────────────────────┘
@@ -309,16 +314,13 @@ propagation) stays float32. float32 is sufficient for neutron imaging (16-bit
 detectors) and halves the in-memory footprint of large stacks.
 
 **Metadata contents**:
-- Input file paths
+- Sample and OB file paths
+- Gamma filter applied (yes/no)
+- Dark correction applied (yes/no)
 - Processing timestamp
-- Total p_charge (sample and OB)
-- p_charge correction factor applied
-- Air region correction applied (yes/no)
-- Air ROI coordinates (if used)
-- Gamma filter parameters (if used)
-- ROI applied (if any)
-- Number of runs combined (if any)
 - Software version
+- Dark file paths (if dark correction applied)
+- ROI applied (if any)
 
 ---
 
@@ -393,7 +395,7 @@ ProcessedData:
 ## 7. Validation Criteria
 
 - [ ] Transmission values in expected range (typically 0-1)
-- [ ] No NaN values except where dead_mask=True
+- [ ] inf/nan only at zero-OB pixels (dead pixels carried as a mask, not NaN-filled)
 - [ ] Uncertainty > 0 for all valid pixels
 - [ ] Dead pixel mask correctly identifies zero-count pixels
 - [ ] Beam correction factor close to 1.0 (significant deviation indicates issues)

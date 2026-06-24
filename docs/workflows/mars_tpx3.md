@@ -23,7 +23,7 @@ flowchart TD
 
     subgraph RunCombine["3. Run Combining"]
         RC1{Multiple Runs?}
-        RC2[Sum Histograms]
+        RC2[Average Histograms]
         RC3[Single Run]
     end
 
@@ -151,16 +151,17 @@ flowchart TD
 │                                                                 │
 │  OB_hist = histogram(events_OB, bins=(y, x))                    │
 │                                                                 │
-│  Output: Sample as 3D (N_images, y, x), OB as 2D (y, x)         │
+│  Output: Sample and OB each stacked 3D (N_image, x, y);         │
+│  OB reduced to (x, y) later by reference preparation            │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 3: Run Combining (Optional)                               │
 │  ────────────────────────────────                               │
 │  IF multiple runs provided:                                     │
-│    • Sum histograms across runs                                 │
-│    • Sum acquisition time metadata                              │
-│    • Track partial dead/hot pixels per run                      │
+│    • Average histograms across runs (sum ÷ run count)           │
+│    • No metadata aggregation (metadata_keys_to_sum=[])          │
+│    • Bad pixels detected once on the combined stack             │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -173,8 +174,8 @@ flowchart TD
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 5: Dead Pixel Detection                                   │
 │  ────────────────────────────                                   │
-│  • Identify pixels with zero counts in OB histogram             │
-│  • dead_mask = (OB_hist == 0)                                   │
+│  • Identify pixels with zero summed counts in the SAMPLE        │
+│  • dead_mask = (Sample_summed == 0)  (sum over N_image)         │
 │  • Output: 2D boolean mask                                      │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
@@ -185,7 +186,8 @@ flowchart TD
 │                                                                 │
 │  Detection methods:                                             │
 │    a) Statistical: pixels with anomalously high count rate      │
-│       hot_mask = (OB_hist > median + k×σ)                       │
+│       on the SAMPLE, via a MAD threshold (default sigma=5.0):    │
+│       hot_mask = (Sample_summed > median + sigma×MAD×1.4826)     │
 │    b) Temporal: inconsistent counts across acquisitions         │
 │    c) ToT-based: events with abnormal ToT values                │
 │                                                                 │
@@ -219,8 +221,8 @@ flowchart TD
 │    T[i] = Sample_hist[i] / OB_hist                              │
 │                                                                 │
 │  Handle division:                                               │
-│    • Where bad_pixels=True: T = NaN                             │
-│    • Where OB_hist == 0: T = NaN                                │
+│    • Bad pixels carried as scipp masks (not NaN-filled)         │
+│    • Where OB_hist == 0: T = inf/nan (division artifact)        │
 │                                                                 │
 │  Formula (no dark current subtraction):                         │
 │    T = I_sample / I_OB                                          │
@@ -245,10 +247,11 @@ flowchart TD
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 10: Output                                                │
 │  ────────────                                                   │
-│  • Transmission: 3D array (N_images, y, x) or (θ, y, x) for CT  │
+│  • Transmission: 3D array (N_image, x, y) for HDF5;             │
+│    TIFF renames N_image → z                                     │
 │  • Experiment Error: 3D array (same shape as Transmission)      │
-│  • Dead Pixel Mask: 2D boolean array (y, x)                     │
-│  • Hot Pixel Mask: 2D boolean array (y, x)                      │
+│  • Dead Pixel Mask: 2D boolean array (x, y)                     │
+│  • Hot Pixel Mask: 2D boolean array (x, y)                      │
 │  • Metadata: processing parameters, provenance                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -259,10 +262,10 @@ flowchart TD
 
 | Output | Dimensions | dtype | Description |
 |--------|------------|-------|-------------|
-| Transmission | (θ, y, x) | float32 | Normalized transmission values |
-| Experiment Error | (θ, y, x) | float32 | Propagated uncertainty (1σ) |
-| Dead Pixel Mask | (y, x) | bool | True = dead pixel |
-| Hot Pixel Mask | (y, x) | bool | True = hot pixel (TPX3-specific) |
+| Transmission | (N_image, x, y) | float32 | Normalized transmission values |
+| Experiment Error | (N_image, x, y) | float32 | Propagated uncertainty (1σ) |
+| Dead Pixel Mask | (x, y) | bool | True = dead pixel |
+| Hot Pixel Mask | (x, y) | bool | True = hot pixel (TPX3-specific) |
 | Metadata | dict | - | Processing provenance |
 
 **Metadata contents**:

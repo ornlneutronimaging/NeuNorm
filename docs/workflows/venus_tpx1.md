@@ -28,13 +28,13 @@ flowchart TD
     subgraph Input["1. Data Loading (TIFF)"]
         A1[TIFF Stack] --> A[Load Sample TOF,y,x]
         A2[TIFF Stack] --> B[Load OB TOF,y,x]
-        A3[Metadata] --> C[Load TOF Bin Edges]
-        A4[DAQ] --> M[Load p_charge, shutter_counts]
+        A3[Metadata] --> C[Load per-image TOF values]
+        A4[DAQ] --> M[Load proton_charge, duration]
     end
 
     subgraph RunCombine["2. Run Combining"]
         RC1{Multiple Runs?}
-        RC2[Sum Histograms + Metadata]
+        RC2[Sum then divide by run count; avg metadata]
         RC3[Single Run]
     end
 
@@ -84,9 +84,9 @@ flowchart TD
     end
 
     subgraph Output["11. Output"]
-        O1[Transmission 4D θ,TOF,y,x]
-        O2[Uncertainty 4D]
-        O3[TOF Bin Edges]
+        O1[Transmission 3D TOF,y,x]
+        O2[Uncertainty 3D]
+        O3[tof coordinate]
         O4[Dead Pixel Mask]
         O5[Metadata]
     end
@@ -176,23 +176,24 @@ flowchart TD
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 1: Load Data (TIFF Stacks)                                │
 │  ───────────────────────────────                                │
-│  • Load Sample TIFF stack → 4D array (N_rotations, TOF, y, x)   │
-│    or 3D if single radiograph (TOF, y, x)                       │
+│  • Load Sample TIFF stack → 3D array (TOF, y, x)               │
+│    (TIFF stack dim N_image renamed to tof; no rotation axis)    │
 │  • Load OB TIFF stack → 3D array (TOF, y, x)                    │
-│  • Load TOF bin edges → 1D array (N_bins + 1)                   │
-│  • Load metadata: p_charge, shutter_counts                      │
+│  • Load per-image TOF values → 1D array (N_images,)            │
+│  • Load metadata: proton_charge (p_charge), duration            │
 │  • Validate dimensions match                                    │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 2: Run Combining (Critical for VENUS)                     │
 │  ──────────────────────────────────────────                     │
-│  IF multiple runs provided:                                     │
-│    • Sum histogram data across runs (sample, OB separately)     │
-│    • Sum p_charge values                                        │
-│    • Sum shutter_counts values                                  │
-│    • Sum acquisition time                                       │
-│    • Track partial dead pixels per run                          │
+│  IF multiple runs provided (normalize_by_runs=True):            │
+│    • Sum histogram data across runs, then divide by run count   │
+│      (sample, OB separately) → per-run average                  │
+│    • Average proton_charge across runs (sc.mean)                │
+│    • Average duration across runs (sc.mean)                     │
+│    • Dead pixels detected once on the combined stack (not       │
+│      tracked per run)                                            │
 │                                                                 │
 │  Note: All runs must have same TOF bin edges                    │
 └─────────────────────────────────────────────────────────────────┘
@@ -274,8 +275,9 @@ flowchart TD
 │      T[θ, t, y, x] = (Sample[θ, t, y, x] / OB[t, y, x]) × f_beam│
 │                                                                 │
 │  Handle division:                                               │
-│    • Where dead_mask=True: T = NaN                              │
-│    • Where OB[t, y, x] == 0: T = NaN                            │
+│    • Dead pixels carried as a scipp mask, not NaN-filled        │
+│    • Where OB[t, y, x] == 0: division yields inf/nan (mask      │
+│      before calling; not explicitly replaced with NaN)          │
 │                                                                 │
 │  Formula:                                                       │
 │    T(TOF) = [I_sample(TOF) / I_OB(TOF)] × f_beam                │
@@ -294,7 +296,8 @@ flowchart TD
 │      2. Scale to ensure air = 1.0:                              │
 │         T_final(t) = T(t) / <T_air(t)>                          │
 │                                                                 │
-│  Note: Can apply per-TOF or globally (user choice)              │
+│  Note: Always averages over (x, y); other dims (e.g. TOF) are   │
+│        preserved, so scaling is per-TOF-bin (no mode option)    │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -318,9 +321,9 @@ flowchart TD
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 11: Output                                                │
 │  ────────────                                                   │
-│  • Transmission: 4D array (θ, TOF, y, x)                        │
-│  • Experiment Error: 4D array (same shape)                      │
-│  • TOF Bin Edges: 1D array (N_bins + 1) - may differ if rebinned│
+│  • Transmission: 3D array (TOF, y, x)                           │
+│  • Experiment Error: 3D array (same shape)                      │
+│  • tof coordinate: one TOF value per image (written by name)    │
 │  • Dead Pixel Mask: 2D boolean array (y, x)                     │
 │  • Metadata: processing parameters, provenance                  │
 └─────────────────────────────────────────────────────────────────┘
@@ -332,42 +335,38 @@ flowchart TD
 
 | Output | Dimensions | dtype | Description |
 |--------|------------|-------|-------------|
-| Transmission | (θ, TOF, y, x) | float32 | TOF-resolved transmission |
-| Experiment Error | (θ, TOF, y, x) | float32 | Propagated uncertainty (1σ) |
-| TOF Bin Edges | (N_bins+1,) | float64 | Time-of-flight boundaries |
+| Transmission | (TOF, y, x) | float32 | TOF-resolved transmission |
+| Experiment Error | (TOF, y, x) | float32 | Propagated uncertainty (1σ) |
+| tof coordinate | (N_images,) | float64 | One TOF value per image (written by coord name) |
 | Dead Pixel Mask | (y, x) | bool | True = dead pixel |
 | Metadata | dict | - | Processing provenance |
 
 **Metadata contents**:
 
-- Input file paths
+- Input file paths (sample/OB HDF5 and TIFF paths)
 - Processing timestamp
-- Original and final TOF bin edges
-- Rebinning applied (TOF factor, spatial factor, or none)
-- Total p_charge and shutter_counts
-- Beam correction factor
-- Air region correction applied (if any)
-- ROI applied (if any)
-- Number of runs combined (if any)
 - Software version
+- ROI applied (if any)
 
 ---
 
 ## 4. Coordinate Conversions
 
-TOF can be converted to energy or wavelength using flight path length:
+TOF can be converted to energy or wavelength using the flight path length and the
+detector time offset (`detector_time_offset` from metadata, issue #141):
 
 ```
 TOF → Wavelength:
-  λ = (h × TOF) / (m_n × L)
+  λ = (h × (TOF + offset)) / (m_n × L)
 
 TOF → Energy:
-  E = (1/2) × m_n × (L / TOF)²
+  E = (1/2) × m_n × (L / (TOF + offset))²
 
 where:
   h = Planck's constant
   m_n = neutron mass
   L = source-to-detector distance
+  offset = detector time offset
 ```
 
 ---
@@ -388,11 +387,12 @@ where:
 
 TPX1 histogram data has fixed TOF bins determined at acquisition. Rebinning options:
 
-**TOF Rebinning**:
-- Combine N adjacent bins into 1
-- New bin edges = original_edges[::N]
-- Must use integer factor N
-- Cannot create arbitrary bin edges
+**TOF Rebinning** (`rebin_tof`, `unit` selects the mode):
+- `bins` (default): combine N adjacent bins; new edges = `original_edges[::N]`,
+  with the final original edge appended if `[::N]` did not already include it
+- `manual` / `time` / `wavelength`: request edges by explicit list, time width, or
+  wavelength width — requested edges are **snapped to the nearest original edge**
+  (bins are never split), so the result still only combines adjacent original bins
 
 **Spatial Rebinning**:
 - Combine NxN pixel blocks
@@ -400,9 +400,11 @@ TPX1 histogram data has fixed TOF bins determined at acquisition. Rebinning opti
 - Preserves TOF resolution
 
 **Cannot do**:
-- Arbitrary TOF bin edges (requires raw events)
-- Heterogeneous TOF binning (variable width)
-- These require event-mode data (TPX3)
+- Split an existing bin or place an edge inside one (sub-original-bin resolution)
+  — requested edges that fall mid-bin are snapped to the nearest original edge
+- Heterogeneous (variable-width) edges are allowed via `manual`/`time`/`wavelength`,
+  but only on the original boundaries; finer-than-acquisition binning requires
+  event-mode data (TPX3)
 
 ---
 
