@@ -192,8 +192,8 @@ flowchart TD
 │      (sample, OB separately) → per-run average                  │
 │    • Average proton_charge across runs (sc.mean)                │
 │    • Average duration across runs (sc.mean)                     │
-│    • Dead pixels detected once on the combined stack (not       │
-│      tracked per run)                                            │
+│    • Dead pixels detected post-combine, not per run             │
+│      (re-detected if spatial rebinning is applied)              │
 │                                                                 │
 │  Note: All runs must have same TOF bin edges                    │
 └─────────────────────────────────────────────────────────────────┘
@@ -267,7 +267,7 @@ flowchart TD
 │  ─────────────────────                                          │
 │  FOR each TOF bin t:                                            │
 │                                                                 │
-│    T[t, y, x] = (Sample[t, y, x] / OB[y, x]) × f_beam           │
+│    T[t, y, x] = (Sample[t, y, x] / OB[t, y, x]) × f_beam        │
 │                                                                 │
 │                                                                 │
 │  Handle division:                                               │

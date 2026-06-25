@@ -276,7 +276,7 @@ TPX3 records individual neutron events with:
 │    • Average histograms across runs (sample, OB separately)     │
 │    • Average p_charge across runs (normalize_by_runs=True)      │
 │    • Average acquisition time (duration) across runs            │
-│    • Bad pixels detected once on the combined OB stack          │
+│    • Bad pixels detected post-combine (redone if rebinned)      │
 │                                                                 │
 │  Important: Combine AFTER histogramming, not at event level     │
 └─────────────────────────────────────────────────────────────────┘
@@ -388,7 +388,7 @@ TPX3 records individual neutron events with:
 │  ──────────────────────                                         │
 │  FOR each TOF bin t:                                            │
 │                                                                 │
-│    T[t,x,y] = (Sample_hist[t,x,y] / OB_hist[x,y]) × f           │
+│    T[t,x,y] = (Sample_hist[t,x,y] / OB_hist[t,x,y]) × f         │
 │                                                                 │
 │                                                                 │
 │  Handle division:                                               │
@@ -441,7 +441,7 @@ TPX3 records individual neutron events with:
 │  • TOF Bin Edges: 1D array (N_bins + 1)                         │
 │  • Dead Pixel Mask: 2D boolean (x, y)                           │
 │  • Hot Pixel Mask: 2D boolean (x, y)                            │
-│  • Metadata: full provenance                                    │
+│  • Metadata: provenance dict (paths, timestamp, version, ROI)   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -789,7 +789,7 @@ flowchart TD
 │    • Average histograms across runs (sample, OB separately)     │
 │    • Average p_charge across runs (normalize_by_runs=True)      │
 │    • Average acquisition time (duration) across runs            │
-│    • Bad pixels detected once on the combined OB stack          │
+│    • Bad pixels detected post-combine (redone if rebinned)      │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -875,7 +875,7 @@ flowchart TD
 │  ──────────────────────                                         │
 │  FOR each TOF bin t:                                            │
 │                                                                 │
-│    T[t,y,x] = (Sample_hist[t,y,x] / OB_hist[y,x]) × f           │
+│    T[t,y,x] = (Sample_hist[t,y,x] / OB_hist[t,y,x]) × f         │
 │                                                                 │
 │                                                                 │
 │  Handle division:                                               │
@@ -927,7 +927,7 @@ flowchart TD
 │  • TOF Bin Edges: 1D array (N_bins + 1)                         │
 │  • Dead Pixel Mask: 2D boolean (y, x)                           │
 │  • Hot Pixel Mask: 2D boolean (y, x)                            │
-│  • Metadata: full provenance                                    │
+│  • Metadata: provenance dict (paths, timestamp, version, ROI)   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
