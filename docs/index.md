@@ -5,7 +5,7 @@ imaging facilities — MARS at HFIR and VENUS at SNS.
 
 NeuNorm 2.0 is a complete, scipp-based rewrite of the library. It provides
 end-to-end pipelines (TIFF/FITS/event loading, dark/gamma correction, flat-field
-normalization, TOF binning, resonance and Bragg-edge analysis) with HDF5 as the
+normalization, TOF binning, resonance detection and Bragg-edge imaging) with HDF5 as the
 primary output format.
 
 ```{note}

@@ -44,7 +44,7 @@ o_norm.load(folder="/data/ob/", data_type="ob")
 o_norm.load(folder="/data/df/", data_type="df")   # dark / "df" frames
 o_norm.normalization()
 o_norm.export(folder="/data/normalized/", data_type="normalized")
-normalized = o_norm.get_normalized_data()           # NumPy array
+normalized = o_norm.get_normalized_data()           # list of NumPy arrays
 ```
 
 **2.0** (MARS CCD/CMOS — continuous source, the closest analogue to the 1.x CCD case)
@@ -106,7 +106,7 @@ transmission = normalize_transmission(sample, ob)  # T = sample / ob, variances 
 | `Normalization()` (stateful object) | a `run_*_pipeline(...)` call, or composable functions |
 | `.load(..., data_type="sample"/"ob")` | pipeline `sample_paths` / `ob_paths`, or `neunorm.loaders.stack_loader.load_stack` / `tiff_loader.load_tiff_stack` / `fits_loader.load_fits_stack` |
 | `.load(..., data_type="df")` (dark/"df") | pipeline `dark_paths`, or `neunorm.processing.dark_corrector.subtract_dark(data, dark)` |
-| `.normalization(roi=...)` | `run_*_pipeline(..., roi=...)`, or `neunorm.processing.normalizer.normalize_transmission(sample, ob, ...)` |
+| `.normalization(roi=...)` | Flux normalization by a background ROI — not yet in 2.x; planned as `background_roi=` ([#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159)). Note: 2.x `roi=` is a spatial **crop** (`apply_roi`), not this. |
 | `.df_correction()` | `neunorm.processing.dark_corrector.subtract_dark(data, dark)` |
 | `.crop(roi=ROI(...))` | `neunorm.processing.roi_clipper.apply_roi(data, (x0, y0, x1, y1))` |
 | auto/manual gamma filtering on `load()` | `neunorm.filters.gamma_filter.apply_gamma_filter(...)`, or pipeline `gamma_filter=True` |
@@ -125,7 +125,7 @@ from NeuNorm.roi import ROI
 roi = ROI(x0=10, y0=10, x1=110, y1=110)
 
 # 2.0
-roi = (10, 10, 110, 110)   # (x0, y0, x1, y1), pixel bounds
+roi = (10, 10, 111, 111)   # (x0, y0, x1, y1); 2.x stops are EXCLUSIVE (1.x x1/y1 were inclusive)
 ```
 
 ## Working with the result

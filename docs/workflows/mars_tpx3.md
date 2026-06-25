@@ -302,12 +302,12 @@ flowchart TD
 | `tof.event_converter` | Convert events to histogram | P0 |
 | `processing.run_combiner` | Aggregate multiple runs | P1 |
 | `processing.roi_clipper` | Apply ROI to arrays | P1 |
-| `processing.dead_pixel_detector` | Identify dead pixels | P0 |
-| `processing.hot_pixel_detector` | Identify hot pixels (TPX3) | P0 |
+| `tof.pixel_detector` | Identify dead pixels | P0 |
+| `tof.pixel_detector` | Identify hot pixels (TPX3) | P0 |
 | `filters.gamma_filter` | Remove gamma contamination | P0 |
 | `processing.normalizer` | Compute transmission | P0 |
 | `processing.uncertainty_calculator` | Error propagation | P0 |
-| `exporters.output_writer` | Write results | P0 |
+| `exporters.hdf5_writer` | Write results | P0 |
 
 ### Data Models
 

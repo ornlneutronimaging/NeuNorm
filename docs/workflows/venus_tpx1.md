@@ -414,16 +414,16 @@ TPX1 histogram data has fixed TOF bins determined at acquisition. Rebinning opti
 | `loaders.metadata_loader` | Extract p_charge, shutter_counts, TOF edges | P0 |
 | `processing.run_combiner` | Aggregate multiple runs | P0 |
 | `processing.roi_clipper` | Apply ROI to arrays | P1 |
-| `processing.dead_pixel_detector` | Identify dead pixels | P0 |
+| `tof.pixel_detector` | Identify dead pixels | P0 |
 | `tof.statistics_analyzer` | Analyze bin occupancy, compute SNR | P0 |
 | `tof.histogram_rebinner` | Combine adjacent TOF bins | P0 |
 | `processing.spatial_rebinner` | Combine NxN pixel blocks | P1 |
-| `processing.beam_corrector` | Apply p_charge correction | P0 |
+| `processing.normalizer` | Apply p_charge correction | P0 |
 | `processing.normalizer` | Compute transmission | P0 |
 | `processing.air_region_corrector` | Optional post-normalization correction | P1 |
 | `processing.uncertainty_calculator` | Error propagation | P0 |
 | `tof.coordinate_converter` | TOF ↔ λ ↔ E | P1 |
-| `exporters.output_writer` | Write results | P0 |
+| `exporters.hdf5_writer` | Write results | P0 |
 
 ### Data Models
 

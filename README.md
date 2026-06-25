@@ -124,9 +124,9 @@ Where:
 
 | Detector Type | Dark Correction | Beam Correction | Hot Pixels |
 |---------------|-----------------|-----------------|------------|
-| CCD/CMOS | Required | Time or p_charge | Not needed |
+| CCD/CMOS | Optional | Time or p_charge | Not needed |
 | TPX1 (histogram) | Not needed | p_charge or shutter | Not needed |
-| TPX3 (event/histogram) | Not needed | p_charge | Required |
+| TPX3 (event/histogram) | Not needed | p_charge (VENUS); none (MARS) | Required |
 
 ### Uncertainty Propagation
 
@@ -175,7 +175,7 @@ This enables **hyperspectral imaging** with wavelength-resolved transmission T(Î
 
 - **Data Models**: Pydantic v2 for validation
 - **Array Processing**: scipp with automatic variance propagation
-- **TIFF I/O**: scitiff (scipp ecosystem)
+- **TIFF I/O**: Pillow (input), scitiff (output)
 - **Performance**: Numba JIT for hot paths (optional, via the `performance` extra)
 - **Testing**: pytest with coverage
 

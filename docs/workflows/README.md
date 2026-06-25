@@ -55,10 +55,10 @@ This directory contains detector-centric data reduction workflows for scoping Ne
 |--------|-------------|
 | `processing.normalizer` | Compute transmission T = Sample/OB |
 | `processing.uncertainty_calculator` | Error propagation |
-| `processing.dead_pixel_detector` | Identify zero-count pixels |
+| `tof.pixel_detector` | Identify zero-count pixels |
 | `processing.roi_clipper` | Apply region of interest |
 | `processing.run_combiner` | Aggregate multiple acquisitions |
-| `exporters.output_writer` | Write results |
+| `exporters.hdf5_writer` | Write results |
 
 ### Histogram Loaders
 
@@ -80,17 +80,17 @@ This directory contains detector-centric data reduction workflows for scoping Ne
 | Module | Used By |
 |--------|---------|
 | `processing.dark_corrector` | CCD/CMOS only |
-| `processing.beam_corrector` | VENUS all |
+| `processing.normalizer` | VENUS all |
 | `filters.gamma_filter` | MARS all |
-| `processing.hot_pixel_detector` | TPX3, TPX4 |
+| `tof.pixel_detector` | TPX3, TPX4 |
 
 ### TOF Processing
 
 | Module | Used By |
 |--------|---------|
 | `tof.statistics_analyzer` | TPX1, TPX3, TPX4 |
-| `tof.binning_recommender` | TPX1, TPX3, TPX4 |
-| `tof.rebinner` | TPX1, TPX3, TPX4 |
+| `tof.statistics_analyzer` | TPX1, TPX3, TPX4 |
+| `tof.histogram_rebinner` | TPX1, TPX3, TPX4 |
 | `tof.coordinate_converter` | TPX1, TPX3, TPX4 |
 
 ---
@@ -147,8 +147,8 @@ Based on complexity and shared dependencies:
 | MARS CCD/CMOS | 3D | 3D | - | 2D | - |
 | MARS TPX3 | 3D | 3D | - | 2D | 2D |
 | VENUS CCD/CMOS | 3D | 3D | - | 2D | - |
-| VENUS TPX1 | 4D | 4D | 1D | 2D | - |
-| VENUS TPX3 | 4D | 4D | 1D | 2D | 2D |
+| VENUS TPX1 | 3D | 3D | 1D | 2D | - |
+| VENUS TPX3 | 3D | 3D | 1D | 2D | 2D |
 | VENUS TPX4 | 4D | 4D | 1D | 2D | 2D |
 
 ---

@@ -348,14 +348,14 @@ detectors) and halves the in-memory footprint of large stacks.
 | `loaders.metadata_loader` | Extract p_charge from DAQ | P0 |
 | `processing.run_combiner` | Aggregate multiple runs | P0 (critical for VENUS) |
 | `processing.roi_clipper` | Apply ROI to arrays | P1 |
-| `processing.dead_pixel_detector` | Identify dead pixels | P0 |
+| `tof.pixel_detector` | Identify dead pixels | P0 |
 | `filters.gamma_filter` | Remove gamma contamination | P1 |
 | `processing.dark_corrector` | Subtract dark current | P0 |
-| `processing.beam_corrector` | Apply p_charge correction | P0 |
+| `processing.normalizer` | Apply p_charge correction | P0 |
 | `processing.normalizer` | Compute transmission | P0 |
 | `processing.air_region_corrector` | Optional post-normalization correction | P1 |
 | `processing.uncertainty_calculator` | Error propagation | P0 |
-| `exporters.output_writer` | Write results | P0 |
+| `exporters.hdf5_writer` | Write results | P0 |
 
 ### Data Models
 

@@ -526,16 +526,16 @@ Performance:
 | `tof.event_converter` | Events → 3D histogram | P0 |
 | `processing.run_combiner` | Aggregate multiple runs | P0 |
 | `processing.roi_clipper` | Apply ROI | P1 |
-| `processing.dead_pixel_detector` | Identify dead pixels | P0 |
-| `processing.hot_pixel_detector` | Identify hot pixels | P0 |
+| `tof.pixel_detector` | Identify dead pixels | P0 |
+| `tof.pixel_detector` | Identify hot pixels | P0 |
 | `tof.statistics_analyzer` | Analyze bin occupancy | P0 |
-| `tof.binning_recommender` | Recommend rebinning | P0 |
-| `tof.rebinner` | Apply rebinning | P0 |
-| `processing.beam_corrector` | Apply p_charge correction | P0 |
+| `tof.statistics_analyzer` | Recommend rebinning | P0 |
+| `tof.histogram_rebinner` | Apply rebinning | P0 |
+| `processing.normalizer` | Apply p_charge correction | P0 |
 | `processing.normalizer` | Compute transmission | P0 |
 | `processing.uncertainty_calculator` | Error propagation | P0 |
 | `tof.coordinate_converter` | TOF ↔ λ ↔ E | P1 |
-| `exporters.output_writer` | Write results | P0 |
+| `exporters.hdf5_writer` | Write results | P0 |
 
 ### Data Models
 
@@ -992,14 +992,14 @@ Histogram mode shares most modules with event mode and TPX1:
 | `loaders.metadata_loader` | TPX1 | Extract TOF bins, p_charge |
 | `processing.run_combiner` | Event mode | Sum histograms |
 | `processing.roi_clipper` | Event mode | Apply ROI |
-| `processing.dead_pixel_detector` | Event mode | Same algorithm |
-| `processing.hot_pixel_detector` | Event mode | TPX3-specific |
+| `tof.pixel_detector` | Event mode | Same algorithm |
+| `tof.pixel_detector` | Event mode | TPX3-specific |
 | `tof.statistics_analyzer` | Event mode | Same algorithm |
-| `tof.rebinner` | TPX1 | Adjacent-bin combining |
-| `processing.beam_corrector` | Event mode | p_charge correction |
+| `tof.histogram_rebinner` | TPX1 | Adjacent-bin combining |
+| `processing.normalizer` | Event mode | p_charge correction |
 | `processing.normalizer` | Event mode | Same algorithm |
 | `processing.uncertainty_calculator` | Event mode | Same algorithm |
-| `exporters.output_writer` | Event mode | Same output format |
+| `exporters.hdf5_writer` | Event mode | Same output format |
 
 ---
 
