@@ -39,7 +39,11 @@ def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
 
         - dims: ['TOF', 'y', 'x'] if tof_edges provided, else ['N_image', 'y', 'x']
         - coords: y, x pixel indices, and optionally TOF.
-          Additionally, FITS header keys are added as coordinates with dimension of the stack.
+          Additionally, FITS header keys are added as (unaligned) coordinates.
+          The ``COMMENT`` and ``HISTORY`` keys are skipped. A key whose value is
+          constant across the stack is stored as a scalar coordinate; a key
+          whose value differs across files is stored as an array coordinate
+          along the stack dimension.
     """
 
     if not paths:

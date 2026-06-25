@@ -51,8 +51,8 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     - ROI clip (optional)
     - Dead pixel detection
     - Hot pixel detection
-    - Statistics analysis
-    - Coarsening strategy (spatial/TOF/augmentation)
+    - Statistics analysis (only when ``rebin_by_tof=True``)
+    - Coarsening strategy (spatial/TOF)
     - Event → histogram conversion (flexible binning)
     - Beam correction (p_charge)
     - Normalization (TOF-resolved)
@@ -78,9 +78,10 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     rebin_by_tof : Optional[bool,int]
         Whether to apply TOF rebinning based on statistics analysis. If an integer is provided,
         it will be used as the rebinning factor instead of the recommended one.
-    rebin_by_spatial : Optional[int]
-        Whether to apply spatial rebinning. If an integer is provided, it will be used as the
-        rebinning factor. If None, no spatial rebinning is applied.
+    rebin_by_spatial : Optional[int | tuple[int, int]]
+        Whether to apply spatial rebinning. If an integer is provided, it is used as the
+        rebinning factor for both spatial axes. A ``(x, y)`` tuple selects per-axis rebinning
+        factors. If None, no spatial rebinning is applied.
     detector_shape : tuple[int, int]
         Shape of the TPX3 detector (default: (514, 514))
     event_id_offset : int

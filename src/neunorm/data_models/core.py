@@ -1,7 +1,7 @@
 """
 Core data models for NeuNorm 2.0.
 
-Pydantic models for event data, histogram data, and processing results.
+Pydantic model for event-mode neutron data.
 """
 
 from pathlib import Path
@@ -25,6 +25,12 @@ class EventData(BaseModel):
         X pixel coordinates (1D array, same length as tof)
     y : np.ndarray
         Y pixel coordinates (1D array, same length as tof)
+    chip_id : np.ndarray or None, optional
+        Chip ID for each event (0-3 for quad detector); 1D integer array,
+        same length as tof if present (default: None)
+    pulse_id : np.ndarray or None, optional
+        Reconstructed pulse ID for each event; 1D integer array,
+        same length as tof if present (default: None)
     file_path : Path
         Source file path
     total_events : int

@@ -14,7 +14,7 @@ The algorithm handles:
 
 See Also
 --------
-examples/pulse_reconstruction_tutorial.ipynb : Interactive tutorial with visualizations
+examples/pulse_reconstruction_explained.ipynb : Interactive walkthrough with visualizations
 tests/unit/test_pulse_reconstruction.py : Unit tests and usage examples
 """
 
@@ -72,7 +72,7 @@ def _cluster_rollovers(
     Identify first rollover in each cluster.
 
     This is the JIT-compiled helper for _clean_clustered_rollovers.
-    Returns an array of indices (into rollover_indices) that should be kept.
+    Returns a boolean mask (over rollover_indices) marking which to keep.
 
     Parameters
     ----------
@@ -453,29 +453,36 @@ def reconstruct_pulse_ids(  # noqa: C901
     >>> from neunorm.loaders.event_loader import load_event_data
     >>> from neunorm.tof.pulse_reconstruction import reconstruct_pulse_ids
     >>> events = load_event_data('run_12557.h5')
-    >>> pulse_ids = reconstruct_pulse_ids(events.tof)
+    >>> # load_event_data stores TOF in nanoseconds; this API expects milliseconds
+    >>> tof_ms = events.tof / 1e6
+    >>> pulse_ids = reconstruct_pulse_ids(tof_ms)
     >>> print(f"Found {pulse_ids.max() + 1} pulses")
 
     Multi-chip detector (VENUS quad) with parallel processing:
 
-    >>> events = load_event_data('run_14749.h5')  # Has chip_id field
+    >>> import numpy as np
+    >>> events = load_event_data('run_14749.h5')
+    >>> tof_ms = events.tof / 1e6  # nanoseconds -> milliseconds
+    >>> # chip_id is caller-supplied (the loaders do not populate it): a 1D int
+    >>> # array (0-3 for a quad detector), same length as events.tof
+    >>> chip_id = np.zeros_like(events.tof, dtype=int)  # replace with real per-event chip IDs
     >>> pulse_ids = reconstruct_pulse_ids(
-    ...     events.tof,
-    ...     chip_id=events.chip_id,
+    ...     tof_ms,
+    ...     chip_id=chip_id,
     ...     threshold=-10.0,
     ...     late_margin=14.0,
     ...     n_jobs=4,  # Process 4 chips in parallel
     ... )
     >>> # Pulse IDs synchronized across all 4 chips
-    >>> for chip in range(4):
-    ...     mask = events.chip_id == chip
+    >>> for chip in np.unique(chip_id):  # robust: only chips actually present
+    ...     mask = chip_id == chip
     ...     print(f"Chip {chip}: {pulse_ids[mask].max() + 1} pulses")
 
-    Filter events by pulse:
+    Filter events by pulse (EventData is not indexable - filter the arrays):
 
     >>> # Skip first 5 pulses (warmup)
     >>> valid_mask = pulse_ids >= 5
-    >>> events_filtered = events[valid_mask]
+    >>> tof_kept = events.tof[valid_mask]
     """
     # Validate n_jobs parameter
     if n_jobs is not None:

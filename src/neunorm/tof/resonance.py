@@ -197,7 +197,7 @@ def detect_resonances(
         - 'n_initial': int, peaks after initial detection
         - 'n_snr_filtered': int, peaks after SNR filter
         - 'n_shape_filtered': int, peaks after shape filter
-        - 'validation': dict (if known_resonances provided)
+        - 'validation': dict, only when ``known_resonances`` is given and at least one peak passes the SNR filter
 
     Examples
     --------
