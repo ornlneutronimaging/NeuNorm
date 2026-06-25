@@ -25,10 +25,11 @@ def _is_nested_sequence(value) -> bool:
 def _write_json_metadata(f: h5py.File, name: str, value) -> None:
     """Store ``value`` as a JSON string dataset tagged with ``encoding="json"`` (issue #140).
 
-    Non-string leaves are coerced via ``str()`` (``json`` ``default=str``); the round-trip is
-    therefore lossless only for string-valued data such as the per-run file-path provenance
-    the pipelines emit. May raise (e.g. on a circular reference, or an invalid dataset name);
-    the caller backstops any failure so a single bad key never aborts the write.
+    JSON-native leaves (strings, numbers, bools, ``null``) keep their JSON types; only
+    non-JSON-serializable leaves are coerced via ``str()`` (``json.dumps(..., default=str)``).
+    The round-trip is therefore lossless for the string-valued per-run file-path provenance the
+    pipelines emit. May raise (e.g. on a circular reference, or an invalid dataset name); the
+    caller backstops any failure so a single bad key never aborts the write.
     """
     ds = f.create_dataset(name, data=json.dumps(value, default=str), dtype=h5py.string_dtype("utf-8"))
     ds.attrs["encoding"] = "json"
@@ -99,17 +100,18 @@ def write_hdf5(  # noqa: C901
     Output Structure::
 
         /transmission     # (θ, [TOF,] y, x) float32
-        /uncertainty      # (θ, [TOF,] y, x) float32
-        /masks/dead       # (y, x) bool
-        /masks/hot        # (y, x) bool (optional)
-        /tof_bin_edges    # (N+1,) float64 (optional)
-        /metadata/        # processing provenance
+        /uncertainty      # (θ, [TOF,] y, x) float32 (only if variances are present)
+        /masks/dead       # (y, x) bool (only if the named dead-pixel mask exists)
+        /masks/hot        # (y, x) bool (only if the named hot-pixel mask exists)
+        /tof              # (N+1,) float64 (only if the data carries a "tof" coordinate)
+        /metadata/        # processing provenance (only when metadata is supplied)
 
     Metadata values are stored as native datasets (strings, scalars, flat arrays).
     Nested values such as per-run file-path lists (``sample_paths=[[...], [...]]``) are
     stored as a JSON string with a ``encoding="json"`` dataset attribute; read them back
     with ``json.loads(dataset.asstr()[()])``. The round-trip is lossless for string-valued
-    provenance (what the pipelines emit); non-string leaves are coerced via ``str()``.
+    provenance (what the pipelines emit); only non-JSON-serializable leaves are coerced via
+    ``str()`` (``json.dumps(..., default=str)``), so JSON-native numbers/bools/null keep their types.
 
     Metadata contents:
 

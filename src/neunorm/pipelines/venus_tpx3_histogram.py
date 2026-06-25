@@ -80,9 +80,10 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
     rebin_by_tof : Optional[Union[bool,int]]
         Whether to apply TOF rebinning based on statistics analysis. If an integer is provided,
         it will be used as the rebinning factor instead of the recommended one.
-    rebin_by_spatial : Optional[int]
-        Whether to apply spatial rebinning. If an integer is provided, it will be used as the
-        rebinning factor. If None, no spatial rebinning is applied.
+    rebin_by_spatial : Optional[int | tuple[int, int]]
+        Whether to apply spatial rebinning. If a single integer is provided, it is used as the
+        rebinning factor for both spatial axes. A ``(rows, cols)`` tuple selects per-axis
+        rebinning factors (x and y). If None, no spatial rebinning is applied.
     flight_path : sc.Variable
         Source-to-detector flight path used for TOF→energy/wavelength coordinate labeling.
         Defaults to ``VENUS_FLIGHT_PATH_M`` (25 m); set it per detector/sample position.

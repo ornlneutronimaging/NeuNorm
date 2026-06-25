@@ -4,7 +4,7 @@ Binning utilities for TOF/Energy/Wavelength conversions.
 Provides functions for:
 - Creating TOF bin edges from energy or wavelength specifications
 - Converting histograms between TOF/energy/wavelength spaces
-- Physics-based conversions using scipy.constants
+- Physics-based conversions using scipp.constants
 
 All conversions preserve variance (uncertainty) information.
 """
@@ -48,7 +48,7 @@ def tof_to_energy(tof: sc.Variable, flight_path: sc.Variable) -> sc.Variable:
 
     Notes
     -----
-    Uses scipy.constants.m_n for neutron mass (no hardcoded values).
+    Uses scipp.constants.m_n for neutron mass (no hardcoded values).
     Higher TOF → lower energy (inverse relationship).
 
     Examples
@@ -56,7 +56,7 @@ def tof_to_energy(tof: sc.Variable, flight_path: sc.Variable) -> sc.Variable:
     >>> tof = sc.scalar(1e-3, unit='s')  # 1 ms
     >>> L = sc.scalar(25.0, unit='m')
     >>> energy = tof_to_energy(tof, L)
-    >>> print(energy)  # ~5.2 eV
+    >>> print(energy)  # ~3.27 eV
     """
     # Check for zero or negative TOF
     tof_seconds = tof.to(unit="s")
@@ -95,7 +95,7 @@ def tof_to_wavelength(tof: sc.Variable, flight_path: sc.Variable) -> sc.Variable
 
     Notes
     -----
-    Uses scipy.constants.h and scipy.constants.m_n (no hardcoded values).
+    Uses scipp.constants.h and scipp.constants.m_n (no hardcoded values).
     Linear relationship: TOF ∝ wavelength.
 
     Examples
@@ -103,7 +103,7 @@ def tof_to_wavelength(tof: sc.Variable, flight_path: sc.Variable) -> sc.Variable
     >>> tof = sc.scalar(1e-3, unit='s')  # 1 ms
     >>> L = sc.scalar(25.0, unit='m')
     >>> wavelength = tof_to_wavelength(tof, L)
-    >>> print(wavelength)  # ~1.58 Å
+    >>> print(wavelength)  # ~0.158 Å
     """
     # λ = h * t / (m_n * L)
     # = (h / m_n) * (t / L)
@@ -135,7 +135,7 @@ def wavelength_to_energy(wavelength: sc.Variable) -> sc.Variable:
 
     Notes
     -----
-    Uses scipy.constants (no hardcoded values).
+    Uses scipp.constants (no hardcoded values).
     Inverse square relationship: E ∝ 1/λ².
 
     Examples
@@ -178,7 +178,7 @@ def energy_to_wavelength(energy: sc.Variable) -> sc.Variable:
 
     Notes
     -----
-    Uses scipy.constants (no hardcoded values).
+    Uses scipp.constants (no hardcoded values).
 
     Examples
     --------

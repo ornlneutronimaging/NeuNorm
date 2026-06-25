@@ -126,6 +126,9 @@ def load_event_nexus(  # noqa: C901
     detector_shape : tuple[int, int], optional
         Detector dimensions (x_bins, y_bins) for unrolling event_id to x, y.
         Default: (512, 512) for SNS VENUS detectors
+    event_id_offset : int, optional
+        Base offset subtracted from each event_id before unrolling to x, y
+        pixel coordinates (default: 0)
     max_events : int, optional
         Maximum number of events to load (for testing/memory limits)
         If None, loads all events
@@ -140,13 +143,12 @@ def load_event_nexus(  # noqa: C901
     FileNotFoundError
         If file doesn't exist
     KeyError
-        If NeXus structure or required fields not found
-    ValueError
-        If detector_bank specified but not found
+        If the NeXus structure, required fields, or the requested
+        detector_bank are not found
 
     Examples
     --------
-    >>> # Auto-detect detector bank
+    >>> # Use the default detector bank ('bank1')
     >>> events = load_event_nexus('VENUS_15159.nxs.h5')
 
     >>> # Specify detector bank

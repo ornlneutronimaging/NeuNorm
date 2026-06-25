@@ -57,7 +57,8 @@ def write_tiff_stack(
     Requirements
 
     Write transmission as TIFF stack (one file per image or multi-page TIFF)
-    Write uncertainty as separate TIFF stack
+    Write uncertainty (stdevs) and a mask packed into the same stack via the
+    channel dimension (``concat_stdevs_and_mask=True``), not as a separate file
     Support 32-bit float output
     Embed metadata in scitiff format (JSON in TIFF tags)
     Preserve scipp coordinate information through scitiff

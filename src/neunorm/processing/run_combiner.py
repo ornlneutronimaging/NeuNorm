@@ -28,7 +28,9 @@ def combine_runs(  # noqa: C901
     runs : list[sc.DataArray]
         List of DataArrays representing individual runs.
     metadata_keys_to_sum : Sequence[str], optional
-        Sequence of metadata keys to sum across runs, by default ("acquisition_time", "p_charge")
+        Sequence of metadata keys to aggregate across runs, by default ("acquisition_time", "p_charge").
+        These coordinates are summed across runs unless ``normalize_by_runs=True``, in which case they
+        are averaged instead.
     metadata_check_match : Sequence[str], optional
         Sequence of metadata keys that must match across all runs for combination, by default ()
     normalize_by_runs : bool, optional
