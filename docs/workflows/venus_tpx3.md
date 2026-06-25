@@ -24,6 +24,8 @@ TPX3 supports two operational modes with different input data:
 
 ### A.1 Pipeline Flowchart
 
+> **⚠️ Design sketch — not the current API.** The Pulse Reconstruction stage shown below (and "Load Pulse Timestamps") reflects an earlier/intended design. The shipped event pipeline (`run_venus_tpx3_event_pipeline`) loads NeXus `event_time_offset` (already relative TOF), converts it to ns, and histograms directly via `convert_events_to_histogram` — it does **not** load pulse timestamps or reconstruct pulse IDs. Treat the code as authoritative.
+
 ```mermaid
 flowchart TD
     subgraph Input["1. Event Loading"]
@@ -46,7 +48,7 @@ flowchart TD
 
     subgraph RunCombine["4. Run Combining"]
         RC1{Multiple Runs?}
-        RC2[Sum Histograms + p_charge]
+        RC2[Average Histograms + p_charge]
         RC3[Single Run]
     end
 
@@ -271,10 +273,10 @@ TPX3 records individual neutron events with:
 │  STEP 4: Run Combining (Critical for VENUS)                     │
 │  ──────────────────────────────────────────                     │
 │  IF multiple runs provided:                                     │
-│    • Sum histograms across runs (sample, OB separately)         │
-│    • Sum p_charge values                                        │
-│    • Sum acquisition time                                       │
-│    • Track partial dead/hot pixels per run                      │
+│    • Average histograms across runs (sample, OB separately)     │
+│    • Average p_charge across runs (normalize_by_runs=True)      │
+│    • Average acquisition time (duration) across runs            │
+│    • Bad pixels detected post-combine (redone if rebinned)      │
 │                                                                 │
 │  Important: Combine AFTER histogramming, not at event level     │
 └─────────────────────────────────────────────────────────────────┘
@@ -384,14 +386,14 @@ TPX3 records individual neutron events with:
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 12: Normalization                                         │
 │  ──────────────────────                                         │
-│  FOR each rotation θ:                                           │
-│    FOR each TOF bin t:                                          │
+│  FOR each TOF bin t:                                            │
 │                                                                 │
-│      T[θ,t,y,x] = (Sample_hist[θ,t,y,x] / OB_hist[t,y,x]) × f   │
+│    T[t,x,y] = (Sample_hist[t,x,y] / OB_hist[t,x,y]) × f         │
+│                                                                 │
 │                                                                 │
 │  Handle division:                                               │
-│    • Where bad_pixels=True: T = NaN                             │
-│    • Where OB_hist == 0: T = NaN                                │
+│    • bad_pixels carried as a scipp mask (not NaN-filled)        │
+│    • OB == 0 yields inf/nan as a division artifact              │
 │                                                                 │
 │  Formula:                                                       │
 │    T(TOF) = [I_sample(TOF) / I_OB(TOF)] × f_p_charge            │
@@ -434,12 +436,12 @@ TPX3 records individual neutron events with:
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 15: Output                                                │
 │  ────────────                                                   │
-│  • Transmission: 4D array (θ, TOF, y, x)                        │
-│  • Experiment Error: 4D array (same shape)                      │
+│  • Transmission: 3D array (TOF, x, y)                           │
+│  • Experiment Error: 3D array (same shape)                      │
 │  • TOF Bin Edges: 1D array (N_bins + 1)                         │
-│  • Dead Pixel Mask: 2D boolean (y, x)                           │
-│  • Hot Pixel Mask: 2D boolean (y, x)                            │
-│  • Metadata: full provenance                                    │
+│  • Dead Pixel Mask: 2D boolean (x, y)                           │
+│  • Hot Pixel Mask: 2D boolean (x, y)                            │
+│  • Metadata: provenance dict (paths, timestamp, version, ROI)   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -449,29 +451,24 @@ TPX3 records individual neutron events with:
 
 | Output | Dimensions | dtype | Description |
 |--------|------------|-------|-------------|
-| Transmission | (θ, TOF, y, x) | float32 | TOF-resolved transmission |
-| Experiment Error | (θ, TOF, y, x) | float32 | Propagated uncertainty (1σ) |
-| TOF Bin Edges | (N_bins+1,) | float64 | Time-of-flight boundaries (μs) |
-| Dead Pixel Mask | (y, x) | bool | True = dead pixel |
-| Hot Pixel Mask | (y, x) | bool | True = hot pixel |
+| Transmission | (TOF, x, y) | float32 | TOF-resolved transmission |
+| Experiment Error | (TOF, x, y) | float32 | Propagated uncertainty (1σ) |
+| TOF Bin Edges | (N_bins+1,) | float64 | Time-of-flight boundaries (ns) |
+| Dead Pixel Mask | (x, y) | bool | True = dead pixel |
+| Hot Pixel Mask | (x, y) | bool | True = hot pixel |
 | Metadata | dict | - | Processing provenance |
 
 **Metadata contents**:
-- Input file paths
+- Input file paths (sample and OB)
 - Processing timestamp
-- Pulse reconstruction parameters
-- Original and final TOF binning
-- Binning method used
-- Hot pixel detection parameters
-- p_charge values (sample and OB)
-- Total event counts
 - ROI applied (if any)
-- Number of runs combined (if any)
 - Software version
 
 ---
 
 ### A.6 Pulse ID Reconstruction Detail
+
+> **⚠️ Design sketch — not the current API.** This section describes an earlier/intended design; the shipped implementation differs (see the referenced `src/neunorm/...` modules). Treat the code as authoritative.
 
 This is the most critical and complex step for TPX3 event data:
 
@@ -633,7 +630,7 @@ flowchart TD
 
     subgraph RunCombine["2. Run Combining"]
         RC1{Multiple Runs?}
-        RC2[Sum Histograms + p_charge]
+        RC2[Average Histograms + p_charge]
         RC3[Single Run]
     end
 
@@ -789,10 +786,10 @@ flowchart TD
 │  STEP 2: Run Combining (Critical for VENUS)                     │
 │  ──────────────────────────────────────────                     │
 │  IF multiple runs provided:                                     │
-│    • Sum histograms across runs (sample, OB separately)         │
-│    • Sum p_charge values                                        │
-│    • Sum acquisition time                                       │
-│    • Track partial bad pixels per run                           │
+│    • Average histograms across runs (sample, OB separately)     │
+│    • Average p_charge across runs (normalize_by_runs=True)      │
+│    • Average acquisition time (duration) across runs            │
+│    • Bad pixels detected post-combine (redone if rebinned)      │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -876,14 +873,14 @@ flowchart TD
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 9: Normalization                                          │
 │  ──────────────────────                                         │
-│  FOR each rotation θ:                                           │
-│    FOR each TOF bin t:                                          │
+│  FOR each TOF bin t:                                            │
 │                                                                 │
-│      T[θ,t,y,x] = (Sample_hist[θ,t,y,x] / OB_hist[t,y,x]) × f   │
+│    T[t,y,x] = (Sample_hist[t,y,x] / OB_hist[t,y,x]) × f         │
+│                                                                 │
 │                                                                 │
 │  Handle division:                                               │
-│    • Where bad_pixels=True: T = NaN                             │
-│    • Where OB_hist == 0: T = NaN                                │
+│    • bad_pixels carried as a scipp mask (not NaN-filled)        │
+│    • OB == 0 yields inf/nan as a division artifact              │
 │                                                                 │
 │  Formula:                                                       │
 │    T(TOF) = [I_sample(TOF) / I_OB(TOF)] × f_p_charge            │
@@ -925,12 +922,12 @@ flowchart TD
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 12: Output                                                │
 │  ────────────                                                   │
-│  • Transmission: 4D array (θ, TOF, y, x)                        │
-│  • Experiment Error: 4D array (same shape)                      │
+│  • Transmission: 3D array (TOF, y, x)                           │
+│  • Experiment Error: 3D array (same shape)                      │
 │  • TOF Bin Edges: 1D array (N_bins + 1)                         │
 │  • Dead Pixel Mask: 2D boolean (y, x)                           │
 │  • Hot Pixel Mask: 2D boolean (y, x)                            │
-│  • Metadata: full provenance                                    │
+│  • Metadata: provenance dict (paths, timestamp, version, ROI)   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -957,22 +954,17 @@ In histogram mode, rebinning is constrained because events have already been bin
 
 | Output | Dimensions | dtype | Description |
 |--------|------------|-------|-------------|
-| Transmission | (θ, TOF, y, x) | float32 | TOF-resolved transmission |
-| Experiment Error | (θ, TOF, y, x) | float32 | Propagated uncertainty (1σ) |
+| Transmission | (TOF, y, x) | float32 | TOF-resolved transmission |
+| Experiment Error | (TOF, y, x) | float32 | Propagated uncertainty (1σ) |
 | TOF Bin Edges | (N_bins+1,) | float64 | Time-of-flight boundaries (μs) |
 | Dead Pixel Mask | (y, x) | bool | True = dead pixel |
 | Hot Pixel Mask | (y, x) | bool | True = hot pixel |
 | Metadata | dict | - | Processing provenance |
 
 **Metadata contents**:
-- Input file paths
+- Input file paths (HDF5 and TIFF, sample and OB)
 - Processing timestamp
-- Original and final TOF binning
-- Rebinning factor applied (if any)
-- Hot pixel detection parameters
-- p_charge values (sample and OB)
 - ROI applied (if any)
-- Number of runs combined (if any)
 - Software version
 
 ---
