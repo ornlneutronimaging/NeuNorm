@@ -49,7 +49,7 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
     - ROI clip (optional)
     - Dead pixel detection
     - Hot pixel detection (TPX3-specific, even in histogram mode)
-    - Statistics analysis + rebinning recommendation
+    - Statistics analysis + rebinning recommendation (only when ``rebin_by_tof=True``)
     - Rebinning (TOF and/or spatial, optional)
     - Beam correction (proton charge)
     - Normalization (TOF-resolved)
@@ -82,7 +82,7 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
         it will be used as the rebinning factor instead of the recommended one.
     rebin_by_spatial : Optional[int | tuple[int, int]]
         Whether to apply spatial rebinning. If a single integer is provided, it is used as the
-        rebinning factor for both spatial axes. A ``(rows, cols)`` tuple selects per-axis
+        rebinning factor for both spatial axes. A ``(x, y)`` tuple selects per-axis
         rebinning factors (x and y). If None, no spatial rebinning is applied.
     flight_path : sc.Variable
         Source-to-detector flight path used for TOF→energy/wavelength coordinate labeling.

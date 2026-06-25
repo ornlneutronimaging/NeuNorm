@@ -51,7 +51,7 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     - ROI clip (optional)
     - Dead pixel detection
     - Hot pixel detection
-    - Statistics analysis
+    - Statistics analysis (only when ``rebin_by_tof=True``)
     - Coarsening strategy (spatial/TOF)
     - Event → histogram conversion (flexible binning)
     - Beam correction (p_charge)

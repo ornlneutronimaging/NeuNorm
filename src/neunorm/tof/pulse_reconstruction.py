@@ -460,25 +460,27 @@ def reconstruct_pulse_ids(  # noqa: C901
 
     Multi-chip detector (VENUS quad) with parallel processing:
 
-    >>> events = load_event_data('run_14749.h5')  # Has chip_id field
+    >>> events = load_event_data('run_14749.h5')
     >>> tof_ms = events.tof / 1e6  # nanoseconds -> milliseconds
+    >>> # chip_id is supplied by the caller (the loaders do not populate it):
+    >>> # a 1D int array (0-3 for a quad detector), same length as events.tof
     >>> pulse_ids = reconstruct_pulse_ids(
     ...     tof_ms,
-    ...     chip_id=events.chip_id,
+    ...     chip_id=chip_id,
     ...     threshold=-10.0,
     ...     late_margin=14.0,
     ...     n_jobs=4,  # Process 4 chips in parallel
     ... )
     >>> # Pulse IDs synchronized across all 4 chips
     >>> for chip in range(4):
-    ...     mask = events.chip_id == chip
+    ...     mask = chip_id == chip
     ...     print(f"Chip {chip}: {pulse_ids[mask].max() + 1} pulses")
 
-    Filter events by pulse:
+    Filter events by pulse (EventData is not indexable - filter the arrays):
 
     >>> # Skip first 5 pulses (warmup)
     >>> valid_mask = pulse_ids >= 5
-    >>> events_filtered = events[valid_mask]
+    >>> tof_kept = events.tof[valid_mask]
     """
     # Validate n_jobs parameter
     if n_jobs is not None:
