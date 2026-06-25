@@ -105,8 +105,8 @@ flowchart TD
     end
 
     subgraph Output["15. Output"]
-        O1[Transmission 4D]
-        O2[Uncertainty 4D]
+        O1[Transmission 3D]
+        O2[Uncertainty 3D]
         O3[TOF Bin Edges]
         O4[Dead Pixel Mask]
         O5[Hot Pixel Mask]
@@ -521,7 +521,6 @@ Performance:
 | Component | Purpose | Priority |
 |-----------|---------|----------|
 | `loaders.event_loader` | Load TPX3 HDF5 event files | P0 |
-| `loaders.pulse_loader` | Load DAQ pulse timestamps | P0 |
 | `tof.pulse_reconstruction` | Assign events to pulses | P0 |
 | `tof.event_converter` | Events → 3D histogram | P0 |
 | `processing.run_combiner` | Aggregate multiple runs | P0 |
@@ -680,8 +679,8 @@ flowchart TD
     end
 
     subgraph Output["12. Output"]
-        O1[Transmission 4D]
-        O2[Uncertainty 4D]
+        O1[Transmission 3D]
+        O2[Uncertainty 3D]
         O3[TOF Bin Edges]
         O4[Dead Pixel Mask]
         O5[Hot Pixel Mask]

@@ -55,7 +55,7 @@ This directory contains detector-centric data reduction workflows for scoping Ne
 |--------|-------------|
 | `processing.normalizer` | Compute transmission T = Sample/OB |
 | `processing.uncertainty_calculator` | Error propagation |
-| `tof.pixel_detector` | Identify zero-count pixels |
+| `tof.pixel_detector` (`detect_dead_pixels`) | Identify zero-count pixels |
 | `processing.roi_clipper` | Apply region of interest |
 | `processing.run_combiner` | Aggregate multiple acquisitions |
 | `exporters.hdf5_writer` | Write results |
@@ -80,15 +80,14 @@ This directory contains detector-centric data reduction workflows for scoping Ne
 | Module | Used By |
 |--------|---------|
 | `processing.dark_corrector` | CCD/CMOS only |
-| `processing.normalizer` | VENUS all |
+| `processing.normalizer` (p_charge term) | VENUS all |
 | `filters.gamma_filter` | MARS all |
-| `tof.pixel_detector` | TPX3, TPX4 |
+| `tof.pixel_detector` (`detect_hot_pixels`) | TPX3, TPX4 |
 
 ### TOF Processing
 
 | Module | Used By |
 |--------|---------|
-| `tof.statistics_analyzer` | TPX1, TPX3, TPX4 |
 | `tof.statistics_analyzer` | TPX1, TPX3, TPX4 |
 | `tof.histogram_rebinner` | TPX1, TPX3, TPX4 |
 | `tof.coordinate_converter` | TPX1, TPX3, TPX4 |
