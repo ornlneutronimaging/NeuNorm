@@ -377,7 +377,7 @@ def _process_chip_worker(
 def assign_chip_ids(
     x: np.ndarray,
     y: np.ndarray,
-    detector_shape: tuple[int, int] = (512, 512),
+    detector_shape: tuple[int, int] = (514, 514),
 ) -> np.ndarray:
     """Assign a chip id (0-3) to each event from its pixel quadrant, for a 2x2 quad detector.
 
@@ -400,7 +400,7 @@ def assign_chip_ids(
         1D integer pixel-coordinate arrays (same length), e.g. ``events.x`` / ``events.y``.
     detector_shape : tuple[int, int], optional
         ``(x_bins, y_bins)`` of the full detector; the chip boundary is at the midpoint of each
-        axis. Default ``(512, 512)`` for SNS VENUS detectors.
+        axis. Default ``(514, 514)`` to match the VENUS TPX3 pipeline / ``event_converter``.
 
     Returns
     -------
@@ -507,7 +507,7 @@ def reconstruct_pulse_ids(  # noqa: C901
     >>> events = load_event_data('run_14749.h5')
     >>> tof_ms = events.tof / 1e6  # nanoseconds -> milliseconds
     >>> # the loaders don't record the chip; derive it from the pixel quadrant
-    >>> chip_id = assign_chip_ids(events.x, events.y, detector_shape=(512, 512))
+    >>> chip_id = assign_chip_ids(events.x, events.y, detector_shape=(514, 514))
     >>> pulse_ids = reconstruct_pulse_ids(
     ...     tof_ms,
     ...     chip_id=chip_id,

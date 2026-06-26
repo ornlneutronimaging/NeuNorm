@@ -200,7 +200,8 @@ def test_load_event_data_fractional_tof_clock():
             hf.create_dataset("y", data=np.zeros(4, dtype=np.int32))
         # TPX3 fine clock ~1.5625 ns: int(1.5625) == 1 would lose ~36% of every TOF.
         events = load_event_data(temp_path, tof_clock=1.5625)
-        expected = np.round(ticks * 1.5625).astype(np.int64)
+        # ticks * 1.5625 = [1.5625, 3.125, 4.6875, 12.5] -> rounded ns (hand-computed, not mirrored):
+        expected = np.array([2, 3, 5, 12], dtype=np.int64)
         np.testing.assert_array_equal(events.tof, expected)
         assert events.tof.dtype == np.int64
         assert not np.array_equal(events.tof, ticks)  # the int()-truncated bug would give ticks * 1

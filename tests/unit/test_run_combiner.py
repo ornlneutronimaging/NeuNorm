@@ -275,7 +275,7 @@ def test_combine_runs_missing():
 
 
 def test_combine_runs_single_run():
-    """Test that combining a single run returns the same run."""
+    """Test that combining a single run returns an equal but independent copy (issue #163)."""
     from neunorm.processing.run_combiner import combine_runs
 
     run = sc.DataArray(
@@ -287,6 +287,11 @@ def test_combine_runs_single_run():
     combined = combine_runs([run])
     assert combined is not run  # must not alias caller-owned data
     assert sc.identical(combined, run)
+    # mutating the combined result must not leak back into the caller's input
+    combined.values[0, 0, 0] = 999.0
+    combined.variances[0, 0, 0] = 999.0
+    assert run.values[0, 0, 0] == 0.0
+    assert run.variances[0, 0, 0] == 0.0
 
 
 def test_combine_runs_missing_metadata_key():
