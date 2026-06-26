@@ -412,6 +412,14 @@ def assign_chip_ids(
     if x.shape != y.shape:
         raise ValueError(f"x and y must have the same shape, got {x.shape} and {y.shape}")
     x_bins, y_bins = detector_shape
+    if x.size:
+        if not (np.issubdtype(x.dtype, np.integer) and np.issubdtype(y.dtype, np.integer)):
+            raise ValueError(f"x and y must be integer pixel coordinates, got {x.dtype} and {y.dtype}")
+        if x.min() < 0 or x.max() >= x_bins or y.min() < 0 or y.max() >= y_bins:
+            raise ValueError(
+                f"x/y pixel coordinates out of bounds for detector_shape {detector_shape}: "
+                f"x in [{x.min()}, {x.max()}], y in [{y.min()}, {y.max()}]"
+            )
     chip = (x >= x_bins // 2).astype(np.int64) + 2 * (y >= y_bins // 2).astype(np.int64)
     return chip
 

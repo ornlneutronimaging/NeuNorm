@@ -161,6 +161,11 @@ class EventData(BaseModel):
         --------
         >>> kept = events[pulse_ids >= 5]  # drop warmup pulses
         """
+        if isinstance(key, (int, np.integer)):
+            raise TypeError(
+                "EventData indexing requires a boolean mask, index array, or slice; scalar "
+                "integer indexing is not supported (it would produce 0-D arrays)."
+            )
         tof = self.tof[key]
         return EventData(
             tof=tof,

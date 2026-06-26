@@ -190,3 +190,9 @@ def test_assign_chip_ids_quadrants():
 
     with pytest.raises(ValueError):
         assign_chip_ids(np.array([1, 2]), np.array([1]))
+    # out-of-bounds pixel coordinates are rejected (would mispartition / hide upstream bugs)
+    with pytest.raises(ValueError, match="out of bounds"):
+        assign_chip_ids(np.array([0, 999]), np.array([0, 0]), detector_shape=(8, 8))
+    # non-integer coordinates are rejected
+    with pytest.raises(ValueError, match="integer"):
+        assign_chip_ids(np.array([0.0, 1.0]), np.array([0.0, 1.0]), detector_shape=(8, 8))

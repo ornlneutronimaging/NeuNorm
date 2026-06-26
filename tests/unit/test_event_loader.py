@@ -243,3 +243,7 @@ def test_event_data_getitem_filters_all_arrays():
     sub = bare[np.array([True, False, True])]
     assert len(sub) == 2
     assert sub.chip_id is None and sub.pulse_id is None
+
+    # scalar integer indexing is rejected with a clear error (would yield 0-D arrays)
+    with pytest.raises(TypeError, match="boolean mask"):
+        _ = events[0]
