@@ -374,6 +374,48 @@ def _process_chip_worker(
     return _reconstruct_pulse_ids_single_chip(chip_tof, threshold, window, late_margin)
 
 
+def assign_chip_ids(
+    x: np.ndarray,
+    y: np.ndarray,
+    detector_shape: tuple[int, int] = (512, 512),
+) -> np.ndarray:
+    """Assign a chip id (0-3) to each event from its pixel quadrant, for a 2x2 quad detector.
+
+    The loaders do not record which physical chip an event came from, but multi-chip pulse
+    reconstruction (:func:`reconstruct_pulse_ids` with ``chip_id``) needs the events partitioned
+    by chip. For a standard 2x2 quad Timepix3 detector each chip tiles one spatial quadrant, so
+    the chip can be recovered from the pixel ``(x, y)`` position.
+
+    .. note::
+        This assumes the **standard 2x2 quad layout** — four equal chips splitting the detector
+        at ``x_bins // 2`` and ``y_bins // 2`` — with chip numbering ``chip = (x >= W/2) + 2*(y >= H/2)``
+        (row-major: 0=lower-left, 1=lower-right, 2=upper-left, 3=upper-right). The numbering itself
+        is arbitrary for reconstruction (which only needs the four chips *separated*), but if the
+        VENUS detector uses a different physical tiling this mapping must be adjusted. Single-chip
+        detectors do not need this helper.
+
+    Parameters
+    ----------
+    x, y : np.ndarray
+        1D integer pixel-coordinate arrays (same length), e.g. ``events.x`` / ``events.y``.
+    detector_shape : tuple[int, int], optional
+        ``(x_bins, y_bins)`` of the full detector; the chip boundary is at the midpoint of each
+        axis. Default ``(512, 512)`` for SNS VENUS detectors.
+
+    Returns
+    -------
+    np.ndarray
+        1D ``int`` array of chip ids in ``{0, 1, 2, 3}``, same length as ``x``/``y``.
+    """
+    x = np.asarray(x)
+    y = np.asarray(y)
+    if x.shape != y.shape:
+        raise ValueError(f"x and y must have the same shape, got {x.shape} and {y.shape}")
+    x_bins, y_bins = detector_shape
+    chip = (x >= x_bins // 2).astype(np.int64) + 2 * (y >= y_bins // 2).astype(np.int64)
+    return chip
+
+
 def reconstruct_pulse_ids(  # noqa: C901
     tof: np.ndarray,
     chip_id: np.ndarray | None = None,
@@ -461,11 +503,11 @@ def reconstruct_pulse_ids(  # noqa: C901
     Multi-chip detector (VENUS quad) with parallel processing:
 
     >>> import numpy as np
+    >>> from neunorm.tof.pulse_reconstruction import assign_chip_ids
     >>> events = load_event_data('run_14749.h5')
     >>> tof_ms = events.tof / 1e6  # nanoseconds -> milliseconds
-    >>> # chip_id is caller-supplied (the loaders do not populate it): a 1D int
-    >>> # array (0-3 for a quad detector), same length as events.tof
-    >>> chip_id = np.zeros_like(events.tof, dtype=int)  # replace with real per-event chip IDs
+    >>> # the loaders don't record the chip; derive it from the pixel quadrant
+    >>> chip_id = assign_chip_ids(events.x, events.y, detector_shape=(512, 512))
     >>> pulse_ids = reconstruct_pulse_ids(
     ...     tof_ms,
     ...     chip_id=chip_id,
@@ -478,11 +520,10 @@ def reconstruct_pulse_ids(  # noqa: C901
     ...     mask = chip_id == chip
     ...     print(f"Chip {chip}: {pulse_ids[mask].max() + 1} pulses")
 
-    Filter events by pulse (EventData is not indexable - filter the arrays):
+    Filter events by pulse:
 
     >>> # Skip first 5 pulses (warmup)
-    >>> valid_mask = pulse_ids >= 5
-    >>> tof_kept = events.tof[valid_mask]
+    >>> kept = events[pulse_ids >= 5]  # EventData is indexable; filters all per-event arrays
     """
     # Validate n_jobs parameter
     if n_jobs is not None:

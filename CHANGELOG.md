@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`EventData` is now indexable, plus an `assign_chip_ids` helper.** `events[mask]` (boolean
+  mask, index array, or slice) returns a new `EventData` with every per-event array filtered.
+  `neunorm.tof.pulse_reconstruction.assign_chip_ids(x, y, detector_shape)` derives a chip id (0–3)
+  from the pixel quadrant for a 2×2 quad Timepix3 detector, giving multi-chip
+  `reconstruct_pulse_ids` a data source (the loaders do not record the originating chip).
+  ([#163](https://github.com/ornlneutronimaging/NeuNorm/issues/163))
+
+### Fixed
+
+- **`load_event_data` no longer truncates a fractional TOF clock.** The raw-tick → nanosecond
+  conversion now multiplies by the full `tof_clock` and rounds to `int64` ns; previously
+  `int(tof_clock)` truncated a fractional clock (e.g. the ~1.5625 ns TPX3 fine clock to 1 ns).
+  ([#163](https://github.com/ornlneutronimaging/NeuNorm/issues/163))
+- **`normalize_transmission` rejects a one-sided proton-charge correction.** Supplying only one of
+  `proton_charge_sample` / `proton_charge_ob` produced a non-dimensionless transmission; it now
+  raises `ValueError` (both or neither). The pipelines always pass both, so behavior is unchanged.
+  ([#163](https://github.com/ornlneutronimaging/NeuNorm/issues/163))
+- **`combine_runs` no longer aliases caller data for a single run.** It returns a copy (matching
+  the multi-run path), so mutating the combined result cannot leak back into the caller's input.
+  ([#163](https://github.com/ornlneutronimaging/NeuNorm/issues/163))
+
 ## [2.1.0] - 2026-06-18
 
 ### Changed

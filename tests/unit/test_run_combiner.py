@@ -285,7 +285,8 @@ def test_combine_runs_single_run():
     run.variances = run.values.copy()
 
     combined = combine_runs([run])
-    assert combined is run
+    assert combined is not run  # must not alias caller-owned data
+    assert sc.identical(combined, run)
 
 
 def test_combine_runs_missing_metadata_key():

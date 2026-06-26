@@ -172,3 +172,21 @@ class TestPulseReconstruction:
             f"Algorithm accuracy {accuracy:.2f}% below target 99.5%. "
             f"This may indicate regression in algorithm implementation."
         )
+
+
+def test_assign_chip_ids_quadrants():
+    """assign_chip_ids maps pixel quadrants to chip 0-3 for a 2x2 quad detector (issue #163)."""
+    import pytest
+
+    from neunorm.tof.pulse_reconstruction import assign_chip_ids
+
+    # 8x8 detector -> chip boundary at 4; one pixel per quadrant
+    x = np.array([1, 5, 1, 5])
+    y = np.array([1, 1, 5, 5])
+    chip = assign_chip_ids(x, y, detector_shape=(8, 8))
+    # chip = (x>=4) + 2*(y>=4): lower-left=0, lower-right=1, upper-left=2, upper-right=3
+    np.testing.assert_array_equal(chip, [0, 1, 2, 3])
+    assert set(np.unique(chip).tolist()) <= {0, 1, 2, 3}
+
+    with pytest.raises(ValueError):
+        assign_chip_ids(np.array([1, 2]), np.array([1]))

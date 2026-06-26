@@ -74,6 +74,14 @@ def normalize_transmission(  # noqa: C901
     """
     logger.info("Normalizing transmission: T = Sample / OB")
 
+    # Proton-charge correction must be applied to both sample and OB, or to neither: a one-sided
+    # correction leaves counts/charge uncancelled, so the transmission would not be dimensionless.
+    if (proton_charge_sample is None) != (proton_charge_ob is None):
+        raise ValueError(
+            "proton_charge_sample and proton_charge_ob must both be provided or both omitted; "
+            "a one-sided proton-charge correction yields a non-dimensionless transmission."
+        )
+
     # Apply proton charge corrections if provided
     if proton_charge_sample is not None:
         if isinstance(proton_charge_sample, sc.Variable):
