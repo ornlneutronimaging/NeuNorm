@@ -355,7 +355,7 @@ detectors) and halves the in-memory footprint of large stacks.
 | `processing.normalizer` | Compute transmission | P0 |
 | `processing.air_region_corrector` | Optional post-normalization correction | P1 |
 | `processing.uncertainty_calculator` | Error propagation | P0 |
-| `exporters.hdf5_writer` | Write results | P0 |
+| `exporters.hdf5_writer` / `exporters.tiff_writer` | Write results (HDF5 primary; TIFF optional) | P0 |
 
 ### Data Models
 

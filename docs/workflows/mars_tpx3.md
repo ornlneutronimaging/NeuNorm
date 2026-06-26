@@ -307,7 +307,7 @@ flowchart TD
 | `filters.gamma_filter` | Remove gamma contamination | P0 |
 | `processing.normalizer` | Compute transmission | P0 |
 | `processing.uncertainty_calculator` | Error propagation | P0 |
-| `exporters.hdf5_writer` | Write results | P0 |
+| `exporters.hdf5_writer` / `exporters.tiff_writer` | Write results (HDF5 primary; TIFF optional) | P0 |
 
 ### Data Models
 

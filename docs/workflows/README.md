@@ -58,7 +58,7 @@ This directory contains detector-centric data reduction workflows for scoping Ne
 | `tof.pixel_detector` (`detect_dead_pixels`) | Identify zero-count pixels |
 | `processing.roi_clipper` | Apply region of interest |
 | `processing.run_combiner` | Aggregate multiple acquisitions |
-| `exporters.hdf5_writer` | Write results |
+| `exporters.hdf5_writer` / `exporters.tiff_writer` | Write results (HDF5 primary; TIFF optional) |
 
 ### Histogram Loaders
 

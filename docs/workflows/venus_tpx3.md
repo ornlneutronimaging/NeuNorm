@@ -534,7 +534,7 @@ Performance:
 | `processing.normalizer` | Compute transmission | P0 |
 | `processing.uncertainty_calculator` | Error propagation | P0 |
 | `tof.coordinate_converter` | TOF ↔ λ ↔ E | P1 |
-| `exporters.hdf5_writer` | Write results | P0 |
+| `exporters.hdf5_writer` / `exporters.tiff_writer` | Write results (HDF5 primary; TIFF optional) | P0 |
 
 ### Data Models
 
@@ -998,7 +998,7 @@ Histogram mode shares most modules with event mode and TPX1:
 | `processing.normalizer` | Event mode | p_charge correction |
 | `processing.normalizer` | Event mode | Same algorithm |
 | `processing.uncertainty_calculator` | Event mode | Same algorithm |
-| `exporters.hdf5_writer` | Event mode | Same output format |
+| `exporters.hdf5_writer` / `exporters.tiff_writer` | Event mode | Same output format (HDF5 + optional TIFF) |
 
 ---
 

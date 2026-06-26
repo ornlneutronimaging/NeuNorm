@@ -423,7 +423,7 @@ TPX1 histogram data has fixed TOF bins determined at acquisition. Rebinning opti
 | `processing.air_region_corrector` | Optional post-normalization correction | P1 |
 | `processing.uncertainty_calculator` | Error propagation | P0 |
 | `tof.coordinate_converter` | TOF ↔ λ ↔ E | P1 |
-| `exporters.hdf5_writer` | Write results | P0 |
+| `exporters.hdf5_writer` / `exporters.tiff_writer` | Write results (HDF5 primary; TIFF optional) | P0 |
 
 ### Data Models
 
