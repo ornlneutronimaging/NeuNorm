@@ -288,7 +288,8 @@ def normalize_transmission(  # noqa: C901
             co_term = co_var / (co * co)
             coeff_rel_var = co_term if coeff_rel_var is None else coeff_rel_var + co_term
         extra = sc.array(dims=list(transmission.dims), values=transmission.values**2) * coeff_rel_var
-        transmission.variances = transmission.variances + extra.values
+        # Keep the variance dtype stable (issue #147 float32 pipelines), matching normalize_with_dark.
+        transmission.variances = transmission.variances + extra.values.astype(transmission.variances.dtype, copy=False)
 
     logger.success("✓ Transmission normalized")
 

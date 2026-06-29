@@ -63,8 +63,9 @@ class ROI(BaseModel):
         return (self.x0, self.y0, self.x1, self.y1)
 
 
-# An ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple — accepted interchangeably by ROI-taking APIs.
-ROILike = Union[ROI, tuple[int, int, int, int]]
+# An ``ROI`` or a bare 4-element ``(x0, y0, x1, y1)`` tuple/list — accepted interchangeably by
+# ROI-taking APIs (``as_roi_bounds`` coerces either form to a bounds tuple).
+ROILike = Union[ROI, tuple[int, int, int, int], list[int]]
 
 
 def as_roi_bounds(roi: ROILike) -> tuple[int, int, int, int]:
