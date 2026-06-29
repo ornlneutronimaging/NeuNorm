@@ -13,9 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `background_roi=(x0, y0, x1, y1)` parameter that normalizes each image by its mean counts in a
   sample-free ROI — an approximation to proton-charge normalization for when proton charge is
   unavailable (e.g. MARS): `T = (S/mean(S[B])) / (O/mean(O[B]))`. Mutually exclusive with
-  `proton_charge_sample`/`_ob`; uncertainty is propagated first-order. Exposed on
-  `run_mars_ccd_pipeline`, `run_mars_tpx3_pipeline`, and `run_venus_ccd_pipeline` via
-  `background_roi=`. ([#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159))
+  `proton_charge_sample`/`_ob`; uncertainty is propagated first-order (with the shared-dark
+  covariance corrected on the `normalize_with_dark` path). Exposed on `run_mars_ccd_pipeline`,
+  `run_mars_tpx3_pipeline`, and `run_venus_ccd_pipeline` via `background_roi=`.
+  ([#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159))
+- **Named `ROI` type for region arguments.** A new `neunorm.ROI` pydantic model lets you specify any
+  region by name — `ROI(x0=10, y0=20, x1=30, y1=40)` or `ROI(x0=10, y0=20, width=20, height=20)` —
+  instead of remembering the order of a bare `(x0, y0, x1, y1)` tuple (requested by Jean Bilheux on
+  [#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159)). Accepted everywhere an ROI tuple
+  is: `apply_roi` (`roi=`), `apply_air_region_correction` (`air_roi=`), `normalize_transmission`
+  (`background_roi=`), and every pipeline's `roi` / `air_roi` / `background_roi`. Stops are exclusive
+  (`width`/`height` resolve to `x1=x0+width`, `y1=y0+height`); bare tuples keep working unchanged.
 
 - **`EventData` is now indexable, plus an `assign_chip_ids` helper.** `events[mask]` (boolean
   mask, index array, or slice) returns a new `EventData` with every per-event array filtered.

@@ -11,6 +11,7 @@ import numpy as np
 import scipp as sc
 from loguru import logger
 
+from neunorm.data_models.roi import ROILike, as_roi_bounds
 from neunorm.processing.dark_corrector import subtract_dark
 
 
@@ -114,7 +115,7 @@ def normalize_transmission(  # noqa: C901
     proton_charge_sample: Optional[Union[float, sc.Variable]] = None,
     proton_charge_ob: Optional[Union[float, sc.Variable]] = None,
     pc_uncertainty: float = 0.005,
-    background_roi: Optional[tuple[int, int, int, int]] = None,
+    background_roi: Optional[ROILike] = None,
 ) -> sc.DataArray:
     """
     Normalize sample by open beam to compute transmission.
@@ -141,10 +142,11 @@ def normalize_transmission(  # noqa: C901
     pc_uncertainty : float, optional
         Relative proton charge uncertainty (default: 0.005 = 0.5%)
         From PLEIADES measurements
-    background_roi : tuple[int, int, int, int], optional
-        Sample-free background ROI ``(x0, y0, x1, y1)`` with exclusive stops. When given,
-        each image is normalized by its mean counts in this ROI — a proton-charge proxy for
-        when proton charge is unavailable (e.g. MARS): ``T = (S/mean(S[B])) / (O/mean(O[B]))``.
+    background_roi : ROI or tuple[int, int, int, int], optional
+        Sample-free background ROI — an :class:`~neunorm.data_models.roi.ROI` or a bare
+        ``(x0, y0, x1, y1)`` tuple with exclusive stops. When given, each image is normalized by its
+        mean counts in this ROI — a proton-charge proxy for when proton charge is unavailable (e.g.
+        MARS): ``T = (S/mean(S[B])) / (O/mean(O[B]))``.
         Mutually exclusive with ``proton_charge_sample`` / ``proton_charge_ob``. Uncertainty is
         propagated first-order (the in-ROI sample/ROI-mean correlation is not corrected). Raises
         ``ValueError`` if the ROI mean is not strictly positive and finite in every image. Indices
@@ -177,6 +179,9 @@ def normalize_transmission(  # noqa: C901
     - Zero OB counts produce inf/nan (handle with masks before calling)
     """
     logger.info("Normalizing transmission: T = Sample / OB")
+
+    if background_roi is not None:
+        background_roi = as_roi_bounds(background_roi)
 
     # Background-ROI flux normalization (issue #159): when no proton charge is available
     # (e.g. MARS), scale each image by its mean counts in a sample-free ROI so per-image
@@ -297,7 +302,7 @@ def normalize_with_dark(
     proton_charge_sample: Optional[Union[float, sc.Variable]] = None,
     proton_charge_ob: Optional[Union[float, sc.Variable]] = None,
     pc_uncertainty: float = 0.005,
-    background_roi: Optional[tuple[int, int, int, int]] = None,
+    background_roi: Optional[ROILike] = None,
 ) -> sc.DataArray:
     """Dark-correct and normalize in one step, treating the shared dark frame correctly.
 
@@ -335,6 +340,9 @@ def normalize_with_dark(
     sc.DataArray
         Transmission with correctly-propagated variance (no shared-dark double-counting).
     """
+    if background_roi is not None:
+        background_roi = as_roi_bounds(background_roi)
+
     sample_dc = subtract_dark(sample, dark)
     ob_dc = subtract_dark(ob, dark)
     transmission = normalize_transmission(

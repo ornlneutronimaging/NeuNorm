@@ -9,6 +9,9 @@ Data models
 .. automodule:: neunorm.data_models.core
    :members:
 
+.. automodule:: neunorm.data_models.roi
+   :members:
+
 .. automodule:: neunorm.data_models.tof
    :members:
 

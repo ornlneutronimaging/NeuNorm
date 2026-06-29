@@ -11,6 +11,7 @@ import scipp as sc
 from loguru import logger
 
 from neunorm import __version__
+from neunorm.data_models.roi import ROILike, as_roi_bounds
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
@@ -28,10 +29,10 @@ def run_venus_ccd_pipeline(  # noqa: C901
     ob_paths: Sequence[Sequence[str | Path]],
     dark_paths: Optional[Sequence[Sequence[str | Path]]] = None,
     output_path: Optional[Path] = None,
-    roi: Optional[tuple] = None,
+    roi: Optional[ROILike] = None,
     gamma_filter: bool = True,
-    air_roi: Optional[tuple] = None,
-    background_roi: Optional[tuple] = None,
+    air_roi: Optional[ROILike] = None,
+    background_roi: Optional[ROILike] = None,
 ) -> sc.DataArray:
     """Execute VENUS CCD/CMOS normalization pipeline.
 
@@ -69,11 +70,11 @@ def run_venus_ccd_pipeline(  # noqa: C901
         raises ``ValueError`` (the default exists only so ``dark_paths`` can keep
         its positional slot).
     roi : Optional[tuple]
-        Region of interest to apply (x_start, y_start, x_end, y_end)
+        Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
     gamma_filter : bool
         Whether to apply gamma filtering to the sample data (default: True)
     air_roi : Optional[tuple]
-        Region of interest to use for air correction (x_start, y_start, x_end, y_end).
+        Region of interest for air correction — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
         If None, air correction is not applied.
     background_roi : Optional[tuple]
         Sample-free background ROI (x0, y0, x1, y1) for flux-proxy normalization when proton
@@ -91,6 +92,14 @@ def run_venus_ccd_pipeline(  # noqa: C901
     sc.DataArray
         Final normalized transmission DataArray with metadata and masks
     """
+    # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
+    # tuples up front so cropping and provenance see a consistent form (issue #159).
+    if roi is not None:
+        roi = as_roi_bounds(roi)
+    if air_roi is not None:
+        air_roi = as_roi_bounds(air_roi)
+    if background_roi is not None:
+        background_roi = as_roi_bounds(background_roi)
 
     if output_path is None:
         raise ValueError("output_path is required")

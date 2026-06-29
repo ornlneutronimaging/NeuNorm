@@ -11,6 +11,7 @@ import scipp as sc
 from loguru import logger
 
 from neunorm import __version__
+from neunorm.data_models.roi import ROILike, as_roi_bounds
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
@@ -27,10 +28,10 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     sample_paths: Sequence[Sequence[str | Path]],
     ob_paths: Sequence[Sequence[str | Path]],
     output_path: Path,
-    roi: Optional[tuple] = None,
+    roi: Optional[ROILike] = None,
     gamma_filter: bool = True,
     detector_shape: tuple[int, int] = (514, 514),
-    background_roi: Optional[tuple] = None,
+    background_roi: Optional[ROILike] = None,
 ) -> sc.DataArray:
     """Execute MARS TPX3 normalization pipeline.
 
@@ -56,7 +57,7 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     output_path : Path
         Path to save the output file (HDF5 or TIFF)
     roi : Optional[tuple]
-        Region of interest to apply (x_start, y_start, x_end, y_end)
+        Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
     gamma_filter : bool
         Whether to apply gamma filtering to the sample data (default: True)
     detector_shape : tuple[int, int]
@@ -77,6 +78,12 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     sc.DataArray
         Final normalized transmission DataArray with metadata and masks
     """
+    # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
+    # tuples up front so cropping and provenance see a consistent form (issue #159).
+    if roi is not None:
+        roi = as_roi_bounds(roi)
+    if background_roi is not None:
+        background_roi = as_roi_bounds(background_roi)
 
     # Load data and convert to histogram
     samples = [

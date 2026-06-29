@@ -587,3 +587,44 @@ class TestMarsCCDPipelineFITS:
         assert t.shape == (5, 32, 32)
         # uniform images -> background-ROI normalization cancels to T = 1 even after dark subtraction
         np.testing.assert_allclose(t.values, 1.0, rtol=1e-5)
+
+    def test_mars_ccd_pipeline_background_roi_accepts_roi_object(self):
+        """A background_roi ROI yields the same transmission as the equivalent tuple (issue #159)."""
+        from neunorm import ROI
+
+        with (
+            tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f1,
+            tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f2,
+        ):
+            t_tuple = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=Path(f1.name),
+                gamma_filter=False,
+                background_roi=(0, 0, 8, 8),
+            )
+            # width/height form, resolved to the same (0, 0, 8, 8) bounds
+            t_roi = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=Path(f2.name),
+                gamma_filter=False,
+                background_roi=ROI(x0=0, y0=0, width=8, height=8),
+            )
+        np.testing.assert_array_equal(t_tuple.values, t_roi.values)
+
+    def test_mars_ccd_pipeline_crop_roi_accepts_roi_object(self):
+        """A crop roi=ROI(...) crops correctly and writes provenance (coerced to a tuple) (issue #159)."""
+        from neunorm import ROI
+
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            # completing the run (HDF5 write) proves the ROI was coerced for provenance, since the
+            # metadata writer rejects a raw ROI object.
+            t = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=Path(f.name),
+                gamma_filter=False,
+                roi=ROI(x0=5, y0=5, x1=25, y1=25),
+            )
+        assert t.shape == (5, 20, 20)
