@@ -449,16 +449,44 @@ def test_background_roi_excludes_masked_pixels():
     np.testing.assert_allclose(t.values[3, 3], 1.0, rtol=1e-6)
 
 
-def test_background_roi_with_dark_corrects_shared_dark_double_count():
-    """normalize_with_dark(background_roi) keeps values and removes EXACTLY the #142 over-count.
+def test_background_roi_with_dark_variance_matches_full_first_order():
+    """dark + background_roi Var(T) matches the FULL first-order shared-dark propagation at an
+    outside-ROI pixel (issue #159 review).
 
-    Uses a non-uniform fixture so the dark-corrected ROI means differ (k = co/cs != 1); a uniform
-    fixture would make k = 1 and could not distinguish the correct k = co/cs scaling from k = 1.
+    The oracle is derived by hand, independent of the implementation's formula, to avoid circular
+    validation. Spatially uniform so cs/co are exact, but S != O so k = co/cs != 1 is exercised.
     """
+    from neunorm.processing.dark_corrector import subtract_dark
+    from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
+
+    cnt_s, cnt_o, cnt_d, n = 100.0, 200.0, 10.0, 4  # 2x2 ROI -> n = 4; k = co/cs = 190/90 != 1
+    s, o, d = _bg_da(np.full((4, 4), cnt_s)), _bg_da(np.full((4, 4), cnt_o)), _bg_da(np.full((4, 4), cnt_d))
+    roi = (0, 0, 2, 2)
+    corrected = normalize_with_dark(s, o, d, background_roi=roi)
+    naive = normalize_transmission(subtract_dark(s, d), subtract_dark(o, d), background_roi=roi)
+
+    np.testing.assert_allclose(corrected.values, 1.0, rtol=1e-12)  # uniform -> T = 1
+    np.testing.assert_allclose(corrected.values, naive.values, rtol=1e-12)  # values unchanged
+
+    # Independent first-order oracle for an OUTSIDE-ROI pixel with shared dark d (Poisson Var=value):
+    #   Var(T)/T^2 = [Var(s-d)/(s-d)^2 + Var(o-d)/(o-d)^2 - 2 Var(d)/((s-d)(o-d))]   (pixel, #142)
+    #              + [Var(cs)/cs^2     + Var(co)/co^2     - 2 Cov(cs,co)/(cs co)]     (ROI-mean, #159)
+    # with cs=s-d, co=o-d, Var(cs)=(s+d)/n, Var(co)=(o+d)/n, Cov(cs,co)=Var(mean d_roi)=d/n.
+    s_dc, o_dc = cnt_s - cnt_d, cnt_o - cnt_d
+    pixel = (cnt_s + cnt_d) / s_dc**2 + (cnt_o + cnt_d) / o_dc**2 - 2 * cnt_d / (s_dc * o_dc)
+    roi_mean = ((cnt_s + cnt_d) / n) / s_dc**2 + ((cnt_o + cnt_d) / n) / o_dc**2 - 2 * (cnt_d / n) / (s_dc * o_dc)
+    np.testing.assert_allclose(corrected.variances[3, 3], pixel + roi_mean, rtol=1e-9)
+    # the #159 ROI-mean covariance correction strictly reduces the reported variance
+    assert corrected.variances[3, 3] < naive.variances[3, 3]
+
+
+def test_background_roi_with_dark_subtracts_both_shared_dark_terms():
+    """dark + background_roi removes BOTH shared-dark variance terms — the #142 pixel-level
+    over-count AND the ROI-mean covariance term — on a non-uniform fixture (k != 1, per-pixel)."""
     from neunorm.processing.dark_corrector import subtract_dark
     from neunorm.processing.normalizer import _background_roi_means, normalize_transmission, normalize_with_dark
 
-    roi = (0, 0, 2, 2)
+    roi, n = (0, 0, 2, 2), 4
     s = _bg_da(300.0 + np.arange(16).reshape(4, 4))  # 300..315
     o = _bg_da(500.0 + 2.0 * np.arange(16).reshape(4, 4))  # 500..530
     d = _bg_da(10.0 + 0.5 * np.arange(16).reshape(4, 4))  # small darks 10..17.5
@@ -467,15 +495,15 @@ def test_background_roi_with_dark_corrects_shared_dark_double_count():
 
     np.testing.assert_allclose(corrected.values, naive.values, rtol=1e-6)  # values unchanged
 
-    # Exact oracle: naive - corrected == over_count = 2 * k^2 * (S-D) * Var(D) / (O-D)^3, k = co/cs.
-    s_dc = s.values - d.values
-    o_dc = o.values - d.values
+    s_dc, o_dc = s.values - d.values, o.values - d.values
     cs, co = _background_roi_means(subtract_dark(s, d), subtract_dark(o, d), roi)
     k = co.value / cs.value
-    assert abs(k - 1.0) > 0.3  # fixture really exercises k != 1
-    over_count = 2.0 * (k**2) * s_dc * d.values / (o_dc**3)
-    np.testing.assert_allclose(naive.variances - corrected.variances, over_count, rtol=1e-6)
-    assert np.all(over_count > 0)  # the correction strictly reduces the reported variance
+    assert abs(k - 1.0) > 0.3  # fixture exercises k != 1
+    pixel_term = 2.0 * (k**2) * s_dc * d.values / (o_dc**3)  # #142 pixel-level over-count
+    cov = d.values[0:2, 0:2].sum() / n**2  # Cov(cs,co) = Var(mean D_roi) = (1/n^2) sum Var(D), Var(D)=D
+    roi_mean_term = 2.0 * corrected.values**2 * cov / (cs.value * co.value)  # #159 ROI-mean over-count
+    np.testing.assert_allclose(naive.variances - corrected.variances, pixel_term + roi_mean_term, rtol=1e-6)
+    assert np.all(pixel_term > 0) and cov > 0
 
 
 def test_background_roi_zero_mean_raises():
@@ -514,3 +542,18 @@ def test_background_roi_mixed_variance_inputs():
     t3 = normalize_transmission(_no_var(s_vals), _no_var(o_vals), background_roi=roi)
     assert t3.variances is None
     np.testing.assert_allclose(t3.values, 1.0, rtol=1e-6)
+
+
+def test_background_roi_broadcast_ob_only_variance():
+    """3D no-variance sample + 2D variance OB (broadcast path): OB variance must still propagate.
+
+    Regression for the broadcast-branch gate that dropped the OB-variance term (and the co
+    ROI-mean term) when the sample carried no variance — under-stating the reported error.
+    """
+    from neunorm.processing.normalizer import normalize_transmission
+
+    s3 = sc.DataArray(sc.array(dims=["t", "x", "y"], values=np.full((2, 4, 4), 100.0), unit="counts"))
+    o2 = _bg_da(np.full((4, 4), 200.0))  # 2D, carries Poisson variance
+    t = normalize_transmission(s3, o2, background_roi=(0, 0, 2, 2))
+    assert t.variances is not None
+    assert np.all(t.variances > 0)  # OB pixel variance + co ROI-mean term, not silently dropped

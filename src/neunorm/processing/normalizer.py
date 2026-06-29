@@ -210,13 +210,17 @@ def normalize_transmission(  # noqa: C901
         ob_var = ob_corrected_broadcast.variances.copy() if ob_corrected_broadcast.variances is not None else None
         ob_corrected_broadcast.variances = None
         transmission = sample_corrected / ob_corrected_broadcast
-        if ob_var is not None and sample_corrected.variances is not None:
-            # Var(T) = (T^2) * (Var(Sample)/Sample^2 + Var(OB)/OB^2)
-            # which is equivalent to:
+        # Recombine variances across the broadcast (scipp cannot propagate a variance-bearing
+        # denominator here, so the OB term is added manually). Handle EITHER side carrying variance:
+        # a no-variance sample must not drop the OB contribution. When only the sample carries
+        # variance, the division above already propagated it (the OB term is zero).
+        if ob_var is not None:
             # Var(T) = (Var(Sample) / OB^2) + (Sample^2 * Var(OB) / OB^4)
-            transmission.variances = (sample_corrected.variances / ob_corrected_broadcast.values**2) + (
-                sample_corrected.values**2 * ob_var / ob_corrected_broadcast.values**4
-            )
+            ob_term = sample_corrected.values**2 * ob_var / ob_corrected_broadcast.values**4
+            if sample_corrected.variances is not None:
+                transmission.variances = sample_corrected.variances / ob_corrected_broadcast.values**2 + ob_term
+            else:
+                transmission.variances = ob_term
 
     # copy dropped unaligned coordinates from input
     for coord in sample.coords:
@@ -277,7 +281,10 @@ def normalize_with_dark(
     background_roi : tuple[int, int, int, int], optional
         Background-ROI flux normalization (see ``normalize_transmission``), used instead of proton
         charge. The shared-dark correction then uses ``k = co/cs`` (ratio of dark-corrected ROI
-        means) in place of the proton-charge ratio.
+        means) in place of the proton-charge ratio, and additionally removes the ROI-mean shared-dark
+        covariance term ``2*T^2*Cov(cs,co)/(cs*co)`` (``Cov(cs,co) = Var(mean(D_roi))``) — the
+        ROI-mean analog of the #142 pixel-level correction. (The in-ROI pixel/ROI-mean correlation
+        remains uncorrected, as documented on ``normalize_transmission``.)
 
     Returns
     -------
@@ -309,11 +316,24 @@ def normalize_with_dark(
     # the coefficient values only (variance-free) — this is a variance correction, first-order in k.
     if background_roi is not None:
         cs, co = _background_roi_means(sample_dc, ob_dc, background_roi)
-        k_squared = (sc.values(co) / sc.values(cs)) ** 2
+        cs_v, co_v = sc.values(cs), sc.values(co)
+        k_squared = (co_v / cs_v) ** 2
     else:
         k_squared = _proton_charge_ratio_squared(proton_charge_sample, proton_charge_ob)
     if k_squared is not None:
         over_count = k_squared * over_count
+
+    # background_roi shares the dark across BOTH ROI means: cs = mean(S-D) and co = mean(O-D) use the
+    # same ROI dark pixels, so Cov(cs, co) = Var(mean(D_roi)) > 0. normalize_transmission added the
+    # ROI-mean term T^2 * (Var(cs)/cs^2 + Var(co)/co^2) treating cs and co as independent; subtract
+    # the missing covariance term 2 * T^2 * Cov(cs,co) / (cs*co) too — the ROI-mean analog of the
+    # #142 pixel-level correction. (The in-ROI pixel<->mean correlation stays uncorrected, as
+    # documented; for a clean background ROI the dark-mean covariance is the only remaining term.)
+    if background_roi is not None:
+        x0, y0, x1, y1 = background_roi
+        cov_cs_co = sc.variances(sc.mean(dark["x", x0:x1]["y", y0:y1], dim=["x", "y"]).data)
+        t_v = sc.values(transmission)
+        over_count = over_count + 2.0 * t_v * t_v * cov_cs_co / (cs_v * co_v)
 
     over_values = sc.to_unit(over_count, "dimensionless").transpose(transmission.dims).values
     # Match the variance dtype so the correction never promotes a float32 pipeline to float64.
