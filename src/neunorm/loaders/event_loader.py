@@ -87,8 +87,10 @@ def load_event_data(
         x = f["x"][:n_events].astype(np.int32)
         y = f["y"][:n_events].astype(np.int32)
 
-    # Convert TOF ticks to nanoseconds
-    tof_ns = tof_raw * int(tof_clock)
+    # Convert TOF ticks to nanoseconds. Multiply by the full (possibly fractional) clock
+    # period, then round to integer ns — int(tof_clock) would truncate a fractional clock
+    # (e.g. the ~1.5625 ns TPX3 fine clock to 1, a ~37% error).
+    tof_ns = np.round(tof_raw * tof_clock).astype(np.int64)
 
     logger.info(f"  TOF range: {tof_ns.min():,} - {tof_ns.max():,} ns")
     logger.info(f"  X range: [{x.min()}, {x.max()}]")

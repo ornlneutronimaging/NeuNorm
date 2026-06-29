@@ -290,3 +290,24 @@ def test_normalize_transmission_2d_ob():
     # Var(T) = (T^2) * (Var(Sample)/Sample^2 + Var(OB)/OB^2)
     # Var = (80/100)^2 * (1/80 + 1/100) = 0.0144
     np.testing.assert_allclose(transmission.variances, 0.0144)
+
+
+def test_normalize_transmission_requires_both_proton_charges():
+    """One-sided proton charge -> non-dimensionless T, so it must raise (issue #163)."""
+    import pytest
+
+    from neunorm.processing.normalizer import normalize_transmission
+
+    sample = sc.DataArray(data=sc.array(dims=["x"], values=[80.0, 80.0], unit="counts", dtype="float64"))
+    sample.variances = sample.values.copy()
+    ob = sc.DataArray(data=sc.array(dims=["x"], values=[100.0, 100.0], unit="counts", dtype="float64"))
+    ob.variances = ob.values.copy()
+
+    with pytest.raises(ValueError, match="both be provided or both omitted"):
+        normalize_transmission(sample, ob, proton_charge_sample=500.0)
+    with pytest.raises(ValueError, match="both be provided or both omitted"):
+        normalize_transmission(sample, ob, proton_charge_ob=505.0)
+
+    # both provided is fine and stays dimensionless
+    t = normalize_transmission(sample, ob, proton_charge_sample=500.0, proton_charge_ob=505.0)
+    assert t.unit == sc.units.one

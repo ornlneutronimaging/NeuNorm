@@ -47,7 +47,9 @@ def combine_runs(  # noqa: C901
         raise ValueError("No runs provided for combination")
 
     if len(runs) == 1:
-        return runs[0]
+        # Return a copy so the combined result never aliases caller-owned data
+        # (the multi-run path below also builds a fresh array via .copy()).
+        return runs[0].copy()
 
     # Validate all runs have the same shape, dimensions and required metadata keys for matching
     base_shape = runs[0].shape

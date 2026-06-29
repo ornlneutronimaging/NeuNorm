@@ -148,6 +148,36 @@ class EventData(BaseModel):
         """Return number of events in this dataset"""
         return len(self.tof)
 
+    def __getitem__(self, key):
+        """Return a new EventData with all per-event arrays filtered by ``key``.
+
+        ``key`` is anything that indexes a 1D NumPy array while preserving 1D shape — a
+        boolean mask, an integer-index array, or a slice (a plain scalar ``int`` is not
+        supported, since it would yield 0-D arrays). Optional ``chip_id`` / ``pulse_id``
+        arrays are filtered when present; scalar metadata (``file_path``, ``tof_clock``)
+        is carried over and ``total_events`` is recomputed.
+
+        Examples
+        --------
+        >>> kept = events[pulse_ids >= 5]  # drop warmup pulses
+        """
+        if isinstance(key, (int, np.integer)):
+            raise TypeError(
+                "EventData indexing requires a boolean mask, index array, or slice; scalar "
+                "integer indexing is not supported (it would produce 0-D arrays)."
+            )
+        tof = self.tof[key]
+        return EventData(
+            tof=tof,
+            x=self.x[key],
+            y=self.y[key],
+            chip_id=None if self.chip_id is None else self.chip_id[key],
+            pulse_id=None if self.pulse_id is None else self.pulse_id[key],
+            file_path=self.file_path,
+            total_events=len(tof),
+            tof_clock=self.tof_clock,
+        )
+
     def __repr__(self):
         return (
             f"EventData(\n"

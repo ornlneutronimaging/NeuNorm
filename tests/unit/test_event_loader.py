@@ -184,3 +184,66 @@ def test_event_data_model_total_events_mismatch():
             file_path=Path("test.h5"),
             total_events=5,  # Wrong! Arrays have 2 events
         )
+
+
+def test_load_event_data_fractional_tof_clock():
+    """A fractional TOF clock must use the full period, not int()-truncate it (issue #163)."""
+    from neunorm.loaders.event_loader import load_event_data
+
+    with tempfile.NamedTemporaryFile(suffix=".h5", delete=False) as f:
+        temp_path = Path(f.name)
+    try:
+        ticks = np.array([1, 2, 3, 8], dtype=np.int64)
+        with h5py.File(temp_path, "w") as hf:
+            hf.create_dataset("tof", data=ticks)
+            hf.create_dataset("x", data=np.zeros(4, dtype=np.int32))
+            hf.create_dataset("y", data=np.zeros(4, dtype=np.int32))
+        # TPX3 fine clock ~1.5625 ns: int(1.5625) == 1 would lose ~36% of every TOF.
+        events = load_event_data(temp_path, tof_clock=1.5625)
+        # ticks * 1.5625 = [1.5625, 3.125, 4.6875, 12.5] -> rounded ns (hand-computed, not mirrored):
+        expected = np.array([2, 3, 5, 12], dtype=np.int64)
+        np.testing.assert_array_equal(events.tof, expected)
+        assert events.tof.dtype == np.int64
+        assert not np.array_equal(events.tof, ticks)  # the int()-truncated bug would give ticks * 1
+    finally:
+        temp_path.unlink()
+
+
+def test_event_data_getitem_filters_all_arrays():
+    """EventData is indexable: a mask returns a new EventData with all per-event arrays filtered (issue #163)."""
+    from neunorm.data_models.core import EventData
+
+    events = EventData(
+        tof=np.array([10, 20, 30, 40], dtype=np.int64),
+        x=np.array([1, 2, 3, 4], dtype=np.int32),
+        y=np.array([5, 6, 7, 8], dtype=np.int32),
+        chip_id=np.array([0, 1, 2, 3], dtype=np.int64),
+        pulse_id=np.array([0, 0, 1, 1], dtype=np.int64),
+        file_path=Path("test.h5"),
+        total_events=4,
+    )
+
+    kept = events[events.pulse_id >= 1]
+    assert len(kept) == 2
+    assert kept.total_events == 2
+    np.testing.assert_array_equal(kept.tof, [30, 40])
+    np.testing.assert_array_equal(kept.x, [3, 4])
+    np.testing.assert_array_equal(kept.y, [7, 8])
+    np.testing.assert_array_equal(kept.chip_id, [2, 3])
+    np.testing.assert_array_equal(kept.pulse_id, [1, 1])
+
+    # optional arrays stay None when absent
+    bare = EventData(
+        tof=np.array([1, 2, 3], dtype=np.int64),
+        x=np.array([0, 0, 0], dtype=np.int32),
+        y=np.array([0, 0, 0], dtype=np.int32),
+        file_path=Path("t.h5"),
+        total_events=3,
+    )
+    sub = bare[np.array([True, False, True])]
+    assert len(sub) == 2
+    assert sub.chip_id is None and sub.pulse_id is None
+
+    # scalar integer indexing is rejected with a clear error (would yield 0-D arrays)
+    with pytest.raises(TypeError, match="boolean mask"):
+        _ = events[0]
