@@ -64,6 +64,50 @@ def _background_roi_means(
     return cs, co
 
 
+def _roi_dark_mean_covariance(
+    sample_dc: sc.DataArray,
+    ob_dc: sc.DataArray,
+    dark: sc.DataArray,
+    background_roi: tuple[int, int, int, int],
+) -> sc.Variable:
+    """Covariance of the two background-ROI means induced by the shared dark frame.
+
+    ``cs = mean(S - D)`` and ``co = mean(O - D)`` over the ROI are mask-aware (see
+    ``_background_roi_means``) and share the ROI dark pixels, so
+    ``Cov(cs, co) = (1 / (n_s * n_o)) * sum_{k in A∩B} Var(D_k)`` where A / B are the ROI pixels left
+    unmasked in ``sample_dc`` / ``ob_dc`` (counts ``n_s`` / ``n_o``) and A∩B is their intersection.
+    With no masks this reduces to ``Var(mean(D_roi))``. Assumes spatial ``(x, y)`` masks
+    (dead/hot pixels), which is what the CCD pipelines produce.
+
+    Returns a scalar ``sc.Variable`` carrying units of ``dark**2`` (counts**2).
+    """
+    x0, y0, x1, y1 = background_roi
+    d_roi = dark["x", x0:x1]["y", y0:y1].copy()
+    s_roi = sample_dc["x", x0:x1]["y", y0:y1]
+    o_roi = ob_dc["x", x0:x1]["y", y0:y1]
+
+    def _excluded(da: sc.DataArray):  # OR of all masks over the ROI, or None when unmasked
+        m = None
+        for mask in da.masks.values():
+            m = mask if m is None else (m | mask)
+        return m
+
+    ms, mo = _excluded(s_roi), _excluded(o_roi)
+    n_xy = d_roi.sizes["x"] * d_roi.sizes["y"]
+    n_s = n_xy - (int(sc.sum(ms).value) if ms is not None else 0)
+    n_o = n_xy - (int(sc.sum(mo).value) if mo is not None else 0)
+
+    # sum Var(D) over A∩B: mask the dark with the union of both sides' masks; sc.sum is mask-aware
+    # and propagates variance as the sum of unmasked variances.
+    excl = ms if mo is None else (mo if ms is None else (ms | mo))
+    if excl is not None:
+        d_roi.masks["_bg_excl"] = excl
+    intersection_var_sum = sc.variances(sc.sum(d_roi, dim=["x", "y"]).data)  # scalar, counts**2
+
+    denom = n_s * n_o
+    return intersection_var_sum / denom if denom > 0 else 0.0 * intersection_var_sum
+
+
 def normalize_transmission(  # noqa: C901
     sample: sc.DataArray,
     ob: sc.DataArray,
@@ -330,8 +374,9 @@ def normalize_with_dark(
     # #142 pixel-level correction. (The in-ROI pixel<->mean correlation stays uncorrected, as
     # documented; for a clean background ROI the dark-mean covariance is the only remaining term.)
     if background_roi is not None:
-        x0, y0, x1, y1 = background_roi
-        cov_cs_co = sc.variances(sc.mean(dark["x", x0:x1]["y", y0:y1], dim=["x", "y"]).data)
+        # Cov(cs,co) is mask-consistent with cs/co (it counts only the ROI dark pixels left unmasked
+        # in BOTH sample and OB), so a dead/hot pixel masked from one side does not pollute it.
+        cov_cs_co = _roi_dark_mean_covariance(sample_dc, ob_dc, dark, background_roi)
         t_v = sc.values(transmission)
         over_count = over_count + 2.0 * t_v * t_v * cov_cs_co / (cs_v * co_v)
 

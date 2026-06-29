@@ -557,3 +557,30 @@ def test_background_roi_broadcast_ob_only_variance():
     t = normalize_transmission(s3, o2, background_roi=(0, 0, 2, 2))
     assert t.variances is not None
     assert np.all(t.variances > 0)  # OB pixel variance + co ROI-mean term, not silently dropped
+
+
+def test_background_roi_with_dark_covariance_is_mask_aware():
+    """The ROI-mean shared-dark covariance excludes pixels masked from cs/co (issue #159 review).
+
+    A dead/hot pixel inside the background ROI, masked on one side, must not pollute Cov(cs,co) and
+    over-subtract (which would under-state Var(T)).
+    """
+    from neunorm.processing.dark_corrector import subtract_dark
+    from neunorm.processing.normalizer import _roi_dark_mean_covariance, normalize_with_dark
+
+    roi = (0, 0, 2, 2)
+    darkvals = np.ones((4, 4))
+    darkvals[0, 0] = 199.0  # hot dark pixel inside the ROI
+    smask = np.zeros((4, 4), dtype=bool)
+    smask[0, 0] = True  # masked on the sample side, not the OB side
+    s = _bg_da(np.full((4, 4), 2.0))
+    s.masks["dead"] = sc.array(dims=["x", "y"], values=smask)
+    o = _bg_da(np.full((4, 4), 200.0))
+    d = _bg_da(darkvals)
+
+    # intersection covariance = sum Var(D over A∩B) / (n_s * n_o) = (1+1+1)/(3*4) = 0.25,
+    # NOT the unmasked Var(mean(D_roi)) = (199+1+1+1)/16 = 12.625 that includes the masked hot pixel
+    cov = _roi_dark_mean_covariance(subtract_dark(s, d), subtract_dark(o, d), d, roi)
+    np.testing.assert_allclose(cov.value, 0.25, rtol=1e-12)
+    corrected = normalize_with_dark(s, o, d, background_roi=roi)
+    np.testing.assert_allclose(corrected.variances[3, 3], 2.3249784653905294, rtol=1e-9)
