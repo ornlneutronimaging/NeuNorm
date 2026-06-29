@@ -269,3 +269,27 @@ class TestMarsTPX3Pipeline:
 
         # The variances should be less than the variance from a single run due to combining multiple runs
         np.testing.assert_allclose(transmission.variances, 0.004, atol=0.001)
+
+    def test_mars_tpx3_pipeline_background_roi(self):
+        """background_roi flux normalization runs end-to-end on TPX3 and changes the result (issue #159)."""
+        with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+            output_path = Path(f.name)
+            t_default = run_mars_tpx3_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                detector_shape=(32, 32),
+                gamma_filter=False,
+            )
+            t_bg = run_mars_tpx3_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                detector_shape=(32, 32),
+                gamma_filter=False,
+                background_roi=(0, 0, 8, 8),
+            )
+        assert str(t_bg.unit) == "dimensionless"
+        # spatially-uniform images -> background-ROI normalization cancels to T = 1 everywhere
+        np.testing.assert_allclose(t_bg.values, 1.0, rtol=1e-5)
+        assert not np.allclose(t_bg.values, t_default.values)

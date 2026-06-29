@@ -16,6 +16,7 @@ from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
 from neunorm.loaders.stack_loader import load_stack
 from neunorm.processing.air_region_corrector import apply_air_region_correction
+from neunorm.processing.dark_corrector import subtract_dark
 from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
@@ -31,6 +32,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
     roi: Optional[tuple] = None,
     gamma_filter: bool = True,
     air_roi: Optional[tuple] = None,
+    background_roi: Optional[tuple] = None,
 ) -> sc.DataArray:
     """Execute VENUS CCD/CMOS normalization pipeline.
 
@@ -74,6 +76,9 @@ def run_venus_ccd_pipeline(  # noqa: C901
     air_roi : Optional[tuple]
         Region of interest to use for air correction (x_start, y_start, x_end, y_end).
         If None, air correction is not applied.
+    background_roi : Optional[tuple]
+        Sample-free background ROI (x0, y0, x1, y1) for flux-proxy normalization when proton
+        charge is unavailable (issue #159). Mutually exclusive with proton-charge correction.
 
     Notes
     -----
@@ -146,24 +151,31 @@ def run_venus_ccd_pipeline(  # noqa: C901
     # #147; the coord is float64 because metadata is parsed via float()). With a shared dark
     # frame, normalize_with_dark subtracts the dark and normalizes in one step so the dark
     # variance is not double-counted in the transmission uncertainty (issue #142).
-    proton_charge_sample = sample.coords["IntegratedPCharge"].astype("float32")
-    proton_charge_ob = ob.coords["IntegratedPCharge"].astype("float32")
-    if dark is not None:
-        transmission = normalize_with_dark(
-            sample,
-            ob,
-            dark,
-            proton_charge_sample=proton_charge_sample,
-            proton_charge_ob=proton_charge_ob,
-        )
+    if background_roi is not None:
+        # Flux-proxy normalization from a sample-free ROI (issue #159), replacing the proton-charge
+        # correction (mutually exclusive). Dark-correct first if a dark frame was supplied.
+        s = subtract_dark(sample, dark) if dark is not None else sample
+        o = subtract_dark(ob, dark) if dark is not None else ob
+        transmission = normalize_transmission(s, o, background_roi=background_roi)
     else:
-        logger.info("No dark current provided; skipping dark correction")
-        transmission = normalize_transmission(
-            sample=sample,
-            ob=ob,
-            proton_charge_sample=proton_charge_sample,
-            proton_charge_ob=proton_charge_ob,
-        )
+        proton_charge_sample = sample.coords["IntegratedPCharge"].astype("float32")
+        proton_charge_ob = ob.coords["IntegratedPCharge"].astype("float32")
+        if dark is not None:
+            transmission = normalize_with_dark(
+                sample,
+                ob,
+                dark,
+                proton_charge_sample=proton_charge_sample,
+                proton_charge_ob=proton_charge_ob,
+            )
+        else:
+            logger.info("No dark current provided; skipping dark correction")
+            transmission = normalize_transmission(
+                sample=sample,
+                ob=ob,
+                proton_charge_sample=proton_charge_sample,
+                proton_charge_ob=proton_charge_ob,
+            )
 
     # Air region correction (optional)
     if air_roi is not None:

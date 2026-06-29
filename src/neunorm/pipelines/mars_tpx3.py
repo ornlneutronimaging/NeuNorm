@@ -30,6 +30,7 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     roi: Optional[tuple] = None,
     gamma_filter: bool = True,
     detector_shape: tuple[int, int] = (514, 514),
+    background_roi: Optional[tuple] = None,
 ) -> sc.DataArray:
     """Execute MARS TPX3 normalization pipeline.
 
@@ -60,6 +61,9 @@ def run_mars_tpx3_pipeline(  # noqa: C901
         Whether to apply gamma filtering to the sample data (default: True)
     detector_shape : tuple[int, int]
         Shape of the TPX3 detector (default: (514, 514))
+    background_roi : Optional[tuple]
+        Sample-free background ROI (x0, y0, x1, y1) for flux-proxy normalization when proton
+        charge is unavailable (issue #159). Mutually exclusive with proton-charge correction.
 
     Notes
     -----
@@ -116,8 +120,8 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     if gamma_filter:
         sample = apply_gamma_filter(sample)
 
-    # Normalization
-    transmission = normalize_transmission(sample, ob)
+    # Normalization (background_roi flux proxy when provided, issue #159)
+    transmission = normalize_transmission(sample, ob, background_roi=background_roi)
 
     # Write output
     metadata = {

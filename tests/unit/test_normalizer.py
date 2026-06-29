@@ -311,3 +311,105 @@ def test_normalize_transmission_requires_both_proton_charges():
     # both provided is fine and stays dimensionless
     t = normalize_transmission(sample, ob, proton_charge_sample=500.0, proton_charge_ob=505.0)
     assert t.unit == sc.units.one
+
+
+# ---------------------------------------------------------------------------
+# background_roi flux normalization (proton-charge proxy, issue #159)
+# ---------------------------------------------------------------------------
+
+
+def _bg_da(values, dims=("x", "y")):
+    """Helper: scipp DataArray in counts with Poisson variance = values."""
+    values = np.asarray(values, dtype=float)
+    da = sc.DataArray(data=sc.array(dims=list(dims), values=values, unit="counts"))
+    da.variances = values.copy()
+    return da
+
+
+def test_background_roi_matches_ratio_of_means():
+    """T == (sample/ob) * (mean(ob[B]) / mean(sample[B])) — the validated 1.x formula (issue #159)."""
+    from neunorm.processing.normalizer import normalize_transmission
+
+    s_vals = np.array([[10, 10, 30, 40], [10, 10, 50, 60], [12, 14, 16, 18], [20, 22, 24, 26]], dtype=float)
+    o_vals = np.array([[20, 20, 25, 35], [20, 20, 45, 55], [22, 24, 26, 28], [30, 32, 34, 36]], dtype=float)
+    roi = (0, 0, 2, 2)  # (x0, y0, x1, y1), exclusive stops -> the [0:2, 0:2] block
+
+    t = normalize_transmission(_bg_da(s_vals), _bg_da(o_vals), background_roi=roi)
+
+    cs = s_vals[0:2, 0:2].mean()
+    co = o_vals[0:2, 0:2].mean()
+    expected = (s_vals / o_vals) * (co / cs)
+    np.testing.assert_allclose(t.values, expected, rtol=1e-6)
+    assert t.unit == sc.units.one
+
+
+def test_background_roi_cancels_beam_flux():
+    """A sample-free background ROI makes the per-image flux factors cancel -> recovers true T (issue #159)."""
+    from neunorm.processing.normalizer import normalize_transmission
+
+    truth = np.full((4, 4), 0.8)
+    truth[0:2, 0:2] = 1.0  # background quadrant: no sample, transmission = 1
+    flux_s, flux_o = 3.0, 5.0  # different beam intensity for sample vs open-beam acquisition
+    sample = _bg_da(flux_s * truth * 100.0)
+    ob = _bg_da(flux_o * np.ones((4, 4)) * 100.0)
+
+    t = normalize_transmission(sample, ob, background_roi=(0, 0, 2, 2))
+    np.testing.assert_allclose(t.values, truth, rtol=1e-6)
+
+
+def test_background_roi_mutually_exclusive_with_proton_charge():
+    """background_roi and proton_charge_* are mutually exclusive (issue #159)."""
+    import pytest
+
+    from neunorm.processing.normalizer import normalize_transmission
+
+    sample = _bg_da(np.full((4, 4), 100.0))
+    ob = _bg_da(np.full((4, 4), 100.0))
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        normalize_transmission(
+            sample, ob, proton_charge_sample=500.0, proton_charge_ob=505.0, background_roi=(0, 0, 2, 2)
+        )
+
+
+def test_background_roi_validation():
+    """Invalid background_roi tuples / missing x,y dims raise (issue #159)."""
+    import pytest
+
+    from neunorm.processing.normalizer import normalize_transmission
+
+    sample = _bg_da(np.full((4, 4), 100.0))
+    ob = _bg_da(np.full((4, 4), 100.0))
+    with pytest.raises(ValueError):
+        normalize_transmission(sample, ob, background_roi=(0, 0, 2))  # not 4 ints
+    with pytest.raises(ValueError):
+        normalize_transmission(sample, ob, background_roi=(0, 0, 100, 100))  # out of bounds
+    with pytest.raises(ValueError):
+        normalize_transmission(sample, ob, background_roi=(2, 0, 1, 2))  # x1 <= x0
+
+
+def test_background_roi_propagates_finite_variance():
+    """background_roi normalization yields finite, non-negative propagated variance (issue #159)."""
+    from neunorm.processing.normalizer import normalize_transmission
+
+    t = normalize_transmission(
+        _bg_da(np.full((4, 4), 100.0)), _bg_da(np.full((4, 4), 200.0)), background_roi=(0, 0, 2, 2)
+    )
+    assert t.variances is not None
+    assert np.all(np.isfinite(t.variances))
+    assert np.all(t.variances >= 0)
+
+
+def test_background_roi_3d_per_spectral_bin():
+    """For 3D (tof, x, y) data the ROI mean is computed per spectral bin (issue #159)."""
+    from neunorm.processing.normalizer import normalize_transmission
+
+    s = np.arange(3 * 4 * 4, dtype=float).reshape(3, 4, 4) + 10.0
+    o = np.arange(3 * 4 * 4, dtype=float).reshape(3, 4, 4) + 20.0
+    t = normalize_transmission(
+        _bg_da(s, dims=("tof", "x", "y")), _bg_da(o, dims=("tof", "x", "y")), background_roi=(0, 0, 2, 2)
+    )
+    assert t.shape == (3, 4, 4)
+    cs = s[:, 0:2, 0:2].mean(axis=(1, 2))
+    co = o[:, 0:2, 0:2].mean(axis=(1, 2))
+    expected = (s / o) * (co / cs)[:, None, None]
+    np.testing.assert_allclose(t.values, expected, rtol=1e-6)

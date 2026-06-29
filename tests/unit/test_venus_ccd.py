@@ -474,3 +474,24 @@ class TestVenusCCDPipeline:
         # to float64 if the pc coord were not cast to float32 (issue #147).
         assert with_dark.dtype == sc.DType.float32
         assert np.all(no_dark.variances < with_dark.variances)
+
+    def test_venus_ccd_pipeline_background_roi(self):
+        """background_roi flux proxy replaces proton-charge normalization end-to-end (issue #159)."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            t_pc = run_venus_ccd_pipeline(
+                sample_paths=[self.sample_paths], ob_paths=[self.ob_paths], output_path=output_path, gamma_filter=False
+            )
+            t_bg = run_venus_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=(0, 0, 8, 8),
+            )
+        assert str(t_bg.unit) == "dimensionless"
+        assert t_bg.shape == (5, 32, 32)
+        # uniform images -> background-ROI normalization cancels to T = 1 (proton charge skipped)
+        np.testing.assert_allclose(t_bg.values, 1.0, rtol=1e-5)
+        # and it differs from the proton-charge normalization
+        assert not np.allclose(t_bg.values, t_pc.values)

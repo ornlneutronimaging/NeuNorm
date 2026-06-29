@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Background-ROI flux normalization (proton-charge proxy).** `normalize_transmission` gains a
+  `background_roi=(x0, y0, x1, y1)` parameter that normalizes each image by its mean counts in a
+  sample-free ROI — an approximation to proton-charge normalization for when proton charge is
+  unavailable (e.g. MARS): `T = (S/mean(S[B])) / (O/mean(O[B]))`. Mutually exclusive with
+  `proton_charge_sample`/`_ob`; uncertainty is propagated first-order. Exposed on
+  `run_mars_ccd_pipeline`, `run_mars_tpx3_pipeline`, and `run_venus_ccd_pipeline` via
+  `background_roi=`. ([#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159))
+
 - **`EventData` is now indexable, plus an `assign_chip_ids` helper.** `events[mask]` (boolean
   mask, index array, or slice) returns a new `EventData` with every per-event array filtered.
   `neunorm.tof.pulse_reconstruction.assign_chip_ids(x, y, detector_shape)` derives a chip id (0–3)

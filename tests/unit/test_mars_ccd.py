@@ -548,3 +548,25 @@ class TestMarsCCDPipelineFITS:
                 np.testing.assert_equal(hf["EXPOSURETIME"][()], 30)
                 assert "MODEL" in hf
                 np.testing.assert_equal(hf["MODEL"].asstr()[()], "DW936_BV")
+
+    def test_mars_ccd_pipeline_background_roi(self):
+        """background_roi flux normalization runs end-to-end and changes the result (issue #159)."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            t_default = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths], ob_paths=[self.ob_paths], output_path=output_path, gamma_filter=False
+            )
+            t_bg = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=(0, 0, 8, 8),
+            )
+        assert str(t_bg.unit) == "dimensionless"
+        assert t_bg.shape == (5, 32, 32)
+        assert t_bg.dtype == np.float32
+        # spatially-uniform images -> background-ROI normalization cancels to T = 1 everywhere
+        np.testing.assert_allclose(t_bg.values, 1.0, rtol=1e-5)
+        # and it differs from the plain S/OB normalization
+        assert not np.allclose(t_bg.values, t_default.values)

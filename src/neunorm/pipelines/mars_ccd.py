@@ -15,6 +15,7 @@ from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
 from neunorm.loaders.stack_loader import load_stack
+from neunorm.processing.dark_corrector import subtract_dark
 from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
@@ -29,6 +30,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
     output_path: Optional[Path] = None,
     roi: Optional[tuple] = None,
     gamma_filter: bool = True,
+    background_roi: Optional[tuple] = None,
 ) -> sc.DataArray:
     """Execute MARS CCD/CMOS normalization pipeline.
 
@@ -65,6 +67,9 @@ def run_mars_ccd_pipeline(  # noqa: C901
         Region of interest to apply (x_start, y_start, x_end, y_end)
     gamma_filter : bool
         Whether to apply gamma filtering to the sample data (default: True)
+    background_roi : Optional[tuple]
+        Sample-free background ROI (x0, y0, x1, y1) for flux-proxy normalization when proton
+        charge is unavailable (issue #159). Mutually exclusive with proton-charge correction.
 
     Notes
     -----
@@ -153,7 +158,12 @@ def run_mars_ccd_pipeline(  # noqa: C901
     # Dark correction (optional) + normalization. With a shared dark frame, normalize_with_dark
     # subtracts the dark and normalizes in one step so the dark variance is not double-counted
     # in the transmission uncertainty (issue #142). Without dark, normalize directly.
-    if dark is not None:
+    if background_roi is not None:
+        # Flux-proxy normalization from a sample-free ROI (issue #159), in place of proton charge.
+        s = subtract_dark(sample, dark) if dark is not None else sample
+        o = subtract_dark(ob, dark) if dark is not None else ob
+        transmission = normalize_transmission(s, o, background_roi=background_roi)
+    elif dark is not None:
         transmission = normalize_with_dark(sample, ob, dark)
     else:
         logger.info("No dark current provided; skipping dark correction")
