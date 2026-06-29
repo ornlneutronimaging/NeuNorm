@@ -16,7 +16,6 @@ from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
 from neunorm.loaders.stack_loader import load_stack
 from neunorm.processing.air_region_corrector import apply_air_region_correction
-from neunorm.processing.dark_corrector import subtract_dark
 from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
@@ -102,16 +101,19 @@ def run_venus_ccd_pipeline(  # noqa: C901
     # Keys to check ManufacturerStr. IntegratedPCharge is included in metadata checks and is
     # effectively averaged/normalized across runs (not summed) when normalize_by_runs=True.
 
+    # When background_roi is used (proton-charge proxy), don't require/aggregate IntegratedPCharge.
+    pc_keys = () if background_roi is not None else ("IntegratedPCharge",)
+
     sample = combine_runs(
         samples,
-        metadata_keys_to_sum=("IntegratedPCharge",),
+        metadata_keys_to_sum=pc_keys,
         metadata_check_match=["ManufacturerStr"],
         normalize_by_runs=True,
     )
 
     ob = combine_runs(
         ob,
-        metadata_keys_to_sum=("IntegratedPCharge",),
+        metadata_keys_to_sum=pc_keys,
         metadata_check_match=["ManufacturerStr"],
         normalize_by_runs=True,
     )
@@ -122,7 +124,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
         dark_runs = [load_stack(paths) for paths in dark_paths]
         dark = combine_runs(
             dark_runs,
-            metadata_keys_to_sum=("IntegratedPCharge",),
+            metadata_keys_to_sum=pc_keys,
             metadata_check_match=["ManufacturerStr"],
             normalize_by_runs=True,
         )
@@ -153,10 +155,12 @@ def run_venus_ccd_pipeline(  # noqa: C901
     # variance is not double-counted in the transmission uncertainty (issue #142).
     if background_roi is not None:
         # Flux-proxy normalization from a sample-free ROI (issue #159), replacing the proton-charge
-        # correction (mutually exclusive). Dark-correct first if a dark frame was supplied.
-        s = subtract_dark(sample, dark) if dark is not None else sample
-        o = subtract_dark(ob, dark) if dark is not None else ob
-        transmission = normalize_transmission(s, o, background_roi=background_roi)
+        # correction. With a shared dark, route through normalize_with_dark so the #142 shared-dark
+        # variance double-count is corrected (k = co/cs).
+        if dark is not None:
+            transmission = normalize_with_dark(sample, ob, dark, background_roi=background_roi)
+        else:
+            transmission = normalize_transmission(sample, ob, background_roi=background_roi)
     else:
         proton_charge_sample = sample.coords["IntegratedPCharge"].astype("float32")
         proton_charge_ob = ob.coords["IntegratedPCharge"].astype("float32")
@@ -201,6 +205,9 @@ def run_venus_ccd_pipeline(  # noqa: C901
 
     if roi:
         metadata["roi_applied"] = roi
+
+    if background_roi is not None:
+        metadata["background_roi"] = list(background_roi)
 
     if output_path.suffix.lower() in (".hdf5", ".h5"):
         write_hdf5(output_path, transmission, dead_pixel_mask="dead_pixels", metadata=metadata)

@@ -15,7 +15,6 @@ from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
 from neunorm.loaders.stack_loader import load_stack
-from neunorm.processing.dark_corrector import subtract_dark
 from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
@@ -160,9 +159,12 @@ def run_mars_ccd_pipeline(  # noqa: C901
     # in the transmission uncertainty (issue #142). Without dark, normalize directly.
     if background_roi is not None:
         # Flux-proxy normalization from a sample-free ROI (issue #159), in place of proton charge.
-        s = subtract_dark(sample, dark) if dark is not None else sample
-        o = subtract_dark(ob, dark) if dark is not None else ob
-        transmission = normalize_transmission(s, o, background_roi=background_roi)
+        # With a shared dark, route through normalize_with_dark so the #142 shared-dark variance
+        # double-count is corrected (k = co/cs); without dark, normalize directly.
+        if dark is not None:
+            transmission = normalize_with_dark(sample, ob, dark, background_roi=background_roi)
+        else:
+            transmission = normalize_transmission(sample, ob, background_roi=background_roi)
     elif dark is not None:
         transmission = normalize_with_dark(sample, ob, dark)
     else:
@@ -191,6 +193,9 @@ def run_mars_ccd_pipeline(  # noqa: C901
 
     if roi:
         metadata["roi_applied"] = roi
+
+    if background_roi is not None:
+        metadata["background_roi"] = list(background_roi)
 
     if output_path.suffix.lower() in (".hdf5", ".h5"):
         write_hdf5(output_path, transmission, dead_pixel_mask="dead_pixels", metadata=metadata)

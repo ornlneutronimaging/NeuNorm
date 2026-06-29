@@ -413,3 +413,52 @@ def test_background_roi_3d_per_spectral_bin():
     co = o[:, 0:2, 0:2].mean(axis=(1, 2))
     expected = (s / o) * (co / cs)[:, None, None]
     np.testing.assert_allclose(t.values, expected, rtol=1e-6)
+
+
+def test_background_roi_variance_first_order_value():
+    """Propagated variance equals the hand-computed first-order combination (issue #159 review)."""
+    from neunorm.processing.normalizer import normalize_transmission
+
+    s = np.full((4, 4), 100.0)
+    s[3, 3] = 80.0
+    o = np.full((4, 4), 200.0)
+    o[3, 3] = 160.0
+    t = normalize_transmission(_bg_da(s), _bg_da(o), background_roi=(0, 0, 2, 2))
+    # ROI means: cs=100 (Var(mean)=400/16=25), co=200 (Var=800/16=50). Pixel (3,3): S=80, O=160 -> T=1.
+    # Var(T) = T^2*(Var(S)/S^2 + Var(cs)/cs^2 + Var(O)/O^2 + Var(co)/co^2)
+    #        = 1*(80/6400 + 25/10000 + 160/25600 + 50/40000) = 0.0225
+    np.testing.assert_allclose(t.values[3, 3], 1.0, rtol=1e-6)
+    np.testing.assert_allclose(t.variances[3, 3], 0.0225, rtol=1e-6)
+
+
+def test_background_roi_excludes_masked_pixels():
+    """Masked pixels inside the ROI are excluded from the ROI mean (issue #159 review, P0)."""
+    from neunorm.processing.normalizer import normalize_transmission
+
+    s = np.full((4, 4), 100.0)
+    s[0, 0] = 1.0e6  # huge outlier inside the ROI...
+    sample = _bg_da(s)
+    mask = np.zeros((4, 4), dtype=bool)
+    mask[0, 0] = True  # ...but masked, so it must not enter cs
+    sample.masks["bad"] = sc.array(dims=["x", "y"], values=mask)
+    ob = _bg_da(np.full((4, 4), 200.0))
+
+    t = normalize_transmission(sample, ob, background_roi=(0, 0, 2, 2))
+    # mask-aware cs = mean of the 3 unmasked ROI pixels = 100 (1e6 excluded). An out-of-ROI pixel
+    # (S=100, O=200) -> T = (100/100)/(200/200) = 1. (With the masked outlier counted, T would be tiny.)
+    np.testing.assert_allclose(t.values[3, 3], 1.0, rtol=1e-6)
+
+
+def test_background_roi_with_dark_corrects_shared_dark_double_count():
+    """normalize_with_dark(background_roi) keeps values but removes the #142 shared-dark over-count."""
+    from neunorm.processing.dark_corrector import subtract_dark
+    from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
+
+    s = _bg_da(np.full((4, 4), 300.0))
+    o = _bg_da(np.full((4, 4), 500.0))
+    d = _bg_da(np.full((4, 4), 15.0))
+    naive = normalize_transmission(subtract_dark(s, d), subtract_dark(o, d), background_roi=(0, 0, 2, 2))
+    corrected = normalize_with_dark(s, o, d, background_roi=(0, 0, 2, 2))
+    np.testing.assert_allclose(corrected.values, naive.values, rtol=1e-6)  # values unchanged
+    assert np.all(corrected.variances <= naive.variances + 1e-12)  # over-count removed -> never larger
+    assert np.any(corrected.variances < naive.variances - 1e-12)  # strictly smaller somewhere

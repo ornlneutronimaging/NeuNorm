@@ -42,8 +42,10 @@ def _background_roi_means(
             raise ValueError(
                 f"background_roi {background_roi} exceeds {name} size (x={da.sizes['x']}, y={da.sizes['y']})"
             )
-    cs = sc.mean(sample["x", x0:x1]["y", y0:y1].data, dim=["x", "y"])
-    co = sc.mean(ob["x", x0:x1]["y", y0:y1].data, dim=["x", "y"])
+    # Reduce on the DataArray (mask-aware) so masked dead/hot pixels in the ROI are excluded,
+    # then take .data to drop coords (avoids coord-mismatch in the subsequent division).
+    cs = sc.mean(sample["x", x0:x1]["y", y0:y1], dim=["x", "y"]).data
+    co = sc.mean(ob["x", x0:x1]["y", y0:y1], dim=["x", "y"]).data
     return cs, co
 
 
@@ -127,9 +129,14 @@ def normalize_transmission(  # noqa: C901
         cs, co = _background_roi_means(sample, ob, background_roi)
         # scipp refuses to broadcast a variance-bearing scalar across the image (it would introduce
         # correlations), so divide by the variance-free means and add their variance contribution below.
-        cs_var, co_var = sc.variances(cs), sc.variances(co)
-        cs.variances = None
-        co.variances = None
+        # Only when the inputs carry variance: strip the ROI-mean variance (scipp cannot broadcast
+        # a variance-bearing scalar) and re-add its contribution after the division (below).
+        if cs.variances is not None:
+            cs_var, co_var = sc.variances(cs), sc.variances(co)
+            cs.variances = None
+            co.variances = None
+        else:
+            cs_var = co_var = None
         sample_corrected = sample / cs
         ob_corrected = ob / co
     else:
@@ -203,7 +210,7 @@ def normalize_transmission(  # noqa: C901
     # First-order contribution of the background-ROI mean uncertainty, added here because scipp
     # could not propagate it through the shared-scalar division above. Treats sample/ob/cs/co as
     # independent: Var(T) += T^2 * (Var(cs)/cs^2 + Var(co)/co^2).
-    if background_roi is not None and transmission.variances is not None:
+    if background_roi is not None and transmission.variances is not None and cs_var is not None:
         coeff_rel_var = cs_var / (cs * cs) + co_var / (co * co)
         extra = sc.array(dims=list(transmission.dims), values=transmission.values**2) * coeff_rel_var
         transmission.variances = transmission.variances + extra.values
@@ -220,6 +227,7 @@ def normalize_with_dark(
     proton_charge_sample: Optional[Union[float, sc.Variable]] = None,
     proton_charge_ob: Optional[Union[float, sc.Variable]] = None,
     pc_uncertainty: float = 0.005,
+    background_roi: Optional[tuple[int, int, int, int]] = None,
 ) -> sc.DataArray:
     """Dark-correct and normalize in one step, treating the shared dark frame correctly.
 
@@ -244,6 +252,10 @@ def normalize_with_dark(
         Integrated proton charge for the SNS beam correction (see ``normalize_transmission``).
     pc_uncertainty : float, optional
         Relative proton-charge uncertainty (default 0.005).
+    background_roi : tuple[int, int, int, int], optional
+        Background-ROI flux normalization (see ``normalize_transmission``), used instead of proton
+        charge. The shared-dark correction then uses ``k = co/cs`` (ratio of dark-corrected ROI
+        means) in place of the proton-charge ratio.
 
     Returns
     -------
@@ -252,7 +264,9 @@ def normalize_with_dark(
     """
     sample_dc = subtract_dark(sample, dark)
     ob_dc = subtract_dark(ob, dark)
-    transmission = normalize_transmission(sample_dc, ob_dc, proton_charge_sample, proton_charge_ob, pc_uncertainty)
+    transmission = normalize_transmission(
+        sample_dc, ob_dc, proton_charge_sample, proton_charge_ob, pc_uncertainty, background_roi=background_roi
+    )
 
     # Correct the shared-dark double-count (issue #142). normalize_transmission propagated
     # Var(dark) through BOTH numerator and denominator as if they were independent; the true
@@ -268,7 +282,14 @@ def normalize_with_dark(
     var_d_v = sc.variances(dark)  # counts**2
     over_count = 2.0 * s_v * var_d_v / (o_v**3)
 
-    k_squared = _proton_charge_ratio_squared(proton_charge_sample, proton_charge_ob)
+    # The over-count scales with the squared flux coefficient k applied to S/O: k = pc_ob/pc_sample
+    # for proton charge, or k = co/cs (ratio of dark-corrected ROI means) for background_roi. Use
+    # the coefficient values only (variance-free) — this is a variance correction, first-order in k.
+    if background_roi is not None:
+        cs, co = _background_roi_means(sample_dc, ob_dc, background_roi)
+        k_squared = (sc.values(co) / sc.values(cs)) ** 2
+    else:
+        k_squared = _proton_charge_ratio_squared(proton_charge_sample, proton_charge_ob)
     if k_squared is not None:
         over_count = k_squared * over_count
 

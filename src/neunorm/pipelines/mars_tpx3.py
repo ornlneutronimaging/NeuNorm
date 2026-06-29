@@ -135,6 +135,9 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     if roi:
         metadata["roi_applied"] = roi
 
+    if background_roi is not None:
+        metadata["background_roi"] = list(background_roi)
+
     if output_path.suffix.lower() in (".hdf5", ".h5"):
         write_hdf5(
             output_path, transmission, dead_pixel_mask="dead_pixels", hot_pixel_mask="hot_pixels", metadata=metadata

@@ -570,3 +570,20 @@ class TestMarsCCDPipelineFITS:
         np.testing.assert_allclose(t_bg.values, 1.0, rtol=1e-5)
         # and it differs from the plain S/OB normalization
         assert not np.allclose(t_bg.values, t_default.values)
+
+    def test_mars_ccd_pipeline_background_roi_with_dark(self):
+        """background_roi + a dark frame routes through normalize_with_dark (issue #159 / #142)."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            t = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                dark_paths=[self.dark_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=(0, 0, 8, 8),
+            )
+        assert str(t.unit) == "dimensionless"
+        assert t.shape == (5, 32, 32)
+        # uniform images -> background-ROI normalization cancels to T = 1 even after dark subtraction
+        np.testing.assert_allclose(t.values, 1.0, rtol=1e-5)
