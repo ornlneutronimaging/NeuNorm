@@ -68,11 +68,16 @@ ROILike = Union[ROI, tuple[int, int, int, int]]
 
 
 def as_roi_bounds(roi: ROILike) -> tuple[int, int, int, int]:
-    """Coerce an :class:`ROI` (or a bare ``(x0, y0, x1, y1)`` tuple/list) to a bounds tuple.
+    """Coerce an :class:`ROI` (or a bare 4-element ``(x0, y0, x1, y1)`` sequence) to a bounds tuple.
 
     A bare sequence is returned as a plain tuple so downstream code sees a consistent
-    ``(x0, y0, x1, y1)`` form regardless of how the ROI was specified.
+    ``(x0, y0, x1, y1)`` form regardless of how the ROI was specified. Element-type/bounds validation
+    is left to the consumer (and to :class:`ROI` for the named form); only the 4-element length is
+    enforced here so a malformed bare sequence fails fast at one place.
     """
     if isinstance(roi, ROI):
         return roi.as_bounds()
-    return tuple(roi)
+    bounds = tuple(roi)
+    if len(bounds) != 4:
+        raise ValueError(f"ROI must be a tuple of 4 integers (x0, y0, x1, y1), or an ROI; got {bounds!r}")
+    return bounds

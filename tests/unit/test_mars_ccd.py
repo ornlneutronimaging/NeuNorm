@@ -614,17 +614,28 @@ class TestMarsCCDPipelineFITS:
         np.testing.assert_array_equal(t_tuple.values, t_roi.values)
 
     def test_mars_ccd_pipeline_crop_roi_accepts_roi_object(self):
-        """A crop roi=ROI(...) crops correctly and writes provenance (coerced to a tuple) (issue #159)."""
+        """A crop roi=ROI(...) crops correctly AND is coerced to a tuple in the written provenance.
+
+        Guards the pipeline-level coercion specifically: ``apply_roi`` coerces internally (so the
+        shape is right regardless), and the HDF5 writer would NOT crash on a raw ROI — it would
+        str()-coerce it via the issue #140 JSON backstop (``encoding="json"``). So we round-trip
+        ``roi_applied`` and assert it is the native int array (the coerced tuple), which fails if a
+        raw ROI ever reaches provenance.
+        """
         from neunorm import ROI
 
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
-            # completing the run (HDF5 write) proves the ROI was coerced for provenance, since the
-            # metadata writer rejects a raw ROI object.
+            output_path = Path(f.name)
             t = run_mars_ccd_pipeline(
                 sample_paths=[self.sample_paths],
                 ob_paths=[self.ob_paths],
-                output_path=Path(f.name),
+                output_path=output_path,
                 gamma_filter=False,
                 roi=ROI(x0=5, y0=5, x1=25, y1=25),
             )
-        assert t.shape == (5, 20, 20)
+            assert t.shape == (5, 20, 20)
+            with h5py.File(output_path, "r") as hf:
+                ds = hf["metadata/roi_applied"]
+                # stored as a native int array (the coerced tuple), NOT the JSON str(ROI) fallback
+                assert ds.attrs.get("encoding") != "json"
+                np.testing.assert_array_equal(ds[()], [5, 5, 25, 25])

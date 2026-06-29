@@ -66,6 +66,13 @@ def test_as_roi_bounds_accepts_roi_and_tuple():
     assert as_roi_bounds([1, 2, 3, 4]) == (1, 2, 3, 4)
 
 
+@pytest.mark.parametrize("bad", [(1, 2, 3), (1, 2, 3, 4, 5), (), [1, 2]])
+def test_as_roi_bounds_rejects_wrong_length(bad):
+    """A bare sequence that is not 4 elements fails fast at the single coercion point."""
+    with pytest.raises(ValueError, match="ROI must be a tuple of 4 integers"):
+        as_roi_bounds(bad)
+
+
 def _da(values, unit="counts"):
     import numpy as np
     import scipp as sc
