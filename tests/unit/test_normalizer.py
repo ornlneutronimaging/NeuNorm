@@ -489,3 +489,28 @@ def test_background_roi_zero_mean_raises():
     o[0:2, 0:2] = 0.0  # open-beam ROI has zero counts -> co == 0
     with pytest.raises(ValueError, match="strictly positive and finite"):
         normalize_transmission(s, _bg_da(o), background_roi=(0, 0, 2, 2))
+
+
+def test_background_roi_mixed_variance_inputs():
+    """One-sided-variance inputs must not raise; the extra term uses only the side with variance."""
+    from neunorm.processing.normalizer import normalize_transmission
+
+    roi = (0, 0, 2, 2)
+
+    def _no_var(values):
+        v = np.asarray(values, dtype=float)
+        return sc.DataArray(data=sc.array(dims=["x", "y"], values=v, unit="counts"))
+
+    s_vals = np.full((4, 4), 100.0)
+    o_vals = np.full((4, 4), 200.0)
+
+    # sample has variance, ob does not -> output carries variance (from the sample side only)
+    t1 = normalize_transmission(_bg_da(s_vals), _no_var(o_vals), background_roi=roi)
+    assert t1.variances is not None
+    # ob has variance, sample does not -> this is the case that previously raised in `ob / co`
+    t2 = normalize_transmission(_no_var(s_vals), _bg_da(o_vals), background_roi=roi)
+    assert t2.variances is not None
+    # neither side has variance -> no output variance, and no crash
+    t3 = normalize_transmission(_no_var(s_vals), _no_var(o_vals), background_roi=roi)
+    assert t3.variances is None
+    np.testing.assert_allclose(t3.values, 1.0, rtol=1e-6)

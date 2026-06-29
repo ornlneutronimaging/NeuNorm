@@ -146,15 +146,13 @@ def normalize_transmission(  # noqa: C901
         logger.info("Applying background-ROI flux normalization with ROI {}", background_roi)
         cs, co = _background_roi_means(sample, ob, background_roi)
         # scipp refuses to broadcast a variance-bearing scalar across the image (it would introduce
-        # correlations), so divide by the variance-free means and add their variance contribution below.
-        # Only when the inputs carry variance: strip the ROI-mean variance (scipp cannot broadcast
-        # a variance-bearing scalar) and re-add its contribution after the division (below).
-        if cs.variances is not None:
-            cs_var, co_var = sc.variances(cs), sc.variances(co)
-            cs.variances = None
-            co.variances = None
-        else:
-            cs_var = co_var = None
+        # correlations), so divide by the variance-free means and re-add their variance contribution
+        # below. Handle cs and co INDEPENDENTLY — the two inputs may carry variance on one side only
+        # (a variance-bearing co would otherwise make `ob / co` raise).
+        cs_var = sc.variances(cs) if cs.variances is not None else None
+        co_var = sc.variances(co) if co.variances is not None else None
+        cs.variances = None
+        co.variances = None
         sample_corrected = sample / cs
         ob_corrected = ob / co
     else:
@@ -227,9 +225,15 @@ def normalize_transmission(  # noqa: C901
 
     # First-order contribution of the background-ROI mean uncertainty, added here because scipp
     # could not propagate it through the shared-scalar division above. Treats sample/ob/cs/co as
-    # independent: Var(T) += T^2 * (Var(cs)/cs^2 + Var(co)/co^2).
-    if background_roi is not None and transmission.variances is not None and cs_var is not None:
-        coeff_rel_var = cs_var / (cs * cs) + co_var / (co * co)
+    # independent: Var(T) += T^2 * (Var(cs)/cs^2 + Var(co)/co^2). Accumulate whichever side carries
+    # variance (inputs may be variance-bearing on one side only).
+    if background_roi is not None and transmission.variances is not None and (cs_var is not None or co_var is not None):
+        coeff_rel_var = None
+        if cs_var is not None:
+            coeff_rel_var = cs_var / (cs * cs)
+        if co_var is not None:
+            co_term = co_var / (co * co)
+            coeff_rel_var = co_term if coeff_rel_var is None else coeff_rel_var + co_term
         extra = sc.array(dims=list(transmission.dims), values=transmission.values**2) * coeff_rel_var
         transmission.variances = transmission.variances + extra.values
 
