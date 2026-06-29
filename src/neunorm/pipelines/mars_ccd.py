@@ -68,7 +68,9 @@ def run_mars_ccd_pipeline(  # noqa: C901
         Whether to apply gamma filtering to the sample data (default: True)
     background_roi : Optional[tuple]
         Sample-free background ROI (x0, y0, x1, y1) for flux-proxy normalization when proton
-        charge is unavailable (issue #159). Mutually exclusive with proton-charge correction.
+        charge is unavailable (issue #159). Mutually exclusive with proton-charge correction. If
+        ``roi`` is also given the detector is cropped first, so ``background_roi`` indices are
+        resolved in the post-crop frame.
 
     Notes
     -----

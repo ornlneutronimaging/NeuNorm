@@ -450,15 +450,42 @@ def test_background_roi_excludes_masked_pixels():
 
 
 def test_background_roi_with_dark_corrects_shared_dark_double_count():
-    """normalize_with_dark(background_roi) keeps values but removes the #142 shared-dark over-count."""
-    from neunorm.processing.dark_corrector import subtract_dark
-    from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
+    """normalize_with_dark(background_roi) keeps values and removes EXACTLY the #142 over-count.
 
-    s = _bg_da(np.full((4, 4), 300.0))
-    o = _bg_da(np.full((4, 4), 500.0))
-    d = _bg_da(np.full((4, 4), 15.0))
-    naive = normalize_transmission(subtract_dark(s, d), subtract_dark(o, d), background_roi=(0, 0, 2, 2))
-    corrected = normalize_with_dark(s, o, d, background_roi=(0, 0, 2, 2))
+    Uses a non-uniform fixture so the dark-corrected ROI means differ (k = co/cs != 1); a uniform
+    fixture would make k = 1 and could not distinguish the correct k = co/cs scaling from k = 1.
+    """
+    from neunorm.processing.dark_corrector import subtract_dark
+    from neunorm.processing.normalizer import _background_roi_means, normalize_transmission, normalize_with_dark
+
+    roi = (0, 0, 2, 2)
+    s = _bg_da(300.0 + np.arange(16).reshape(4, 4))  # 300..315
+    o = _bg_da(500.0 + 2.0 * np.arange(16).reshape(4, 4))  # 500..530
+    d = _bg_da(10.0 + 0.5 * np.arange(16).reshape(4, 4))  # small darks 10..17.5
+    naive = normalize_transmission(subtract_dark(s, d), subtract_dark(o, d), background_roi=roi)
+    corrected = normalize_with_dark(s, o, d, background_roi=roi)
+
     np.testing.assert_allclose(corrected.values, naive.values, rtol=1e-6)  # values unchanged
-    assert np.all(corrected.variances <= naive.variances + 1e-12)  # over-count removed -> never larger
-    assert np.any(corrected.variances < naive.variances - 1e-12)  # strictly smaller somewhere
+
+    # Exact oracle: naive - corrected == over_count = 2 * k^2 * (S-D) * Var(D) / (O-D)^3, k = co/cs.
+    s_dc = s.values - d.values
+    o_dc = o.values - d.values
+    cs, co = _background_roi_means(subtract_dark(s, d), subtract_dark(o, d), roi)
+    k = co.value / cs.value
+    assert abs(k - 1.0) > 0.3  # fixture really exercises k != 1
+    over_count = 2.0 * (k**2) * s_dc * d.values / (o_dc**3)
+    np.testing.assert_allclose(naive.variances - corrected.variances, over_count, rtol=1e-6)
+    assert np.all(over_count > 0)  # the correction strictly reduces the reported variance
+
+
+def test_background_roi_zero_mean_raises():
+    """A zero (or non-finite) ROI mean is rejected with a clear error, not silent inf/nan output."""
+    import pytest
+
+    from neunorm.processing.normalizer import normalize_transmission
+
+    s = _bg_da(np.full((4, 4), 100.0))
+    o = np.full((4, 4), 200.0)
+    o[0:2, 0:2] = 0.0  # open-beam ROI has zero counts -> co == 0
+    with pytest.raises(ValueError, match="strictly positive and finite"):
+        normalize_transmission(s, _bg_da(o), background_roi=(0, 0, 2, 2))

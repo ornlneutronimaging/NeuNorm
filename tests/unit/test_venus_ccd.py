@@ -495,3 +495,25 @@ class TestVenusCCDPipeline:
         np.testing.assert_allclose(t_bg.values, 1.0, rtol=1e-5)
         # and it differs from the proton-charge normalization
         assert not np.allclose(t_bg.values, t_pc.values)
+
+    def test_venus_ccd_pipeline_background_roi_drops_proton_charge(self):
+        """In background_roi mode the (unused, un-aggregated) IntegratedPCharge must not leak to output.
+
+        Uses multiple runs: with pc_keys=() the combined array would otherwise retain the first run's
+        loaded IntegratedPCharge, surfacing a stale, never-aggregated proton charge in the coords and
+        the on-disk provenance. The pipeline drops it; this test inspects the output coords + HDF5.
+        """
+        with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_ccd_pipeline(
+                sample_paths=[self.sample_paths, self.sample_paths],  # multi-run: exercises the leak path
+                ob_paths=[self.ob_paths, self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=(0, 0, 8, 8),
+            )
+            # not in the returned coords...
+            assert "IntegratedPCharge" not in transmission.coords
+            # ...nor persisted to the HDF5 file
+            with h5py.File(output_path, "r") as hf:
+                assert "IntegratedPCharge" not in hf

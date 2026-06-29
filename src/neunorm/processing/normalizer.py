@@ -25,6 +25,11 @@ def _background_roi_means(
     semantics, matching ``apply_roi`` / ``apply_air_region_correction``). The means reduce the
     spatial ``x``/``y`` dimensions, so for 3D ``(spectral, x, y)`` data they are computed per
     spectral bin. The returned scipp scalars/arrays carry the variance of the mean.
+
+    Note: the reduction is mask-aware, so masked pixels in the ROI are excluded from the value.
+    Their variance follows scipp's masked-reduction convention, which is slightly *conservative*
+    (the ROI-mean uncertainty can be marginally larger than ``sum(unmasked var) / n_unmasked**2``);
+    it never under-states the uncertainty.
     """
     if not (
         isinstance(background_roi, (tuple, list))
@@ -46,6 +51,16 @@ def _background_roi_means(
     # then take .data to drop coords (avoids coord-mismatch in the subsequent division).
     cs = sc.mean(sample["x", x0:x1]["y", y0:y1], dim=["x", "y"]).data
     co = sc.mean(ob["x", x0:x1]["y", y0:y1], dim=["x", "y"]).data
+    # The proxy divides by these means (and uses 1/cs**2, 1/co**2 in the variance term), and
+    # normalize_with_dark forms k = co/cs, so a zero or non-finite ROI mean — e.g. an all-masked or
+    # empty-counts ROI — would silently yield inf/nan transmission. Fail loudly instead: a background
+    # ROI must be a bright, sample-free region with positive counts.
+    for name, m in (("sample", cs), ("ob", co)):
+        if not bool(sc.all(sc.isfinite(m)).value) or sc.min(m).value <= 0:
+            raise ValueError(
+                f"background_roi {background_roi} {name} mean must be strictly positive and finite "
+                f"(min={sc.min(m).value}); the ROI must contain positive counts in every image"
+            )
     return cs, co
 
 
@@ -87,7 +102,10 @@ def normalize_transmission(  # noqa: C901
         each image is normalized by its mean counts in this ROI — a proton-charge proxy for
         when proton charge is unavailable (e.g. MARS): ``T = (S/mean(S[B])) / (O/mean(O[B]))``.
         Mutually exclusive with ``proton_charge_sample`` / ``proton_charge_ob``. Uncertainty is
-        propagated first-order (the in-ROI sample/ROI-mean correlation is not corrected).
+        propagated first-order (the in-ROI sample/ROI-mean correlation is not corrected). Raises
+        ``ValueError`` if the ROI mean is not strictly positive and finite in every image. Indices
+        are resolved against the passed arrays; if a pipeline crops with ``roi`` first, give
+        ``background_roi`` in the post-crop frame.
 
     Returns
     -------

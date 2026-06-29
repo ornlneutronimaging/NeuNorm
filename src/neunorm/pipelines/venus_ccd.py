@@ -77,7 +77,9 @@ def run_venus_ccd_pipeline(  # noqa: C901
         If None, air correction is not applied.
     background_roi : Optional[tuple]
         Sample-free background ROI (x0, y0, x1, y1) for flux-proxy normalization when proton
-        charge is unavailable (issue #159). Mutually exclusive with proton-charge correction.
+        charge is unavailable (issue #159). Mutually exclusive with proton-charge correction. If
+        ``roi`` is also given the detector is cropped first, so ``background_roi`` indices are
+        resolved in the post-crop frame.
 
     Notes
     -----
@@ -161,6 +163,11 @@ def run_venus_ccd_pipeline(  # noqa: C901
             transmission = normalize_with_dark(sample, ob, dark, background_roi=background_roi)
         else:
             transmission = normalize_transmission(sample, ob, background_roi=background_roi)
+        # IntegratedPCharge was neither used nor aggregated in this mode (pc_keys=()), so the
+        # combined array still carries the first run's loaded value as an unaligned coord. Drop it
+        # so a stale, never-aggregated proton charge does not reach the output coords/provenance.
+        if "IntegratedPCharge" in transmission.coords:
+            del transmission.coords["IntegratedPCharge"]
     else:
         proton_charge_sample = sample.coords["IntegratedPCharge"].astype("float32")
         proton_charge_ob = ob.coords["IntegratedPCharge"].astype("float32")

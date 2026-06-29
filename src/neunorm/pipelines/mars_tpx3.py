@@ -63,7 +63,9 @@ def run_mars_tpx3_pipeline(  # noqa: C901
         Shape of the TPX3 detector (default: (514, 514))
     background_roi : Optional[tuple]
         Sample-free background ROI (x0, y0, x1, y1) for flux-proxy normalization when proton
-        charge is unavailable (issue #159). Mutually exclusive with proton-charge correction.
+        charge is unavailable (issue #159). Mutually exclusive with proton-charge correction. If
+        ``roi`` is also given the detector is cropped first, so ``background_roi`` indices are
+        resolved in the post-crop frame.
 
     Notes
     -----
