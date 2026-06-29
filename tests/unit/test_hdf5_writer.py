@@ -142,7 +142,7 @@ def _data_3d():
 def test_write_hdf5_fallback_json_for_non_native_metadata():
     """A non-nested value h5py cannot store natively (e.g. a dict) falls back to JSON.
 
-    Exercises the defensive fallback path (issue #140): the native create_dataset raises,
+    Exercises the defensive fallback path: the native create_dataset raises,
     the partial dataset is removed, and the value is JSON-encoded instead of dropped.
     """
     from neunorm.exporters.hdf5_writer import write_hdf5
@@ -162,7 +162,7 @@ def test_write_hdf5_fallback_json_for_non_native_metadata():
 
 
 def test_write_hdf5_skips_unserializable_nested_metadata_without_corrupting():
-    """A nested value json.dumps cannot encode is skipped — never aborting the write (#140).
+    """A nested value json.dumps cannot encode is skipped — never aborting the write.
 
     json.dumps can still raise (e.g. on a circular reference) even with default=str. A
     self-referential list is nested, so this exercises the *nested-branch* guard: the key is
@@ -189,7 +189,7 @@ def test_write_hdf5_skips_unserializable_nested_metadata_without_corrupting():
 
 
 def test_write_hdf5_skips_unstorable_fallback_metadata_without_corrupting():
-    """The fallback branch skips a value h5py AND json both reject — without corrupting (#140).
+    """The fallback branch skips a value h5py AND json both reject — without corrupting.
 
     A dict with a tuple key is not natively storable by h5py (TypeError) and not
     JSON-serializable (json requires str/number keys), so it exercises the native-write
@@ -211,7 +211,7 @@ def test_write_hdf5_skips_unstorable_fallback_metadata_without_corrupting():
 
 
 def test_write_hdf5_skips_malformed_key_metadata_without_corrupting():
-    """A malformed metadata key (empty / trailing-slash) is skipped, not fatal (issue #140).
+    """A malformed metadata key (empty / trailing-slash) is skipped, not fatal.
 
     h5py rejects empty or slash-bearing dataset names with ValueError. That raise happens
     inside the per-key write *after* the bulk arrays, so the loop's backstop must skip the bad
@@ -241,7 +241,7 @@ def test_write_hdf5_skips_malformed_key_metadata_without_corrupting():
 
 
 def test_write_hdf5_skips_unformattable_key_metadata_without_corrupting():
-    """A non-string key whose formatting raises is skipped, not fatal (issue #140).
+    """A non-string key whose formatting raises is skipped, not fatal.
 
     Name construction (f"metadata/{key}") runs inside the per-key backstop, so even a key
     object whose __format__/__str__/__repr__ raises is skipped with a warning rather than
@@ -280,7 +280,7 @@ def test_write_hdf5_skips_unformattable_key_metadata_without_corrupting():
 
 
 def test_write_hdf5_colliding_keys_keep_first_without_dropping_earlier():
-    """When two keys collide under str() (e.g. 1 and "1"), the first is kept (issue #140).
+    """When two keys collide under str() (e.g. 1 and "1"), the first is kept.
 
     Both int 1 and str "1" map to dataset path "metadata/1". The earlier value must survive and
     the later colliding key is skipped — cleanup must never delete the earlier valid dataset.
@@ -302,7 +302,7 @@ def test_write_hdf5_colliding_keys_keep_first_without_dropping_earlier():
 
 
 def test_write_hdf5_skips_surrogate_key_metadata_without_corrupting():
-    """A string key h5py cannot encode (lone surrogate) is skipped, not fatal (issue #140).
+    """A string key h5py cannot encode (lone surrogate) is skipped, not fatal.
 
     For a key like "\\udcff", create_dataset raises UnicodeEncodeError, and the `name in f`
     cleanup lookup would re-raise the same error — so the except-body cleanup must be guarded.
@@ -323,7 +323,7 @@ def test_write_hdf5_skips_surrogate_key_metadata_without_corrupting():
 
 
 def test_write_hdf5_skips_unstorable_string_metadata_without_corrupting():
-    """A string h5py cannot store (embedded NUL) is skipped — never aborting the write (#140).
+    """A string h5py cannot store (embedded NUL) is skipped — never aborting the write.
 
     h5py VLEN strings reject embedded NULs (ValueError) and lone surrogates
     (UnicodeEncodeError, a ValueError subclass); both raise *after* the bulk arrays are

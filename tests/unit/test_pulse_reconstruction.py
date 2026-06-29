@@ -175,7 +175,7 @@ class TestPulseReconstruction:
 
 
 def test_assign_chip_ids_quadrants():
-    """assign_chip_ids maps pixel quadrants to chip 0-3 for a 2x2 quad detector (issue #163)."""
+    """assign_chip_ids maps pixel quadrants to chip 0-3 for a 2x2 quad detector."""
     import pytest
 
     from neunorm.tof.pulse_reconstruction import assign_chip_ids

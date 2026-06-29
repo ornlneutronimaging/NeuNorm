@@ -135,7 +135,7 @@ class TestMarsCCDPipeline:
                 # Check masks
                 assert "masks/dead" in hf
                 np.testing.assert_equal(hf["masks/dead"], np.zeros((32, 32), dtype=bool))
-                # Check metadata (nested per-run paths stored as round-trippable JSON, issue #140)
+                # Check metadata (nested per-run paths stored as round-trippable JSON)
                 assert "metadata/sample_paths" in hf
                 assert json.loads(hf["metadata/sample_paths"].asstr()[()]) == [[str(p) for p in self.sample_paths]]
                 assert "metadata/ob_paths" in hf
@@ -318,7 +318,7 @@ class TestMarsCCDPipeline:
         )  # should be unchanged since it's the same for both runs
 
     def test_mars_ccd_pipeline_no_dark(self):
-        """Dark current is optional (issue #146): omitting dark_paths skips dark correction.
+        """Dark current is optional: omitting dark_paths skips dark correction.
 
         Without dark subtraction the transmission is T = S / OB = (81 + i) / 100
         for these fixtures (vs (81 + i - 5) / (100 - 5) with dark). MARS does not
@@ -351,7 +351,7 @@ class TestMarsCCDPipeline:
                 assert "metadata/dark_paths" not in hf
 
     def test_mars_ccd_pipeline_empty_dark_paths(self):
-        """An empty dark_paths list is treated the same as omitting dark (issue #146)."""
+        """An empty dark_paths list is treated the same as omitting dark."""
         with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
             transmission = run_mars_ccd_pipeline(
                 sample_paths=[self.sample_paths],
@@ -372,7 +372,7 @@ class TestMarsCCDPipeline:
             )
 
     def test_mars_ccd_pipeline_no_dark_uncertainty(self):
-        """No-dark UQ equals the dark-free propagation, with no dark-frame variance term (issue #146).
+        """No-dark UQ equals the dark-free propagation, with no dark-frame variance term.
 
         Two independent checks:
         1. The pipeline's no-dark output (values AND variances) matches a direct
@@ -415,7 +415,7 @@ class TestMarsCCDPipeline:
         )
         ob = prepare_reference(ob, dim="N_image")
         expected = normalize_transmission(sample, ob)
-        # The pipeline produces float32 normalized data end-to-end (issue #147). MARS
+        # The pipeline produces float32 normalized data end-to-end. MARS
         # has no proton-charge division, so loaders being float32 keeps the whole path
         # float32 and this structural check stays bit-tight against the pipeline output.
         assert no_dark.dtype == sc.DType.float32
@@ -528,7 +528,7 @@ class TestMarsCCDPipelineFITS:
                 # Check masks
                 assert "masks/dead" in hf
                 np.testing.assert_equal(hf["masks/dead"], np.zeros((32, 32), dtype=bool))
-                # Check metadata (nested per-run paths stored as round-trippable JSON, issue #140)
+                # Check metadata (nested per-run paths stored as round-trippable JSON)
                 assert "metadata/sample_paths" in hf
                 assert json.loads(hf["metadata/sample_paths"].asstr()[()]) == [[str(p) for p in self.sample_paths]]
                 assert "metadata/ob_paths" in hf
@@ -550,7 +550,7 @@ class TestMarsCCDPipelineFITS:
                 np.testing.assert_equal(hf["MODEL"].asstr()[()], "DW936_BV")
 
     def test_mars_ccd_pipeline_background_roi(self):
-        """background_roi flux normalization runs end-to-end and changes the result (issue #159)."""
+        """background_roi flux normalization runs end-to-end and changes the result."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
             t_default = run_mars_ccd_pipeline(
@@ -572,7 +572,7 @@ class TestMarsCCDPipelineFITS:
         assert not np.allclose(t_bg.values, t_default.values)
 
     def test_mars_ccd_pipeline_background_roi_with_dark(self):
-        """background_roi + a dark frame routes through normalize_with_dark (issue #159 / #142)."""
+        """background_roi + a dark frame routes through normalize_with_dark."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
             t = run_mars_ccd_pipeline(
@@ -589,7 +589,7 @@ class TestMarsCCDPipelineFITS:
         np.testing.assert_allclose(t.values, 1.0, rtol=1e-5)
 
     def test_mars_ccd_pipeline_background_roi_accepts_roi_object(self):
-        """A background_roi ROI yields the same transmission as the equivalent tuple (issue #159)."""
+        """A background_roi ROI yields the same transmission as the equivalent tuple."""
         from neunorm import ROI
 
         with (
@@ -618,7 +618,7 @@ class TestMarsCCDPipelineFITS:
 
         Guards the pipeline-level coercion specifically: ``apply_roi`` coerces internally (so the
         shape is right regardless), and the HDF5 writer would NOT crash on a raw ROI — it would
-        str()-coerce it via the issue #140 JSON backstop (``encoding="json"``). So we round-trip
+        str()-coerce it via the JSON backstop (``encoding="json"``). So we round-trip
         ``roi_applied`` and assert it is the native int array (the coerced tuple), which fails if a
         raw ROI ever reaches provenance.
         """

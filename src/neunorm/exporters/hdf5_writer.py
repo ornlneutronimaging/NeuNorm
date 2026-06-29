@@ -17,13 +17,13 @@ def _is_nested_sequence(value) -> bool:
     """Return True if ``value`` is a list/tuple that contains a list/tuple element.
 
     Nested sequences (e.g. per-run file-path provenance ``[[...], [...]]``) cannot be
-    stored natively by h5py when ragged, so they are JSON-serialized instead (#140).
+    stored natively by h5py when ragged, so they are JSON-serialized instead.
     """
     return isinstance(value, (list, tuple)) and any(isinstance(item, (list, tuple)) for item in value)
 
 
 def _write_json_metadata(f: h5py.File, name: str, value) -> None:
-    """Store ``value`` as a JSON string dataset tagged with ``encoding="json"`` (issue #140).
+    """Store ``value`` as a JSON string dataset tagged with ``encoding="json"``.
 
     JSON-native leaves (strings, numbers, bools, ``null``) keep their JSON types; only
     non-JSON-serializable leaves are coerced via ``str()`` (``json.dumps(..., default=str)``).
@@ -36,7 +36,7 @@ def _write_json_metadata(f: h5py.File, name: str, value) -> None:
 
 
 def _write_metadata_value(f: h5py.File, name: str, value) -> None:
-    """Write one metadata value, choosing the best HDF5 representation (issue #140).
+    """Write one metadata value, choosing the best HDF5 representation.
 
     Strings, scalars, and flat arrays are stored natively; nested list/tuple provenance is
     stored as a round-trippable JSON string. May raise; the caller backstops failures so a
@@ -58,7 +58,7 @@ def _write_metadata_value(f: h5py.File, name: str, value) -> None:
 
 
 def _discard_failed_metadata(f: h5py.File, name: Optional[str], key, exc: Exception, created_here: bool) -> None:
-    """Best-effort cleanup + warning for a metadata key that could not be written (issue #140).
+    """Best-effort cleanup + warning for a metadata key that could not be written.
 
     Never raises: provenance is best-effort and must not abort the bulk-data write. Removes a
     leftover dataset only when this key's write actually created it (``created_here``) — never a
@@ -169,7 +169,7 @@ def write_hdf5(  # noqa: C901
 
         # Write metadata. Provenance is best-effort: a single un-writable key — a bad value
         # (ragged/unserializable) or a malformed/colliding name — must never abort the write or
-        # leave a corrupt, partially-written file (issue #140). Nested list/tuple values are
+        # leave a corrupt, partially-written file. Nested list/tuple values are
         # serialized as round-trippable JSON (read back with json.loads(dataset.asstr()[()])).
         if metadata:
             for key, value in metadata.items():
@@ -184,7 +184,7 @@ def write_hdf5(  # noqa: C901
                         raise ValueError(f"duplicate metadata path {name!r}")
                     created_here = True
                     _write_metadata_value(f, name, value)
-                except Exception as exc:  # noqa: BLE001 - metadata is best-effort; never abort the bulk-data write (#140)
+                except Exception as exc:  # noqa: BLE001 - metadata is best-effort; never abort the bulk-data write
                     _discard_failed_metadata(f, name, key, exc, created_here)
 
     logger.info("HDF5 file written to {}", output_path)

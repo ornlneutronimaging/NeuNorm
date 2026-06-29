@@ -371,13 +371,13 @@ def test_wavelength_energy_de_broglie_constant():
         assert abs(energy.value - expected_ev) / expected_ev < 1e-6
 
 
-# --- issue #141: energy/wavelength binning must apply detector_time_offset ---
+# --- energy/wavelength binning must apply detector_time_offset ---
 
 
 def test_convert_energy_to_tof_is_inverse_of_tof_to_energy():
     """convert_energy_to_tof is the exact inverse of convert_tof_to_energy, offset included.
 
-    This is what makes the energy bin edges consistent with the coordinate labeling (#141).
+    This is what makes the energy bin edges consistent with the coordinate labeling.
     """
     from neunorm.tof.coordinate_converter import (
         convert_energy_to_tof,
@@ -401,7 +401,7 @@ def test_convert_energy_to_tof_is_inverse_of_tof_to_energy():
 def test_create_tof_bins_offset_shifts_edges_into_raw_space():
     """A non-zero detector_time_offset shifts the energy/wavelength TOF edges by exactly -offset.
 
-    Regression for #141: the bin edges must live in raw detector-TOF space so they match the
+    Regression: the bin edges must live in raw detector-TOF space so they match the
     raw event TOF histogrammed into them; offset=0 reproduces the old physical-TOF edges.
     """
     from neunorm.data_models.tof import BinningConfig
@@ -422,7 +422,7 @@ def test_create_tof_bins_offset_shifts_edges_into_raw_space():
 
 
 def test_event_energy_binning_places_events_by_raw_tof_with_offset():
-    """Events histogrammed in energy space land in the bin bracketing their RAW TOF (#141).
+    """Events histogrammed in energy space land in the bin bracketing their RAW TOF.
 
     With the offset applied, the energy bin edges are in raw detector-TOF space, so a peak at
     a known raw TOF falls in the bin whose raw-TOF edges bracket it — consistent with the
@@ -463,7 +463,7 @@ def test_event_energy_binning_places_events_by_raw_tof_with_offset():
 
 
 def test_get_energy_and_wavelength_histogram_apply_offset():
-    """get_energy_histogram / get_wavelength_histogram label TOF with detector_time_offset (#141).
+    """get_energy_histogram / get_wavelength_histogram label TOF with detector_time_offset.
 
     The public histogram-relabeling helpers must use the same offset-aware converter as the bin
     construction, so a histogram built with an offset is labeled consistently. Without the offset

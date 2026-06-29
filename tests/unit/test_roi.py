@@ -1,4 +1,4 @@
-"""Unit tests for the ROI data model (issue #159, Jean's named-ROI request)."""
+"""Unit tests for the ROI data model (Jean's named-ROI request)."""
 
 import pytest
 

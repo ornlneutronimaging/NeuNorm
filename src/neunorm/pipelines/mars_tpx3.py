@@ -64,7 +64,7 @@ def run_mars_tpx3_pipeline(  # noqa: C901
         Shape of the TPX3 detector (default: (514, 514))
     background_roi : Optional[tuple]
         Sample-free background ROI (x0, y0, x1, y1) for flux-proxy normalization when proton
-        charge is unavailable (issue #159). Mutually exclusive with proton-charge correction. If
+        charge is unavailable. Mutually exclusive with proton-charge correction. If
         ``roi`` is also given the detector is cropped first, so ``background_roi`` indices are
         resolved in the post-crop frame.
 
@@ -79,7 +79,7 @@ def run_mars_tpx3_pipeline(  # noqa: C901
         Final normalized transmission DataArray with metadata and masks
     """
     # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
-    # tuples up front so cropping and provenance see a consistent form (issue #159).
+    # tuples up front so cropping and provenance see a consistent form.
     if roi is not None:
         roi = as_roi_bounds(roi)
     if background_roi is not None:
@@ -129,7 +129,7 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     if gamma_filter:
         sample = apply_gamma_filter(sample)
 
-    # Normalization (background_roi flux proxy when provided, issue #159)
+    # Normalization (background_roi flux proxy when provided)
     transmission = normalize_transmission(sample, ob, background_roi=background_roi)
 
     # Write output

@@ -69,7 +69,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
         Whether to apply gamma filtering to the sample data (default: True)
     background_roi : Optional[tuple]
         Sample-free background ROI (x0, y0, x1, y1) for flux-proxy normalization when proton
-        charge is unavailable (issue #159). Mutually exclusive with proton-charge correction. If
+        charge is unavailable. Mutually exclusive with proton-charge correction. If
         ``roi`` is also given the detector is cropped first, so ``background_roi`` indices are
         resolved in the post-crop frame.
 
@@ -84,7 +84,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
         Final normalized transmission DataArray with metadata and masks
     """
     # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
-    # tuples up front so cropping and provenance see a consistent form (issue #159).
+    # tuples up front so cropping and provenance see a consistent form.
     if roi is not None:
         roi = as_roi_bounds(roi)
     if background_roi is not None:
@@ -130,7 +130,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
         normalize_by_runs=True,
     )
 
-    # Dark current is optional (issue #146): only load/combine it when dark paths are provided.
+    # Dark current is optional: only load/combine it when dark paths are provided.
     dark = None
     if dark_paths:
         dark_runs = [load_stack(paths) for paths in dark_paths]
@@ -165,10 +165,10 @@ def run_mars_ccd_pipeline(  # noqa: C901
 
     # Dark correction (optional) + normalization. With a shared dark frame, normalize_with_dark
     # subtracts the dark and normalizes in one step so the dark variance is not double-counted
-    # in the transmission uncertainty (issue #142). Without dark, normalize directly.
+    # in the transmission uncertainty. Without dark, normalize directly.
     if background_roi is not None:
-        # Flux-proxy normalization from a sample-free ROI (issue #159), in place of proton charge.
-        # With a shared dark, route through normalize_with_dark so the #142 shared-dark variance
+        # Flux-proxy normalization from a sample-free ROI, in place of proton charge.
+        # With a shared dark, route through normalize_with_dark so the shared-dark variance
         # double-count is corrected (k = co/cs); without dark, normalize directly.
         if dark is not None:
             transmission = normalize_with_dark(sample, ob, dark, background_roi=background_roi)
@@ -180,7 +180,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
         logger.info("No dark current provided; skipping dark correction")
         transmission = normalize_transmission(sample, ob)
 
-    # Guarantee a float32 normalized data product (issue #147), regardless of any
+    # Guarantee a float32 normalized data product, regardless of any
     # intermediate dtype promotion. .astype converts values and variances. MARS has
     # no proton-charge division, so this is already float32; the cast keeps the two
     # CCD pipelines symmetric and is robust to future changes.

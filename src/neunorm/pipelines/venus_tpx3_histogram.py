@@ -100,7 +100,7 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
         Final normalized transmission DataArray with metadata and masks
     """
     # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
-    # tuples up front so cropping and provenance see a consistent form (issue #159).
+    # tuples up front so cropping and provenance see a consistent form.
     if roi is not None:
         roi = as_roi_bounds(roi)
     if air_roi is not None:
@@ -232,7 +232,7 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
         transmission = apply_air_region_correction(transmission, air_roi)
 
     # Add wavelength and energy coordinates converted from TOF using the configurable flight
-    # path and the time offset from the metadata (issue #141).
+    # path and the time offset from the metadata.
     if "detector_time_offset" in sample.coords:
         time_offset = sample.coords["detector_time_offset"]
         transmission.coords["wavelength"] = convert_tof_to_wavelength(

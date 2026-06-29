@@ -223,7 +223,7 @@ def create_tof_bins(
     offset : sc.Variable, optional
         Detector time offset (e.g. TIDelay) applied so energy/wavelength bin edges live in
         raw detector-TOF space — matching the raw event TOF that is histogrammed into them
-        and the later coordinate labeling (issue #141). Default: 0 us. Ignored for 'tof' mode.
+        and the later coordinate labeling. Default: 0 us. Ignored for 'tof' mode.
 
     Returns
     -------
@@ -261,7 +261,7 @@ def _energy_bins_to_tof(
 
     Uses ``convert_energy_to_tof`` — the exact inverse of the labeling conversion — so the
     edges live in raw detector-TOF space (``t = L*sqrt(m_n/(2E)) - offset``) and match the
-    raw event TOF histogrammed into them (issue #141).
+    raw event TOF histogrammed into them.
     """
     emin, emax = config.energy_range
 
@@ -286,7 +286,7 @@ def _wavelength_bins_to_tof(
 
     Uses ``convert_wavelength_to_tof`` — the exact inverse of the labeling conversion — so the
     edges live in raw detector-TOF space (``t = λ*m_n*L/h - offset``) and match the raw event
-    TOF histogrammed into them (issue #141).
+    TOF histogrammed into them.
     """
     wl_min, wl_max = config.wavelength_range
 
@@ -343,7 +343,7 @@ def get_energy_histogram(
         Flight path in meters
     offset : sc.Variable
         Detector time offset (e.g. TIDelay) applied during TOF→energy labeling so it matches
-        offset-aware bin edges (issue #141). Default: 0 us. Pass the same offset used to build
+        offset-aware bin edges. Default: 0 us. Pass the same offset used to build
         the histogram's energy bins.
 
     Returns
@@ -403,7 +403,7 @@ def get_wavelength_histogram(
         Flight path in meters
     offset : sc.Variable
         Detector time offset (e.g. TIDelay) applied during TOF→wavelength labeling so it matches
-        offset-aware bin edges (issue #141). Default: 0 us. Pass the same offset used to build
+        offset-aware bin edges. Default: 0 us. Pass the same offset used to build
         the histogram's wavelength bins.
 
     Returns

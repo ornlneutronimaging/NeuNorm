@@ -133,7 +133,7 @@ class TestMarsTPX3Pipeline:
                 np.testing.assert_equal(hf["masks/dead"], np.zeros((32, 32), dtype=bool))
                 assert "masks/hot" in hf
                 np.testing.assert_equal(hf["masks/hot"], np.zeros((32, 32), dtype=bool))
-                # Check metadata (nested per-run paths stored as round-trippable JSON, issue #140)
+                # Check metadata (nested per-run paths stored as round-trippable JSON)
                 assert "metadata/sample_paths" in hf
                 assert json.loads(hf["metadata/sample_paths"].asstr()[()]) == [[str(p) for p in self.sample_paths]]
                 assert "metadata/ob_paths" in hf
@@ -271,7 +271,7 @@ class TestMarsTPX3Pipeline:
         np.testing.assert_allclose(transmission.variances, 0.004, atol=0.001)
 
     def test_mars_tpx3_pipeline_background_roi(self):
-        """background_roi flux normalization runs end-to-end on TPX3 and changes the result (issue #159)."""
+        """background_roi flux normalization runs end-to-end on TPX3 and changes the result."""
         with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
             output_path = Path(f.name)
             t_default = run_mars_tpx3_pipeline(

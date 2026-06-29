@@ -50,7 +50,7 @@ def load_tiff_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
         for path in paths:
             with Image.open(path) as img:
                 # float32 is sufficient for neutron imaging (16-bit detectors) and
-                # halves the in-memory footprint of large stacks (issue #147).
+                # halves the in-memory footprint of large stacks.
                 data_list.append(np.asanyarray(img, dtype=np.float32))
                 metadata_list.append(img.tag_v2)
     except Exception as e:

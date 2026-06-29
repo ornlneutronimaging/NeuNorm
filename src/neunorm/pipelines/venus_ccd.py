@@ -78,7 +78,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
         If None, air correction is not applied.
     background_roi : Optional[tuple]
         Sample-free background ROI (x0, y0, x1, y1) for flux-proxy normalization when proton
-        charge is unavailable (issue #159). Mutually exclusive with proton-charge correction. If
+        charge is unavailable. Mutually exclusive with proton-charge correction. If
         ``roi`` is also given the detector is cropped first, so ``background_roi`` indices are
         resolved in the post-crop frame.
 
@@ -93,7 +93,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
         Final normalized transmission DataArray with metadata and masks
     """
     # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
-    # tuples up front so cropping and provenance see a consistent form (issue #159).
+    # tuples up front so cropping and provenance see a consistent form.
     if roi is not None:
         roi = as_roi_bounds(roi)
     if air_roi is not None:
@@ -129,7 +129,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
         normalize_by_runs=True,
     )
 
-    # Dark current is optional (issue #146): only load/combine it when dark paths are provided.
+    # Dark current is optional: only load/combine it when dark paths are provided.
     dark = None
     if dark_paths:
         dark_runs = [load_stack(paths) for paths in dark_paths]
@@ -160,13 +160,13 @@ def run_venus_ccd_pipeline(  # noqa: C901
         sample = apply_gamma_filter(sample)
 
     # Dark correction (optional) + normalization. The proton-charge coords are cast to float32
-    # so the division does not silently re-promote the float32 image data to float64 (issue
-    # #147; the coord is float64 because metadata is parsed via float()). With a shared dark
+    # so the division does not silently re-promote the float32 image data to float64 (the coord
+    # is float64 because metadata is parsed via float()). With a shared dark
     # frame, normalize_with_dark subtracts the dark and normalizes in one step so the dark
-    # variance is not double-counted in the transmission uncertainty (issue #142).
+    # variance is not double-counted in the transmission uncertainty.
     if background_roi is not None:
-        # Flux-proxy normalization from a sample-free ROI (issue #159), replacing the proton-charge
-        # correction. With a shared dark, route through normalize_with_dark so the #142 shared-dark
+        # Flux-proxy normalization from a sample-free ROI, replacing the proton-charge
+        # correction. With a shared dark, route through normalize_with_dark so the shared-dark
         # variance double-count is corrected (k = co/cs).
         if dark is not None:
             transmission = normalize_with_dark(sample, ob, dark, background_roi=background_roi)
@@ -201,7 +201,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
     if air_roi is not None:
         transmission = apply_air_region_correction(transmission, air_roi)
 
-    # Guarantee a float32 normalized data product (issue #147), regardless of any
+    # Guarantee a float32 normalized data product, regardless of any
     # intermediate dtype promotion. .astype converts values and variances.
     transmission = transmission.astype("float32")
 

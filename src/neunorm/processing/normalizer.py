@@ -183,7 +183,7 @@ def normalize_transmission(  # noqa: C901
     if background_roi is not None:
         background_roi = as_roi_bounds(background_roi)
 
-    # Background-ROI flux normalization (issue #159): when no proton charge is available
+    # Background-ROI flux normalization: when no proton charge is available
     # (e.g. MARS), scale each image by its mean counts in a sample-free ROI so per-image
     # beam-flux differences cancel: T = (S/mean(S[B])) / (O/mean(O[B])). First-order UQ.
     if background_roi is not None:
@@ -288,7 +288,7 @@ def normalize_transmission(  # noqa: C901
             co_term = co_var / (co * co)
             coeff_rel_var = co_term if coeff_rel_var is None else coeff_rel_var + co_term
         extra = sc.array(dims=list(transmission.dims), values=transmission.values**2) * coeff_rel_var
-        # Keep the variance dtype stable (issue #147 float32 pipelines), matching normalize_with_dark.
+        # Keep the variance dtype stable (float32 pipelines), matching normalize_with_dark.
         transmission.variances = transmission.variances + extra.values.astype(transmission.variances.dtype, copy=False)
 
     logger.success("✓ Transmission normalized")
@@ -311,7 +311,7 @@ def normalize_with_dark(
     correction) where the **same** averaged ``dark`` is subtracted from both sample and open
     beam. ``subtract_dark`` + ``normalize_transmission`` would treat the numerator and
     denominator as statistically independent and propagate ``Var(dark)`` twice; this function
-    removes that spurious shared-dark covariance term (issue #142).
+    removes that spurious shared-dark covariance term.
 
     The transmission **values** are identical to
     ``normalize_transmission(subtract_dark(sample, dark), subtract_dark(ob, dark), ...)`` — only
@@ -333,7 +333,7 @@ def normalize_with_dark(
         charge. The shared-dark correction then uses ``k = co/cs`` (ratio of dark-corrected ROI
         means) in place of the proton-charge ratio, and additionally removes the ROI-mean shared-dark
         covariance term ``2*T^2*Cov(cs,co)/(cs*co)`` (``Cov(cs,co) = Var(mean(D_roi))``) — the
-        ROI-mean analog of the #142 pixel-level correction. (The in-ROI pixel/ROI-mean correlation
+        ROI-mean analog of the pixel-level correction. (The in-ROI pixel/ROI-mean correlation
         remains uncorrected, as documented on ``normalize_transmission``.)
 
     Returns
@@ -350,7 +350,7 @@ def normalize_with_dark(
         sample_dc, ob_dc, proton_charge_sample, proton_charge_ob, pc_uncertainty, background_roi=background_roi
     )
 
-    # Correct the shared-dark double-count (issue #142). normalize_transmission propagated
+    # Correct the shared-dark double-count. normalize_transmission propagated
     # Var(dark) through BOTH numerator and denominator as if they were independent; the true
     # propagation (dark appears once) is smaller by 2*k^2*s*Var(D)/o^3. Subtract that term.
     if transmission.variances is None or dark.variances is None:
@@ -380,7 +380,7 @@ def normalize_with_dark(
     # same ROI dark pixels, so Cov(cs, co) = Var(mean(D_roi)) > 0. normalize_transmission added the
     # ROI-mean term T^2 * (Var(cs)/cs^2 + Var(co)/co^2) treating cs and co as independent; subtract
     # the missing covariance term 2 * T^2 * Cov(cs,co) / (cs*co) too — the ROI-mean analog of the
-    # #142 pixel-level correction. (The in-ROI pixel<->mean correlation stays uncorrected, as
+    # pixel-level correction. (The in-ROI pixel<->mean correlation stays uncorrected, as
     # documented; for a clean background ROI the dark-mean covariance is the only remaining term.)
     if background_roi is not None:
         # Cov(cs,co) is mask-consistent with cs/co (it counts only the ROI dark pixels left unmasked
@@ -396,7 +396,7 @@ def normalize_with_dark(
     over_values = np.where(np.isfinite(over_values), over_values, 0.0)
     # Clamp to >= 0 defensively; the corrected variance is a true (non-negative) variance.
     transmission.variances = np.clip(transmission.variances - over_values, 0.0, None)
-    logger.success("✓ Shared-dark variance double-count corrected (issue #142)")
+    logger.success("✓ Shared-dark variance double-count corrected")
 
     return transmission
 
