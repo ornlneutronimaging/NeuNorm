@@ -63,7 +63,7 @@ def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
 
                 # Assume data is in primary HDU. float32 is sufficient for neutron
                 # imaging (16-bit detectors) and halves the in-memory footprint of
-                # large stacks (issue #147).
+                # large stacks.
                 arr = hdul[0].data.astype(np.float32)
                 data_list.append(arr)
 

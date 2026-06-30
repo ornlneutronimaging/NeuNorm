@@ -106,26 +106,30 @@ transmission = normalize_transmission(sample, ob)  # T = sample / ob, variances 
 | `Normalization()` (stateful object) | a `run_*_pipeline(...)` call, or composable functions |
 | `.load(..., data_type="sample"/"ob")` | pipeline `sample_paths` / `ob_paths`, or `neunorm.loaders.stack_loader.load_stack` / `tiff_loader.load_tiff_stack` / `fits_loader.load_fits_stack` |
 | `.load(..., data_type="df")` (dark/"df") | pipeline `dark_paths`, or `neunorm.processing.dark_corrector.subtract_dark(data, dark)` |
-| `.normalization(roi=...)` | Flux normalization by a background ROI — not yet in 2.x; planned as `background_roi=` ([#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159)). Note: 2.x `roi=` is a spatial **crop** (`apply_roi`), not this. |
+| `.normalization(roi=...)` | Flux normalization by a background ROI: `normalize_transmission(..., background_roi=(x0, y0, x1, y1))`, or pass `background_roi=` to `run_mars_ccd_pipeline` / `run_mars_tpx3_pipeline` / `run_venus_ccd_pipeline` ([#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159)). A proton-charge proxy for when proton charge is unavailable; mutually exclusive with it. Note: 2.x `roi=` is a spatial **crop** (`apply_roi`), not this. |
 | `.df_correction()` | `neunorm.processing.dark_corrector.subtract_dark(data, dark)` |
-| `.crop(roi=ROI(...))` | `neunorm.processing.roi_clipper.apply_roi(data, (x0, y0, x1, y1))` |
+| `.crop(roi=ROI(...))` | `neunorm.processing.roi_clipper.apply_roi(data, ROI(x0=.., y0=.., x1=.., y1=..))` (or a bare `(x0, y0, x1, y1)` tuple) |
 | auto/manual gamma filtering on `load()` | `neunorm.filters.gamma_filter.apply_gamma_filter(...)`, or pipeline `gamma_filter=True` |
 | `.export(folder=..., file_type="tif")` | `neunorm.exporters.hdf5_writer.write_hdf5(...)` (primary) or `tiff_writer.write_tiff_stack(...)`; pipelines write automatically via `output_path` |
 | `.get_normalized_data()` | the pipeline **returns** a `scipp.DataArray`; use `.values` for the NumPy array |
-| `from NeuNorm.roi import ROI; ROI(x0, y0, x1, y1)` | a plain tuple `(x0, y0, x1, y1)` |
+| `from NeuNorm.roi import ROI; ROI(x0, y0, x1, y1)` | `from neunorm.data_models.roi import ROI; ROI(x0=10, y0=20, x1=30, y1=40)` (also `ROI(x0=10, y0=20, width=20, height=20)`), or a bare `(x0, y0, x1, y1)` tuple. Accepted by `apply_roi`, `apply_air_region_correction`, `normalize_transmission(background_roi=)`, and the pipelines. |
 | `NeuNorm.normalization.DataType` | not needed — inputs are explicit function arguments |
 
 ## ROI
 
-1.x used an `ROI` object; 2.0 uses a 4-integer tuple in the same order:
+1.x had an `ROI` object; 2.0 has one too (`neunorm.data_models.roi.ROI`) and also accepts a bare
+4-integer tuple in the same order. 2.x stops are **exclusive** (1.x `x1`/`y1` were inclusive):
 
 ```python
 # 1.x
 from NeuNorm.roi import ROI
 roi = ROI(x0=10, y0=10, x1=110, y1=110)
 
-# 2.0
-roi = (10, 10, 111, 111)   # (x0, y0, x1, y1); 2.x stops are EXCLUSIVE (1.x x1/y1 were inclusive)
+# 2.0 — named ROI (exclusive stops) or a bare tuple
+from neunorm.data_models.roi import ROI
+roi = ROI(x0=10, y0=10, x1=111, y1=111)         # explicit stops
+roi = ROI(x0=10, y0=10, width=101, height=101)  # or by size
+roi = (10, 10, 111, 111)                        # or a bare (x0, y0, x1, y1) tuple
 ```
 
 ## Working with the result

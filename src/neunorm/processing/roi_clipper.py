@@ -5,10 +5,12 @@ Function for cropping spatial dimensions to a region of interest (ROI).
 import scipp as sc
 from loguru import logger
 
+from neunorm.data_models.roi import ROILike, as_roi_bounds
+
 
 def apply_roi(
     data: sc.DataArray,
-    roi: tuple[int, int, int, int],  # (x0, y0, x1, y1)
+    roi: ROILike,  # (x0, y0, x1, y1) tuple or an ROI
 ) -> sc.DataArray:
     """Crop spatial dimensions to ROI.
 
@@ -21,14 +23,17 @@ def apply_roi(
     ----------
     data : sc.DataArray
         Input data array to be cropped.
-    roi : tuple[int, int, int, int]
-        Region of interest specified as (x0, y0, x1, y1).
+    roi : ROI or tuple[int, int, int, int]
+        Region of interest as an :class:`~neunorm.data_models.roi.ROI` (e.g.
+        ``ROI(x0=10, y0=20, x1=30, y1=40)`` or ``ROI(x0=10, y0=20, width=20, height=20)``) or a bare
+        ``(x0, y0, x1, y1)`` tuple with exclusive stop indices.
 
     Returns
     -------
     sc.DataArray
         Cropped data array with updated coordinates.
     """
+    roi = as_roi_bounds(roi)
 
     logger.info("Applying ROI: {}", roi)
 

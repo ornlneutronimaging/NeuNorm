@@ -187,7 +187,7 @@ def test_event_data_model_total_events_mismatch():
 
 
 def test_load_event_data_fractional_tof_clock():
-    """A fractional TOF clock must use the full period, not int()-truncate it (issue #163)."""
+    """A fractional TOF clock must use the full period, not int()-truncate it."""
     from neunorm.loaders.event_loader import load_event_data
 
     with tempfile.NamedTemporaryFile(suffix=".h5", delete=False) as f:
@@ -210,7 +210,7 @@ def test_load_event_data_fractional_tof_clock():
 
 
 def test_event_data_getitem_filters_all_arrays():
-    """EventData is indexable: a mask returns a new EventData with all per-event arrays filtered (issue #163)."""
+    """EventData is indexable: a mask returns a new EventData with all per-event arrays filtered."""
     from neunorm.data_models.core import EventData
 
     events = EventData(

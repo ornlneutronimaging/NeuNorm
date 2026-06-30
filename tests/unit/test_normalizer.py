@@ -145,7 +145,7 @@ def test_normalize_transmission_with_proton_charge():
     assert transmission.variances is not None
 
 
-# --- issue #142: shared-dark variance must not be double-counted ---
+# --- shared-dark variance must not be double-counted ---
 
 
 def _ccd_frames(sample_counts, ob_counts, dark_counts):
@@ -158,7 +158,7 @@ def _ccd_frames(sample_counts, ob_counts, dark_counts):
 
 
 def test_normalize_with_dark_values_match_old_path():
-    """normalize_with_dark returns the SAME transmission values as subtract_dark+normalize (#142)."""
+    """normalize_with_dark returns the SAME transmission values as subtract_dark+normalize."""
     from neunorm.processing.dark_corrector import subtract_dark
     from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
 
@@ -178,7 +178,7 @@ def test_normalize_with_dark_values_match_old_path():
 
 def test_normalize_with_dark_variance_matches_monte_carlo():
     """The corrected Var(T) matches a shared-dark Monte Carlo and is smaller than the old
-    double-counted value by exactly 2*N*Var(D)/M^3 (MARS) (issue #142)."""
+    double-counted value by exactly 2*N*Var(D)/M^3 (MARS)."""
     from neunorm.processing.dark_corrector import subtract_dark
     from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
 
@@ -222,7 +222,7 @@ def test_normalize_with_dark_reduces_variance_with_proton_charge():
 
 
 def test_normalize_with_dark_pc_overcount_per_image_exact():
-    """VENUS: the removed over-count equals 2*k^2*(S-D)*Var(D)/(O-D)^3 with per-image k (#142).
+    """VENUS: the removed over-count equals 2*k^2*(S-D)*Var(D)/(O-D)^3 with per-image k.
 
     Pins the exact k^2 = (pc_ob/pc_sample)^2 magnitude and the per-image broadcast for a
     multi-image sample with VARYING per-image proton charge (not just directional reduction).
@@ -293,7 +293,7 @@ def test_normalize_transmission_2d_ob():
 
 
 def test_normalize_transmission_requires_both_proton_charges():
-    """One-sided proton charge -> non-dimensionless T, so it must raise (issue #163)."""
+    """One-sided proton charge -> non-dimensionless T, so it must raise."""
     import pytest
 
     from neunorm.processing.normalizer import normalize_transmission
@@ -311,3 +311,276 @@ def test_normalize_transmission_requires_both_proton_charges():
     # both provided is fine and stays dimensionless
     t = normalize_transmission(sample, ob, proton_charge_sample=500.0, proton_charge_ob=505.0)
     assert t.unit == sc.units.one
+
+
+# ---------------------------------------------------------------------------
+# background_roi flux normalization (proton-charge proxy)
+# ---------------------------------------------------------------------------
+
+
+def _bg_da(values, dims=("x", "y")):
+    """Helper: scipp DataArray in counts with Poisson variance = values."""
+    values = np.asarray(values, dtype=float)
+    da = sc.DataArray(data=sc.array(dims=list(dims), values=values, unit="counts"))
+    da.variances = values.copy()
+    return da
+
+
+def test_background_roi_matches_ratio_of_means():
+    """T == (sample/ob) * (mean(ob[B]) / mean(sample[B])) — the validated 1.x formula."""
+    from neunorm.processing.normalizer import normalize_transmission
+
+    s_vals = np.array([[10, 10, 30, 40], [10, 10, 50, 60], [12, 14, 16, 18], [20, 22, 24, 26]], dtype=float)
+    o_vals = np.array([[20, 20, 25, 35], [20, 20, 45, 55], [22, 24, 26, 28], [30, 32, 34, 36]], dtype=float)
+    roi = (0, 0, 2, 2)  # (x0, y0, x1, y1), exclusive stops -> the [0:2, 0:2] block
+
+    t = normalize_transmission(_bg_da(s_vals), _bg_da(o_vals), background_roi=roi)
+
+    cs = s_vals[0:2, 0:2].mean()
+    co = o_vals[0:2, 0:2].mean()
+    expected = (s_vals / o_vals) * (co / cs)
+    np.testing.assert_allclose(t.values, expected, rtol=1e-6)
+    assert t.unit == sc.units.one
+
+
+def test_background_roi_cancels_beam_flux():
+    """A sample-free background ROI makes the per-image flux factors cancel -> recovers true T."""
+    from neunorm.processing.normalizer import normalize_transmission
+
+    truth = np.full((4, 4), 0.8)
+    truth[0:2, 0:2] = 1.0  # background quadrant: no sample, transmission = 1
+    flux_s, flux_o = 3.0, 5.0  # different beam intensity for sample vs open-beam acquisition
+    sample = _bg_da(flux_s * truth * 100.0)
+    ob = _bg_da(flux_o * np.ones((4, 4)) * 100.0)
+
+    t = normalize_transmission(sample, ob, background_roi=(0, 0, 2, 2))
+    np.testing.assert_allclose(t.values, truth, rtol=1e-6)
+
+
+def test_background_roi_mutually_exclusive_with_proton_charge():
+    """background_roi and proton_charge_* are mutually exclusive."""
+    import pytest
+
+    from neunorm.processing.normalizer import normalize_transmission
+
+    sample = _bg_da(np.full((4, 4), 100.0))
+    ob = _bg_da(np.full((4, 4), 100.0))
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        normalize_transmission(
+            sample, ob, proton_charge_sample=500.0, proton_charge_ob=505.0, background_roi=(0, 0, 2, 2)
+        )
+
+
+def test_background_roi_validation():
+    """Invalid background_roi tuples / missing x,y dims raise."""
+    import pytest
+
+    from neunorm.processing.normalizer import normalize_transmission
+
+    sample = _bg_da(np.full((4, 4), 100.0))
+    ob = _bg_da(np.full((4, 4), 100.0))
+    with pytest.raises(ValueError):
+        normalize_transmission(sample, ob, background_roi=(0, 0, 2))  # not 4 ints
+    with pytest.raises(ValueError):
+        normalize_transmission(sample, ob, background_roi=(0, 0, 100, 100))  # out of bounds
+    with pytest.raises(ValueError):
+        normalize_transmission(sample, ob, background_roi=(2, 0, 1, 2))  # x1 <= x0
+
+
+def test_background_roi_propagates_finite_variance():
+    """background_roi normalization yields finite, non-negative propagated variance."""
+    from neunorm.processing.normalizer import normalize_transmission
+
+    t = normalize_transmission(
+        _bg_da(np.full((4, 4), 100.0)), _bg_da(np.full((4, 4), 200.0)), background_roi=(0, 0, 2, 2)
+    )
+    assert t.variances is not None
+    assert np.all(np.isfinite(t.variances))
+    assert np.all(t.variances >= 0)
+
+
+def test_background_roi_3d_per_spectral_bin():
+    """For 3D (tof, x, y) data the ROI mean is computed per spectral bin."""
+    from neunorm.processing.normalizer import normalize_transmission
+
+    s = np.arange(3 * 4 * 4, dtype=float).reshape(3, 4, 4) + 10.0
+    o = np.arange(3 * 4 * 4, dtype=float).reshape(3, 4, 4) + 20.0
+    t = normalize_transmission(
+        _bg_da(s, dims=("tof", "x", "y")), _bg_da(o, dims=("tof", "x", "y")), background_roi=(0, 0, 2, 2)
+    )
+    assert t.shape == (3, 4, 4)
+    cs = s[:, 0:2, 0:2].mean(axis=(1, 2))
+    co = o[:, 0:2, 0:2].mean(axis=(1, 2))
+    expected = (s / o) * (co / cs)[:, None, None]
+    np.testing.assert_allclose(t.values, expected, rtol=1e-6)
+
+
+def test_background_roi_variance_first_order_value():
+    """Propagated variance equals the hand-computed first-order combination (review)."""
+    from neunorm.processing.normalizer import normalize_transmission
+
+    s = np.full((4, 4), 100.0)
+    s[3, 3] = 80.0
+    o = np.full((4, 4), 200.0)
+    o[3, 3] = 160.0
+    t = normalize_transmission(_bg_da(s), _bg_da(o), background_roi=(0, 0, 2, 2))
+    # ROI means: cs=100 (Var(mean)=400/16=25), co=200 (Var=800/16=50). Pixel (3,3): S=80, O=160 -> T=1.
+    # Var(T) = T^2*(Var(S)/S^2 + Var(cs)/cs^2 + Var(O)/O^2 + Var(co)/co^2)
+    #        = 1*(80/6400 + 25/10000 + 160/25600 + 50/40000) = 0.0225
+    np.testing.assert_allclose(t.values[3, 3], 1.0, rtol=1e-6)
+    np.testing.assert_allclose(t.variances[3, 3], 0.0225, rtol=1e-6)
+
+
+def test_background_roi_excludes_masked_pixels():
+    """Masked pixels inside the ROI are excluded from the ROI mean (review, P0)."""
+    from neunorm.processing.normalizer import normalize_transmission
+
+    s = np.full((4, 4), 100.0)
+    s[0, 0] = 1.0e6  # huge outlier inside the ROI...
+    sample = _bg_da(s)
+    mask = np.zeros((4, 4), dtype=bool)
+    mask[0, 0] = True  # ...but masked, so it must not enter cs
+    sample.masks["bad"] = sc.array(dims=["x", "y"], values=mask)
+    ob = _bg_da(np.full((4, 4), 200.0))
+
+    t = normalize_transmission(sample, ob, background_roi=(0, 0, 2, 2))
+    # mask-aware cs = mean of the 3 unmasked ROI pixels = 100 (1e6 excluded). An out-of-ROI pixel
+    # (S=100, O=200) -> T = (100/100)/(200/200) = 1. (With the masked outlier counted, T would be tiny.)
+    np.testing.assert_allclose(t.values[3, 3], 1.0, rtol=1e-6)
+
+
+def test_background_roi_with_dark_variance_matches_full_first_order():
+    """dark + background_roi Var(T) matches the FULL first-order shared-dark propagation at an
+    outside-ROI pixel (review).
+
+    The oracle is derived by hand, independent of the implementation's formula, to avoid circular
+    validation. Spatially uniform so cs/co are exact, but S != O so k = co/cs != 1 is exercised.
+    """
+    from neunorm.processing.dark_corrector import subtract_dark
+    from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
+
+    cnt_s, cnt_o, cnt_d, n = 100.0, 200.0, 10.0, 4  # 2x2 ROI -> n = 4; k = co/cs = 190/90 != 1
+    s, o, d = _bg_da(np.full((4, 4), cnt_s)), _bg_da(np.full((4, 4), cnt_o)), _bg_da(np.full((4, 4), cnt_d))
+    roi = (0, 0, 2, 2)
+    corrected = normalize_with_dark(s, o, d, background_roi=roi)
+    naive = normalize_transmission(subtract_dark(s, d), subtract_dark(o, d), background_roi=roi)
+
+    np.testing.assert_allclose(corrected.values, 1.0, rtol=1e-12)  # uniform -> T = 1
+    np.testing.assert_allclose(corrected.values, naive.values, rtol=1e-12)  # values unchanged
+
+    # Independent first-order oracle for an OUTSIDE-ROI pixel with shared dark d (Poisson Var=value):
+    #   Var(T)/T^2 = [Var(s-d)/(s-d)^2 + Var(o-d)/(o-d)^2 - 2 Var(d)/((s-d)(o-d))]   (pixel)
+    #              + [Var(cs)/cs^2     + Var(co)/co^2     - 2 Cov(cs,co)/(cs co)]     (ROI-mean)
+    # with cs=s-d, co=o-d, Var(cs)=(s+d)/n, Var(co)=(o+d)/n, Cov(cs,co)=Var(mean d_roi)=d/n.
+    s_dc, o_dc = cnt_s - cnt_d, cnt_o - cnt_d
+    pixel = (cnt_s + cnt_d) / s_dc**2 + (cnt_o + cnt_d) / o_dc**2 - 2 * cnt_d / (s_dc * o_dc)
+    roi_mean = ((cnt_s + cnt_d) / n) / s_dc**2 + ((cnt_o + cnt_d) / n) / o_dc**2 - 2 * (cnt_d / n) / (s_dc * o_dc)
+    np.testing.assert_allclose(corrected.variances[3, 3], pixel + roi_mean, rtol=1e-9)
+    # the ROI-mean covariance correction strictly reduces the reported variance
+    assert corrected.variances[3, 3] < naive.variances[3, 3]
+
+
+def test_background_roi_with_dark_subtracts_both_shared_dark_terms():
+    """dark + background_roi removes BOTH shared-dark variance terms — the pixel-level
+    over-count AND the ROI-mean covariance term — on a non-uniform fixture (k != 1, per-pixel)."""
+    from neunorm.processing.dark_corrector import subtract_dark
+    from neunorm.processing.normalizer import _background_roi_means, normalize_transmission, normalize_with_dark
+
+    roi, n = (0, 0, 2, 2), 4
+    s = _bg_da(300.0 + np.arange(16).reshape(4, 4))  # 300..315
+    o = _bg_da(500.0 + 2.0 * np.arange(16).reshape(4, 4))  # 500..530
+    d = _bg_da(10.0 + 0.5 * np.arange(16).reshape(4, 4))  # small darks 10..17.5
+    naive = normalize_transmission(subtract_dark(s, d), subtract_dark(o, d), background_roi=roi)
+    corrected = normalize_with_dark(s, o, d, background_roi=roi)
+
+    np.testing.assert_allclose(corrected.values, naive.values, rtol=1e-6)  # values unchanged
+
+    s_dc, o_dc = s.values - d.values, o.values - d.values
+    cs, co = _background_roi_means(subtract_dark(s, d), subtract_dark(o, d), roi)
+    k = co.value / cs.value
+    assert abs(k - 1.0) > 0.3  # fixture exercises k != 1
+    pixel_term = 2.0 * (k**2) * s_dc * d.values / (o_dc**3)  # pixel-level over-count
+    cov = d.values[0:2, 0:2].sum() / n**2  # Cov(cs,co) = Var(mean D_roi) = (1/n^2) sum Var(D), Var(D)=D
+    roi_mean_term = 2.0 * corrected.values**2 * cov / (cs.value * co.value)  # ROI-mean over-count
+    np.testing.assert_allclose(naive.variances - corrected.variances, pixel_term + roi_mean_term, rtol=1e-6)
+    assert np.all(pixel_term > 0) and cov > 0
+
+
+def test_background_roi_zero_mean_raises():
+    """A zero (or non-finite) ROI mean is rejected with a clear error, not silent inf/nan output."""
+    import pytest
+
+    from neunorm.processing.normalizer import normalize_transmission
+
+    s = _bg_da(np.full((4, 4), 100.0))
+    o = np.full((4, 4), 200.0)
+    o[0:2, 0:2] = 0.0  # open-beam ROI has zero counts -> co == 0
+    with pytest.raises(ValueError, match="strictly positive and finite"):
+        normalize_transmission(s, _bg_da(o), background_roi=(0, 0, 2, 2))
+
+
+def test_background_roi_mixed_variance_inputs():
+    """One-sided-variance inputs must not raise; the extra term uses only the side with variance."""
+    from neunorm.processing.normalizer import normalize_transmission
+
+    roi = (0, 0, 2, 2)
+
+    def _no_var(values):
+        v = np.asarray(values, dtype=float)
+        return sc.DataArray(data=sc.array(dims=["x", "y"], values=v, unit="counts"))
+
+    s_vals = np.full((4, 4), 100.0)
+    o_vals = np.full((4, 4), 200.0)
+
+    # sample has variance, ob does not -> output carries variance (from the sample side only)
+    t1 = normalize_transmission(_bg_da(s_vals), _no_var(o_vals), background_roi=roi)
+    assert t1.variances is not None
+    # ob has variance, sample does not -> this is the case that previously raised in `ob / co`
+    t2 = normalize_transmission(_no_var(s_vals), _bg_da(o_vals), background_roi=roi)
+    assert t2.variances is not None
+    # neither side has variance -> no output variance, and no crash
+    t3 = normalize_transmission(_no_var(s_vals), _no_var(o_vals), background_roi=roi)
+    assert t3.variances is None
+    np.testing.assert_allclose(t3.values, 1.0, rtol=1e-6)
+
+
+def test_background_roi_broadcast_ob_only_variance():
+    """3D no-variance sample + 2D variance OB (broadcast path): OB variance must still propagate.
+
+    Regression for the broadcast-branch gate that dropped the OB-variance term (and the co
+    ROI-mean term) when the sample carried no variance — under-stating the reported error.
+    """
+    from neunorm.processing.normalizer import normalize_transmission
+
+    s3 = sc.DataArray(sc.array(dims=["t", "x", "y"], values=np.full((2, 4, 4), 100.0), unit="counts"))
+    o2 = _bg_da(np.full((4, 4), 200.0))  # 2D, carries Poisson variance
+    t = normalize_transmission(s3, o2, background_roi=(0, 0, 2, 2))
+    assert t.variances is not None
+    assert np.all(t.variances > 0)  # OB pixel variance + co ROI-mean term, not silently dropped
+
+
+def test_background_roi_with_dark_covariance_is_mask_aware():
+    """The ROI-mean shared-dark covariance excludes pixels masked from cs/co (review).
+
+    A dead/hot pixel inside the background ROI, masked on one side, must not pollute Cov(cs,co) and
+    over-subtract (which would under-state Var(T)).
+    """
+    from neunorm.processing.dark_corrector import subtract_dark
+    from neunorm.processing.normalizer import _roi_dark_mean_covariance, normalize_with_dark
+
+    roi = (0, 0, 2, 2)
+    darkvals = np.ones((4, 4))
+    darkvals[0, 0] = 199.0  # hot dark pixel inside the ROI
+    smask = np.zeros((4, 4), dtype=bool)
+    smask[0, 0] = True  # masked on the sample side, not the OB side
+    s = _bg_da(np.full((4, 4), 2.0))
+    s.masks["dead"] = sc.array(dims=["x", "y"], values=smask)
+    o = _bg_da(np.full((4, 4), 200.0))
+    d = _bg_da(darkvals)
+
+    # intersection covariance = sum Var(D over A∩B) / (n_s * n_o) = (1+1+1)/(3*4) = 0.25,
+    # NOT the unmasked Var(mean(D_roi)) = (199+1+1+1)/16 = 12.625 that includes the masked hot pixel
+    cov = _roi_dark_mean_covariance(subtract_dark(s, d), subtract_dark(o, d), d, roi)
+    np.testing.assert_allclose(cov.value, 0.25, rtol=1e-12)
+    corrected = normalize_with_dark(s, o, d, background_roi=roi)
+    np.testing.assert_allclose(corrected.variances[3, 3], 2.3249784653905294, rtol=1e-9)

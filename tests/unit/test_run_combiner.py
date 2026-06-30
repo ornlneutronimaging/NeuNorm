@@ -275,7 +275,7 @@ def test_combine_runs_missing():
 
 
 def test_combine_runs_single_run():
-    """Test that combining a single run returns an equal but independent copy (issue #163)."""
+    """Test that combining a single run returns an equal but independent copy."""
     from neunorm.processing.run_combiner import combine_runs
 
     run = sc.DataArray(

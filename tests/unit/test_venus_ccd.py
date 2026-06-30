@@ -124,7 +124,7 @@ class TestVenusCCDPipeline:
                 # T = (S - AVERAGE(D)) / (AVERAGE(OB) - AVERAGE(D))
                 # but will be two times because of the difference proton charge between sample and OB
                 for i in range(5):
-                    # rtol consistent with float32 compute precision (issue #147)
+                    # rtol consistent with float32 compute precision
                     np.testing.assert_allclose(hf["transmission"][i], (81 + i - 5) / (100 - 5) * 2, rtol=1e-5)
                 assert hf["transmission"].attrs["units"] == "dimensionless"
                 assert hf["transmission"].dtype == np.float32
@@ -140,7 +140,7 @@ class TestVenusCCDPipeline:
                 # Check masks
                 assert "masks/dead" in hf
                 np.testing.assert_equal(hf["masks/dead"], np.zeros((32, 32), dtype=bool))
-                # Check metadata (nested per-run paths stored as round-trippable JSON, issue #140)
+                # Check metadata (nested per-run paths stored as round-trippable JSON)
                 assert "metadata/sample_paths" in hf
                 assert json.loads(hf["metadata/sample_paths"].asstr()[()]) == [[str(p) for p in self.sample_paths]]
                 assert "metadata/ob_paths" in hf
@@ -194,7 +194,7 @@ class TestVenusCCDPipeline:
         # T = (S - AVERAGE(D)) / (AVERAGE(OB) - AVERAGE(D))
         # but will be two times because of the difference proton charge between sample and OB
         for i in range(5):
-            # rtol consistent with float32 compute precision (issue #147)
+            # rtol consistent with float32 compute precision
             np.testing.assert_allclose(image.values[i], (81 + i - 5) / (100 - 5) * 2, rtol=1e-5)
         # Check uncertainty data exists and is reasonable
         np.testing.assert_allclose(image.variances, 0.047, rtol=0.1)
@@ -290,7 +290,7 @@ class TestVenusCCDPipeline:
 
         # Variances are reasonable and reduced by combining runs. Pinned to the corrected
         # values (~0.0168–0.0180 across the 5 images) after fixing the shared-dark variance
-        # double-count (issue #142); previously ~0.018 with the over-counted Var(dark).
+        # double-count; previously ~0.018 with the over-counted Var(dark).
         np.testing.assert_allclose(transmission.variances, 0.0174, atol=0.0006)
 
         # The mask should only have the dead pixel masked
@@ -327,7 +327,7 @@ class TestVenusCCDPipeline:
             assert output_path.exists()
 
         assert transmission.shape == (1, 32, 32)
-        # air region should equal 1.0 (rtol consistent with float32 compute precision, issue #147)
+        # air region should equal 1.0 (rtol consistent with float32 compute precision)
         np.testing.assert_allclose(transmission.values[:, 6:11, 6:11], 1, rtol=1e-5)
         # check all values
         expected_value = np.full((1, 32, 32), (80 - 5) / (100 - 5) * 2)
@@ -351,7 +351,7 @@ class TestVenusCCDPipeline:
         )  # should be unchanged since we are normalizing by the number of runs
 
     def test_venus_ccd_pipeline_no_dark(self):
-        """Dark current is optional (issue #146): omitting dark_paths skips dark correction.
+        """Dark current is optional: omitting dark_paths skips dark correction.
 
         Without dark subtraction the transmission is T = (S / pc_s) / (OB / pc_ob),
         i.e. (81 + i) / 100 * 2 for these fixtures (vs (81 + i - 5) / (100 - 5) * 2 with dark).
@@ -383,7 +383,7 @@ class TestVenusCCDPipeline:
                 assert "metadata/dark_paths" not in hf
 
     def test_venus_ccd_pipeline_empty_dark_paths(self):
-        """An empty dark_paths list is treated the same as omitting dark (issue #146)."""
+        """An empty dark_paths list is treated the same as omitting dark."""
         with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
             transmission = run_venus_ccd_pipeline(
                 sample_paths=[self.sample_paths],
@@ -404,7 +404,7 @@ class TestVenusCCDPipeline:
             )
 
     def test_venus_ccd_pipeline_no_dark_uncertainty(self):
-        """No-dark UQ equals the dark-free propagation, with no dark-frame variance term (issue #146).
+        """No-dark UQ equals the dark-free propagation, with no dark-frame variance term.
 
         Two independent checks:
         1. The pipeline's no-dark output (values AND variances) matches a direct
@@ -438,7 +438,7 @@ class TestVenusCCDPipeline:
             normalize_by_runs=True,
         )
         ob = prepare_reference(ob, dim="N_image")
-        # Mirror the pipeline's float32 handling (issue #147): cast the proton-charge
+        # Mirror the pipeline's float32 handling: cast the proton-charge
         # coords to float32 and the result to float32, so this structural check stays
         # bit-tight against the float32 pipeline output (the independent first-principles
         # guard is the pinned-constant oracle below, at rtol=1e-3).
@@ -471,6 +471,49 @@ class TestVenusCCDPipeline:
                 gamma_filter=False,
             )
         # The with-dark, proton-charge path is the one that would silently re-promote
-        # to float64 if the pc coord were not cast to float32 (issue #147).
+        # to float64 if the pc coord were not cast to float32.
         assert with_dark.dtype == sc.DType.float32
         assert np.all(no_dark.variances < with_dark.variances)
+
+    def test_venus_ccd_pipeline_background_roi(self):
+        """background_roi flux proxy replaces proton-charge normalization end-to-end."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            t_pc = run_venus_ccd_pipeline(
+                sample_paths=[self.sample_paths], ob_paths=[self.ob_paths], output_path=output_path, gamma_filter=False
+            )
+            t_bg = run_venus_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=(0, 0, 8, 8),
+            )
+        assert str(t_bg.unit) == "dimensionless"
+        assert t_bg.shape == (5, 32, 32)
+        # uniform images -> background-ROI normalization cancels to T = 1 (proton charge skipped)
+        np.testing.assert_allclose(t_bg.values, 1.0, rtol=1e-5)
+        # and it differs from the proton-charge normalization
+        assert not np.allclose(t_bg.values, t_pc.values)
+
+    def test_venus_ccd_pipeline_background_roi_drops_proton_charge(self):
+        """In background_roi mode the (unused, un-aggregated) IntegratedPCharge must not leak to output.
+
+        Uses multiple runs: with pc_keys=() the combined array would otherwise retain the first run's
+        loaded IntegratedPCharge, surfacing a stale, never-aggregated proton charge in the coords and
+        the on-disk provenance. The pipeline drops it; this test inspects the output coords + HDF5.
+        """
+        with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_ccd_pipeline(
+                sample_paths=[self.sample_paths, self.sample_paths],  # multi-run: exercises the leak path
+                ob_paths=[self.ob_paths, self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=(0, 0, 8, 8),
+            )
+            # not in the returned coords...
+            assert "IntegratedPCharge" not in transmission.coords
+            # ...nor persisted to the HDF5 file
+            with h5py.File(output_path, "r") as hf:
+                assert "IntegratedPCharge" not in hf

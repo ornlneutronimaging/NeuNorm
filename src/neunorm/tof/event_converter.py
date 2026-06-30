@@ -51,7 +51,7 @@ def convert_events_to_histogram(
     detector_time_offset : sc.Variable, optional
         Detector time offset (e.g. TIDelay) applied when building energy/wavelength bin edges
         so they live in raw detector-TOF space, matching the raw event TOF histogrammed into
-        them (issue #141). Default: 0 us. Has no effect for ``bin_space='tof'``.
+        them. Default: 0 us. Has no effect for ``bin_space='tof'``.
 
     Returns
     -------
@@ -75,7 +75,7 @@ def convert_events_to_histogram(
     logger.info(f"  Bin space: {binning.bin_space}, Log: {binning.use_log_bin}")
 
     # Create TOF bin edges (raw detector-TOF; detector_time_offset shifts energy/wavelength
-    # edges so binning agrees with the later coordinate labeling — issue #141).
+    # edges so binning agrees with the later coordinate labeling).
     tof_bins = create_tof_bins(binning, flight_path, detector_time_offset)
     logger.info(f"  TOF range: {tof_bins.values.min():.1f} - {tof_bins.values.max():.1f} ns")
 

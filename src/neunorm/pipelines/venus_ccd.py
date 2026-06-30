@@ -11,6 +11,7 @@ import scipp as sc
 from loguru import logger
 
 from neunorm import __version__
+from neunorm.data_models.roi import ROILike, as_roi_bounds
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
@@ -28,9 +29,10 @@ def run_venus_ccd_pipeline(  # noqa: C901
     ob_paths: Sequence[Sequence[str | Path]],
     dark_paths: Optional[Sequence[Sequence[str | Path]]] = None,
     output_path: Optional[Path] = None,
-    roi: Optional[tuple] = None,
+    roi: Optional[ROILike] = None,
     gamma_filter: bool = True,
-    air_roi: Optional[tuple] = None,
+    air_roi: Optional[ROILike] = None,
+    background_roi: Optional[ROILike] = None,
 ) -> sc.DataArray:
     """Execute VENUS CCD/CMOS normalization pipeline.
 
@@ -68,12 +70,17 @@ def run_venus_ccd_pipeline(  # noqa: C901
         raises ``ValueError`` (the default exists only so ``dark_paths`` can keep
         its positional slot).
     roi : Optional[tuple]
-        Region of interest to apply (x_start, y_start, x_end, y_end)
+        Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
     gamma_filter : bool
         Whether to apply gamma filtering to the sample data (default: True)
     air_roi : Optional[tuple]
-        Region of interest to use for air correction (x_start, y_start, x_end, y_end).
+        Region of interest for air correction — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
         If None, air correction is not applied.
+    background_roi : Optional[tuple]
+        Sample-free background ROI (x0, y0, x1, y1) for flux-proxy normalization when proton
+        charge is unavailable. Mutually exclusive with proton-charge correction. If
+        ``roi`` is also given the detector is cropped first, so ``background_roi`` indices are
+        resolved in the post-crop frame.
 
     Notes
     -----
@@ -85,6 +92,14 @@ def run_venus_ccd_pipeline(  # noqa: C901
     sc.DataArray
         Final normalized transmission DataArray with metadata and masks
     """
+    # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
+    # tuples up front so cropping and provenance see a consistent form.
+    if roi is not None:
+        roi = as_roi_bounds(roi)
+    if air_roi is not None:
+        air_roi = as_roi_bounds(air_roi)
+    if background_roi is not None:
+        background_roi = as_roi_bounds(background_roi)
 
     if output_path is None:
         raise ValueError("output_path is required")
@@ -97,27 +112,30 @@ def run_venus_ccd_pipeline(  # noqa: C901
     # Keys to check ManufacturerStr. IntegratedPCharge is included in metadata checks and is
     # effectively averaged/normalized across runs (not summed) when normalize_by_runs=True.
 
+    # When background_roi is used (proton-charge proxy), don't require/aggregate IntegratedPCharge.
+    pc_keys = () if background_roi is not None else ("IntegratedPCharge",)
+
     sample = combine_runs(
         samples,
-        metadata_keys_to_sum=("IntegratedPCharge",),
+        metadata_keys_to_sum=pc_keys,
         metadata_check_match=["ManufacturerStr"],
         normalize_by_runs=True,
     )
 
     ob = combine_runs(
         ob,
-        metadata_keys_to_sum=("IntegratedPCharge",),
+        metadata_keys_to_sum=pc_keys,
         metadata_check_match=["ManufacturerStr"],
         normalize_by_runs=True,
     )
 
-    # Dark current is optional (issue #146): only load/combine it when dark paths are provided.
+    # Dark current is optional: only load/combine it when dark paths are provided.
     dark = None
     if dark_paths:
         dark_runs = [load_stack(paths) for paths in dark_paths]
         dark = combine_runs(
             dark_runs,
-            metadata_keys_to_sum=("IntegratedPCharge",),
+            metadata_keys_to_sum=pc_keys,
             metadata_check_match=["ManufacturerStr"],
             normalize_by_runs=True,
         )
@@ -142,34 +160,48 @@ def run_venus_ccd_pipeline(  # noqa: C901
         sample = apply_gamma_filter(sample)
 
     # Dark correction (optional) + normalization. The proton-charge coords are cast to float32
-    # so the division does not silently re-promote the float32 image data to float64 (issue
-    # #147; the coord is float64 because metadata is parsed via float()). With a shared dark
+    # so the division does not silently re-promote the float32 image data to float64 (the coord
+    # is float64 because metadata is parsed via float()). With a shared dark
     # frame, normalize_with_dark subtracts the dark and normalizes in one step so the dark
-    # variance is not double-counted in the transmission uncertainty (issue #142).
-    proton_charge_sample = sample.coords["IntegratedPCharge"].astype("float32")
-    proton_charge_ob = ob.coords["IntegratedPCharge"].astype("float32")
-    if dark is not None:
-        transmission = normalize_with_dark(
-            sample,
-            ob,
-            dark,
-            proton_charge_sample=proton_charge_sample,
-            proton_charge_ob=proton_charge_ob,
-        )
+    # variance is not double-counted in the transmission uncertainty.
+    if background_roi is not None:
+        # Flux-proxy normalization from a sample-free ROI, replacing the proton-charge
+        # correction. With a shared dark, route through normalize_with_dark so the shared-dark
+        # variance double-count is corrected (k = co/cs).
+        if dark is not None:
+            transmission = normalize_with_dark(sample, ob, dark, background_roi=background_roi)
+        else:
+            transmission = normalize_transmission(sample, ob, background_roi=background_roi)
+        # IntegratedPCharge was neither used nor aggregated in this mode (pc_keys=()), so the
+        # combined array still carries the first run's loaded value as an unaligned coord. Drop it
+        # so a stale, never-aggregated proton charge does not reach the output coords/provenance.
+        if "IntegratedPCharge" in transmission.coords:
+            del transmission.coords["IntegratedPCharge"]
     else:
-        logger.info("No dark current provided; skipping dark correction")
-        transmission = normalize_transmission(
-            sample=sample,
-            ob=ob,
-            proton_charge_sample=proton_charge_sample,
-            proton_charge_ob=proton_charge_ob,
-        )
+        proton_charge_sample = sample.coords["IntegratedPCharge"].astype("float32")
+        proton_charge_ob = ob.coords["IntegratedPCharge"].astype("float32")
+        if dark is not None:
+            transmission = normalize_with_dark(
+                sample,
+                ob,
+                dark,
+                proton_charge_sample=proton_charge_sample,
+                proton_charge_ob=proton_charge_ob,
+            )
+        else:
+            logger.info("No dark current provided; skipping dark correction")
+            transmission = normalize_transmission(
+                sample=sample,
+                ob=ob,
+                proton_charge_sample=proton_charge_sample,
+                proton_charge_ob=proton_charge_ob,
+            )
 
     # Air region correction (optional)
     if air_roi is not None:
         transmission = apply_air_region_correction(transmission, air_roi)
 
-    # Guarantee a float32 normalized data product (issue #147), regardless of any
+    # Guarantee a float32 normalized data product, regardless of any
     # intermediate dtype promotion. .astype converts values and variances.
     transmission = transmission.astype("float32")
 
@@ -189,6 +221,9 @@ def run_venus_ccd_pipeline(  # noqa: C901
 
     if roi:
         metadata["roi_applied"] = roi
+
+    if background_roi is not None:
+        metadata["background_roi"] = list(background_roi)
 
     if output_path.suffix.lower() in (".hdf5", ".h5"):
         write_hdf5(output_path, transmission, dead_pixel_mask="dead_pixels", metadata=metadata)
