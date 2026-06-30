@@ -5,11 +5,11 @@ import pytest
 from neunorm.data_models.roi import ROI, as_roi_bounds
 
 
-def test_roi_exported_from_top_level():
-    """ROI is importable from the package root (mirrors 1.x `from NeuNorm.roi import ROI`)."""
-    import neunorm
+def test_roi_exported_from_data_models():
+    """ROI is exported from the data_models package (like BinningConfig) and its submodule."""
+    import neunorm.data_models as dm
 
-    assert neunorm.ROI is ROI
+    assert dm.ROI is ROI
 
 
 def test_roi_stops_form():

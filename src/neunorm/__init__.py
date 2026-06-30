@@ -24,9 +24,8 @@ try:
 except ImportError:
     __version__ = "unknown"
 
-from neunorm.data_models.roi import ROI
 
 __author__ = "Jean Bilheux, Chen Zhang"
 __email__ = "bilheuxjm@ornl.gov, zhangc@ornl.gov"
 
-__all__ = ["ROI", "__version__"]
+__all__ = ["__version__"]

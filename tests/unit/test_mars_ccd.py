@@ -590,7 +590,7 @@ class TestMarsCCDPipelineFITS:
 
     def test_mars_ccd_pipeline_background_roi_accepts_roi_object(self):
         """A background_roi ROI yields the same transmission as the equivalent tuple."""
-        from neunorm import ROI
+        from neunorm.data_models.roi import ROI
 
         with (
             tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f1,
@@ -622,7 +622,7 @@ class TestMarsCCDPipelineFITS:
         ``roi_applied`` and assert it is the native int array (the coerced tuple), which fails if a
         raw ROI ever reaches provenance.
         """
-        from neunorm import ROI
+        from neunorm.data_models.roi import ROI
 
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)

@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   covariance corrected on the `normalize_with_dark` path). Exposed on `run_mars_ccd_pipeline`,
   `run_mars_tpx3_pipeline`, and `run_venus_ccd_pipeline` via `background_roi=`.
   ([#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159))
-- **Named `ROI` type for region arguments.** A new `neunorm.ROI` pydantic model lets you specify any
+- **Named `ROI` type for region arguments.** A new `ROI` pydantic model (`neunorm.data_models.roi`) lets you specify any
   region by name — `ROI(x0=10, y0=20, x1=30, y1=40)` or `ROI(x0=10, y0=20, width=20, height=20)` —
   instead of remembering the order of a bare `(x0, y0, x1, y1)` tuple (requested by Jean Bilheux on
   [#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159)). Accepted everywhere an ROI tuple
