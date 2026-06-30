@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-06-30
+
 ### Added
 
 - **Background-ROI flux normalization (proton-charge proxy).** `normalize_transmission` gains a
@@ -169,5 +171,6 @@ documentation are archived under
 [`archive/neunorm-1.x/`](archive/neunorm-1.x/); released 1.x versions remain
 available on PyPI and the `conda-forge` channel (`pip install "NeuNorm<2"`).
 
+[2.2.0]: https://github.com/ornlneutronimaging/NeuNorm/releases/tag/v2.2.0
 [2.1.0]: https://github.com/ornlneutronimaging/NeuNorm/releases/tag/v2.1.0
 [2.0.0]: https://github.com/ornlneutronimaging/NeuNorm/releases/tag/v2.0.0
