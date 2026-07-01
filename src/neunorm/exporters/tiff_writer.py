@@ -41,10 +41,9 @@ def convert_metadata_to_scitiff_coords(metadata: dict) -> sc.DataGroup:
         if isinstance(value, (str, int, float, bool)):
             extra[key] = value
         elif isinstance(value, collections.abc.Sequence):
-            if value and isinstance(value[0], collections.abc.Sequence) and not isinstance(value[0], str):
-                # Flatten a list of lists (e.g. per-run sample paths) before encoding.
-                value = [item for sublist in value for item in sublist]
-            extra[key] = json.dumps(list(value), default=str)
+            # JSON-encode sequences as strings; preserve nested structure (e.g. per-run path
+            # groups ``[[...], [...]]``) so TIFF provenance matches the HDF5 writer exactly.
+            extra[key] = json.dumps(value, default=str)
         else:
             raise ValueError(f"Unsupported metadata type for key '{key}': {type(value)}")
     return extra

@@ -198,10 +198,10 @@ class TestVenusTPX3HistogramPipeline:
 
         # Check extra metadata
         extra = dg["extra"]
-        assert len(json.loads(extra["sample_tiff_paths"])) == 5
-        assert len(json.loads(extra["ob_tiff_paths"])) == 5
-        assert len(json.loads(extra["sample_hdf5_paths"])) == 1
-        assert len(json.loads(extra["ob_hdf5_paths"])) == 1
+        assert json.loads(extra["sample_tiff_paths"]) == [[str(p) for p in self.sample_tiff_paths]]
+        assert json.loads(extra["ob_tiff_paths"]) == [[str(p) for p in self.ob_tiff_paths]]
+        assert json.loads(extra["sample_hdf5_paths"]) == [str(self.sample_nexus_path)]
+        assert json.loads(extra["ob_hdf5_paths"]) == [str(self.ob_nexus_path)]
 
         assert "processing_timestamp" in extra
         np.testing.assert_equal(json.loads(extra["roi_applied"]), (5, 5, 25, 25))

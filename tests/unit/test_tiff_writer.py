@@ -77,6 +77,53 @@ def test_write_tiff_stack_2d():
     assert extra["boolean_flag"] is True
 
 
+def test_write_tiff_stack_drops_object_dtype_coords_and_masks():
+    """Object-dtype (PyObject) coords/masks are dropped for scitiff >= 26.6; typed coords survive.
+
+    scitiff 26.6 rejects object-dtype variables. ``write_tiff_stack`` must drop them (e.g.
+    tuple-valued TIFF header tags carried over from the input files) while preserving typed
+    coordinates and the image data.
+    """
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    values = np.arange(50, dtype=np.float64).reshape((2, 5, 5))
+    da = sc.DataArray(data=sc.array(dims=["t", "y", "x"], values=values, unit="counts", dtype="float64"))
+    da.coords["t"] = sc.arange("t", 2, unit="s", dtype="int64")  # typed coord: must survive
+    # tuple-valued TIFF header tag stored as a PyObject scalar coord: must be dropped
+    da.coords["BitsPerSample"] = sc.scalar((32,))
+    assert da.coords["BitsPerSample"].dtype == sc.DType.PyObject
+    # a PyObject mask: must be dropped (the write must not raise)
+    da.masks["obj_mask"] = sc.scalar([1, 2, 3])
+    assert da.masks["obj_mask"].dtype == sc.DType.PyObject
+
+    with tempfile.NamedTemporaryFile(suffix=".tiff", delete=True) as f:
+        write_tiff_stack(f.name, da)  # would raise if a PyObject variable reached scitiff
+        dg = load_scitiff(f.name)
+
+    image = dg["image"]
+    np.testing.assert_allclose(image.values, values.astype("float32"), rtol=1e-6)
+    assert "t" in image.coords  # typed coord preserved
+    np.testing.assert_array_equal(image.coords["t"].values, [0, 1])
+    assert "BitsPerSample" not in image.coords  # object-dtype coord dropped
+    assert "obj_mask" not in image.masks  # object-dtype mask dropped
+
+
+def test_write_tiff_stack_preserves_nested_path_provenance():
+    """Nested per-run path groups round-trip unflattened, matching the HDF5 writer's provenance."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    values = np.arange(25, dtype=np.float64).reshape((5, 5))
+    transmission = sc.DataArray(data=sc.array(dims=["y", "x"], values=values, unit="counts", dtype="float64"))
+    nested = [["r1a.tif", "r1b.tif"], ["r2a.tif", "r2b.tif", "r2c.tif"]]  # 2 runs, ragged
+
+    with tempfile.NamedTemporaryFile(suffix=".tiff", delete=True) as f:
+        write_tiff_stack(f.name, transmission, metadata={"sample_paths": nested})
+        dg = load_scitiff(f.name)
+
+    # decoded provenance keeps the exact nested structure (not flattened to one list)
+    assert json.loads(dg["extra"]["sample_paths"]) == nested
+
+
 def test_write_tiff_stack_3d():
     """Test writing a 3D transmission DataArray using scitiff."""
     from neunorm.exporters.tiff_writer import write_tiff_stack

@@ -207,9 +207,9 @@ class TestMarsCCDPipeline:
 
         # Check extra metadata
         extra = dg["extra"]
-        assert len(json.loads(extra["sample_paths"])) == 5
-        assert len(json.loads(extra["ob_paths"])) == 3
-        assert len(json.loads(extra["dark_paths"])) == 2
+        assert json.loads(extra["sample_paths"]) == [[str(p) for p in self.sample_paths]]
+        assert json.loads(extra["ob_paths"]) == [[str(p) for p in self.ob_paths]]
+        assert json.loads(extra["dark_paths"]) == [[str(p) for p in self.dark_paths]]
         assert extra["gamma_filter_applied"]
 
         assert "processing_timestamp" in extra

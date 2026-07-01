@@ -224,8 +224,8 @@ class TestVenusTPX3EventPipeline:
 
         # Check extra metadata
         extra = dg["extra"]
-        assert len(json.loads(extra["sample_paths"])) == 1
-        assert len(json.loads(extra["ob_paths"])) == 1
+        assert json.loads(extra["sample_paths"]) == [str(self.sample)]
+        assert json.loads(extra["ob_paths"]) == [str(self.ob)]
 
         assert "processing_timestamp" in extra
         np.testing.assert_equal(json.loads(extra["roi_applied"]), (5, 5, 25, 25))
