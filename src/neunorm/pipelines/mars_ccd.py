@@ -2,7 +2,6 @@
 MARS CCD/CMOS normalization pipeline.
 """
 
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence
@@ -212,7 +211,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
 
     if background_roi is not None:
         metadata["background_roi"] = (
-            list(background_roi[0]) if len(background_roi) == 1 else json.dumps([list(b) for b in background_roi])
+            list(background_roi[0]) if len(background_roi) == 1 else [list(b) for b in background_roi]
         )
 
     if output_path.suffix.lower() in (".hdf5", ".h5"):

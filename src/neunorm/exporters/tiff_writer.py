@@ -96,8 +96,8 @@ def write_tiff_stack(
     # scitiff serializes the image's coords/masks but its schema only accepts scalar and
     # typed 1-D/2-D variables. Drop object-dtype (PyObject) coords/masks — e.g. tuple-valued
     # TIFF header tags (BitsPerSample, StripOffsets, ...) carried over from the input files by
-    # the loader — which scitiff cannot serialize. They are input-file provenance, not analysis
-    # data, and remain available in the HDF5 output.
+    # the loader — which scitiff cannot serialize. They are input-file header provenance, not
+    # analysis data; the HDF5 writer likewise does not persist object-dtype coords.
     for _name in [n for n, c in image.coords.items() if c.dtype == sc.DType.PyObject]:
         del image.coords[_name]
     for _name in [n for n, m in image.masks.items() if m.dtype == sc.DType.PyObject]:

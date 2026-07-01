@@ -157,6 +157,47 @@ def _ccd_frames(sample_counts, ob_counts, dark_counts):
     return sample, ob, dark
 
 
+def test_normalize_with_dark_background_roi_supports_per_image_mask():
+    """normalize_with_dark(background_roi=) handles a 3D per-image mask (regression: was DimensionError).
+
+    The sibling paths (normalize_transmission / apply_background_roi) already support per-image
+    (spectral, x, y) masks; the shared-dark covariance path must too. Values match the plain
+    subtract_dark+normalize path, and the covariance correction still reduces the variance.
+    """
+    from neunorm.processing.dark_corrector import subtract_dark
+    from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
+
+    n = 3
+    s_vals = np.full((n, 6, 6), 80.0)
+    o_vals = np.full((n, 6, 6), 100.0)
+    sample = sc.DataArray(
+        sc.array(dims=["N_image", "x", "y"], values=s_vals.copy(), variances=s_vals.copy(), unit="counts")
+    )
+    ob = sc.DataArray(
+        sc.array(dims=["N_image", "x", "y"], values=o_vals.copy(), variances=o_vals.copy(), unit="counts")
+    )
+    dark = sc.DataArray(
+        sc.array(dims=["x", "y"], values=np.full((6, 6), 5.0), variances=np.full((6, 6), 5.0), unit="counts")
+    )
+    # per-image (3D) mask on a single background-ROI pixel of the first frame only
+    m = np.zeros((n, 6, 6), dtype=bool)
+    m[0, 0, 0] = True
+    sample.masks["dead"] = sc.array(dims=["N_image", "x", "y"], values=m)
+    ob.masks["dead"] = sc.array(dims=["N_image", "x", "y"], values=m)
+    roi = [(0, 0, 4, 4)]  # background ROI covering the masked pixel
+
+    # regression: this used to raise scipp DimensionError (3D mask attached to the 2D dark ROI)
+    t = normalize_with_dark(sample, ob, dark, background_roi=roi)
+    assert t.variances is not None
+    assert np.all(np.isfinite(t.variances)) and np.all(t.variances >= 0)
+
+    # values are unaffected by the covariance correction (it only adjusts the variance)
+    plain = normalize_transmission(subtract_dark(sample, dark), subtract_dark(ob, dark), background_roi=roi)
+    np.testing.assert_allclose(t.values, plain.values, rtol=1e-6)
+    # the shared-dark covariance correction reduces (or leaves) the variance vs independent propagation
+    assert np.all(t.variances <= plain.variances + 1e-9)
+
+
 def test_normalize_with_dark_values_match_old_path():
     """normalize_with_dark returns the SAME transmission values as subtract_dark+normalize."""
     from neunorm.processing.dark_corrector import subtract_dark
