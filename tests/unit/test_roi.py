@@ -123,3 +123,15 @@ def test_roi_matches_tuple_in_air_region_correction():
     a = apply_air_region_correction(t, (0, 0, 3, 3))
     b = apply_air_region_correction(t, ROI(x0=0, y0=0, width=3, height=3))
     np.testing.assert_array_equal(a.values, b.values)
+
+
+def test_roi_inclusive_extents():
+    """inclusive=True bumps the exclusive stop by one per axis (1.x / iBeatles convention)."""
+    # width/height form: (w+1) x (h+1) pixels
+    assert ROI(x0=10, y0=20, width=20, height=20, inclusive=True).as_bounds() == (10, 20, 31, 41)
+    # explicit-stop form: the given stop is included
+    assert ROI(x0=10, y0=20, x1=30, y1=40, inclusive=True).as_bounds() == (10, 20, 31, 41)
+    # inclusive width/height 0 is a single pixel per axis
+    assert ROI(x0=5, y0=6, width=0, height=0, inclusive=True).as_bounds() == (5, 6, 6, 7)
+    # default is exclusive (unchanged)
+    assert ROI(x0=10, y0=20, width=20, height=20).as_bounds() == (10, 20, 30, 40)

@@ -5,63 +5,103 @@ Implements the core neutron imaging equation: T = Sample / OpenBeam
 with proper uncertainty propagation and beam corrections.
 """
 
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 
 import numpy as np
 import scipp as sc
 from loguru import logger
 
-from neunorm.data_models.roi import ROILike, as_roi_bounds
+from neunorm.data_models.roi import ROI, ROILike, as_roi_bounds
 from neunorm.processing.dark_corrector import subtract_dark
+
+# One ROI or a sequence of ROIs (pooled). A bare 4-int tuple/list is a single ROI.
+BackgroundROILike = Union[ROILike, Sequence[ROILike]]
+
+
+def _as_roi_bounds_list(background_roi: BackgroundROILike) -> list[tuple[int, int, int, int]]:
+    """Normalize a ``background_roi`` argument to a list of exclusive ``(x0, y0, x1, y1)`` bounds.
+
+    Accepts a single ROI (an :class:`~neunorm.data_models.roi.ROI` or a bare 4-int ``(x0,y0,x1,y1)``
+    tuple/list) — backward compatible — or a **sequence** of those (pooled). A bare 4-int sequence is
+    treated as ONE ROI; a sequence whose elements are ROIs or sequences is a list of ROIs.
+    """
+    if isinstance(background_roi, ROI):
+        return [background_roi.as_bounds()]
+    if (
+        isinstance(background_roi, (tuple, list))
+        and len(background_roi) == 4
+        and all(isinstance(i, int) for i in background_roi)
+    ):
+        return [as_roi_bounds(background_roi)]
+    if isinstance(background_roi, (tuple, list)):
+        if len(background_roi) == 0:
+            raise ValueError("background_roi list must contain at least one ROI")
+        # a bare sequence of ints is a SINGLE ROI (handled above when len == 4); an int element here
+        # means a malformed single ROI (wrong length), not a sequence of ROIs.
+        if any(isinstance(e, (int, np.integer)) for e in background_roi):
+            raise ValueError(f"background_roi must be a tuple of 4 integers (x0, y0, x1, y1); got {background_roi!r}")
+        return [as_roi_bounds(r) for r in background_roi]
+    raise ValueError(
+        f"background_roi must be an ROI, an (x0, y0, x1, y1) tuple, or a sequence of those; got {background_roi!r}"
+    )
+
+
+def _pooled_roi_coefficient(
+    data: sc.DataArray,
+    rois_bounds: list[tuple[int, int, int, int]],
+    name: str,
+) -> sc.Variable:
+    """Per-image **pooled** background coefficient over one or more ROIs.
+
+    ``coefficient = sum(counts over all ROIs) / sum(unmasked pixels over all ROIs)`` per spectral
+    bin — the pooled ratio-of-means (1.x / iBeatles form). For a single ROI this is the plain
+    mask-aware ROI mean. Reductions are mask-aware: masked dead/hot pixels are excluded from both
+    the summed counts and the pixel count (spatial ``(x, y)`` masks assumed). ``x1``/``y1`` are
+    exclusive stops. Returns a variance-bearing scipp Variable (the variance of the pooled mean).
+
+    Raises ``ValueError`` on an invalid/out-of-bounds ROI, missing ``x``/``y`` dims, no unmasked
+    pixels, or a non-positive/non-finite pooled mean (which would silently yield inf/nan output).
+    """
+    if "x" not in data.dims or "y" not in data.dims:
+        raise ValueError(f"{name} must have 'x' and 'y' dimensions for background_roi normalization")
+    total = None
+    n_pixels = 0
+    for x0, y0, x1, y1 in rois_bounds:
+        if x0 < 0 or y0 < 0 or x1 <= x0 or y1 <= y0:
+            raise ValueError(f"Invalid background_roi ({x0}, {y0}, {x1}, {y1}): need 0 <= x0 < x1 and 0 <= y0 < y1")
+        if x1 > data.sizes["x"] or y1 > data.sizes["y"]:
+            raise ValueError(
+                f"background_roi ({x0}, {y0}, {x1}, {y1}) exceeds {name} size "
+                f"(x={data.sizes['x']}, y={data.sizes['y']})"
+            )
+        region = data["x", x0:x1]["y", y0:y1]
+        roi_sum = sc.sum(region, dim=["x", "y"]).data  # mask-aware; variance = sum of unmasked variances
+        total = roi_sum if total is None else total + roi_sum
+        n_xy = region.sizes["x"] * region.sizes["y"]
+        excl = None
+        for mask in region.masks.values():
+            excl = mask if excl is None else (excl | mask)
+        n_pixels += n_xy - (int(sc.sum(excl).value) if excl is not None else 0)
+
+    if n_pixels <= 0:
+        raise ValueError(f"background_roi {rois_bounds} {name}: no unmasked pixels in the pooled ROI(s)")
+    coeff = total / n_pixels
+    if not bool(sc.all(sc.isfinite(coeff)).value) or sc.min(coeff).value <= 0:
+        raise ValueError(
+            f"background_roi {name} pooled mean must be strictly positive and finite "
+            f"(min={sc.min(coeff).value}); the ROI(s) must contain positive counts in every image"
+        )
+    return coeff
 
 
 def _background_roi_means(
     sample: sc.DataArray,
     ob: sc.DataArray,
-    background_roi: tuple[int, int, int, int],
+    rois_bounds: list[tuple[int, int, int, int]],
 ) -> tuple[sc.Variable, sc.Variable]:
-    """Validate ``background_roi`` and return the per-image mean counts (cs, co) over it.
-
-    ``background_roi`` is ``(x0, y0, x1, y1)`` with exclusive stop indices (Python slice
-    semantics, matching ``apply_roi`` / ``apply_air_region_correction``). The means reduce the
-    spatial ``x``/``y`` dimensions, so for 3D ``(spectral, x, y)`` data they are computed per
-    spectral bin. The returned scipp scalars/arrays carry the variance of the mean.
-
-    Note: the reduction is mask-aware, so masked pixels in the ROI are excluded from the value.
-    Their variance follows scipp's masked-reduction convention, which is slightly *conservative*
-    (the ROI-mean uncertainty can be marginally larger than ``sum(unmasked var) / n_unmasked**2``);
-    it never under-states the uncertainty.
-    """
-    if not (
-        isinstance(background_roi, (tuple, list))
-        and len(background_roi) == 4
-        and all(isinstance(i, int) for i in background_roi)
-    ):
-        raise ValueError("background_roi must be a tuple of 4 integers (x0, y0, x1, y1)")
-    x0, y0, x1, y1 = background_roi
-    if x0 < 0 or y0 < 0 or x1 <= x0 or y1 <= y0:
-        raise ValueError(f"Invalid background_roi {background_roi}: need 0 <= x0 < x1 and 0 <= y0 < y1")
-    for name, da in (("sample", sample), ("ob", ob)):
-        if "x" not in da.dims or "y" not in da.dims:
-            raise ValueError(f"{name} must have 'x' and 'y' dimensions for background_roi normalization")
-        if x1 > da.sizes["x"] or y1 > da.sizes["y"]:
-            raise ValueError(
-                f"background_roi {background_roi} exceeds {name} size (x={da.sizes['x']}, y={da.sizes['y']})"
-            )
-    # Reduce on the DataArray (mask-aware) so masked dead/hot pixels in the ROI are excluded,
-    # then take .data to drop coords (avoids coord-mismatch in the subsequent division).
-    cs = sc.mean(sample["x", x0:x1]["y", y0:y1], dim=["x", "y"]).data
-    co = sc.mean(ob["x", x0:x1]["y", y0:y1], dim=["x", "y"]).data
-    # The proxy divides by these means (and uses 1/cs**2, 1/co**2 in the variance term), and
-    # normalize_with_dark forms k = co/cs, so a zero or non-finite ROI mean — e.g. an all-masked or
-    # empty-counts ROI — would silently yield inf/nan transmission. Fail loudly instead: a background
-    # ROI must be a bright, sample-free region with positive counts.
-    for name, m in (("sample", cs), ("ob", co)):
-        if not bool(sc.all(sc.isfinite(m)).value) or sc.min(m).value <= 0:
-            raise ValueError(
-                f"background_roi {background_roi} {name} mean must be strictly positive and finite "
-                f"(min={sc.min(m).value}); the ROI must contain positive counts in every image"
-            )
+    """Per-image pooled background means (cs, co) for sample and OB over the same ROI list."""
+    cs = _pooled_roi_coefficient(sample, rois_bounds, "sample")
+    co = _pooled_roi_coefficient(ob, rois_bounds, "ob")
     return cs, co
 
 
@@ -69,23 +109,18 @@ def _roi_dark_mean_covariance(
     sample_dc: sc.DataArray,
     ob_dc: sc.DataArray,
     dark: sc.DataArray,
-    background_roi: tuple[int, int, int, int],
+    rois_bounds: list[tuple[int, int, int, int]],
 ) -> sc.Variable:
-    """Covariance of the two background-ROI means induced by the shared dark frame.
+    """Covariance of the two **pooled** background-ROI means induced by the shared dark frame.
 
-    ``cs = mean(S - D)`` and ``co = mean(O - D)`` over the ROI are mask-aware (see
-    ``_background_roi_means``) and share the ROI dark pixels, so
-    ``Cov(cs, co) = (1 / (n_s * n_o)) * sum_{k in A∩B} Var(D_k)`` where A / B are the ROI pixels left
-    unmasked in ``sample_dc`` / ``ob_dc`` (counts ``n_s`` / ``n_o``) and A∩B is their intersection.
-    With no masks this reduces to ``Var(mean(D_roi))``. Assumes spatial ``(x, y)`` masks
-    (dead/hot pixels), which is what the CCD pipelines produce.
+    ``cs = mean(S - D)`` and ``co = mean(O - D)`` pooled over the ROI list share the ROI dark
+    pixels, so ``Cov(cs, co) = (1 / (n_s * n_o)) * sum_{k in A∩B} Var(D_k)`` where A / B are the
+    pooled ROI pixels left unmasked in ``sample_dc`` / ``ob_dc`` (total counts ``n_s`` / ``n_o``) and
+    A∩B is their intersection. With no masks this reduces to ``Var(pooled mean(D_roi))``. Assumes
+    spatial ``(x, y)`` masks (dead/hot pixels), which is what the CCD pipelines produce.
 
     Returns a scalar ``sc.Variable`` carrying units of ``dark**2`` (counts**2).
     """
-    x0, y0, x1, y1 = background_roi
-    d_roi = dark["x", x0:x1]["y", y0:y1].copy()
-    s_roi = sample_dc["x", x0:x1]["y", y0:y1]
-    o_roi = ob_dc["x", x0:x1]["y", y0:y1]
 
     def _excluded(da: sc.DataArray):  # OR of all masks over the ROI, or None when unmasked
         m = None
@@ -93,17 +128,23 @@ def _roi_dark_mean_covariance(
             m = mask if m is None else (m | mask)
         return m
 
-    ms, mo = _excluded(s_roi), _excluded(o_roi)
-    n_xy = d_roi.sizes["x"] * d_roi.sizes["y"]
-    n_s = n_xy - (int(sc.sum(ms).value) if ms is not None else 0)
-    n_o = n_xy - (int(sc.sum(mo).value) if mo is not None else 0)
-
-    # sum Var(D) over A∩B: mask the dark with the union of both sides' masks; sc.sum is mask-aware
-    # and propagates variance as the sum of unmasked variances.
-    excl = ms if mo is None else (mo if ms is None else (ms | mo))
-    if excl is not None:
-        d_roi.masks["_bg_excl"] = excl
-    intersection_var_sum = sc.variances(sc.sum(d_roi, dim=["x", "y"]).data)  # scalar, counts**2
+    n_s = 0
+    n_o = 0
+    intersection_var_sum = None  # sum over all ROIs of sum_{A∩B} Var(D)
+    for x0, y0, x1, y1 in rois_bounds:
+        d_roi = dark["x", x0:x1]["y", y0:y1].copy()
+        ms = _excluded(sample_dc["x", x0:x1]["y", y0:y1])
+        mo = _excluded(ob_dc["x", x0:x1]["y", y0:y1])
+        n_xy = d_roi.sizes["x"] * d_roi.sizes["y"]
+        n_s += n_xy - (int(sc.sum(ms).value) if ms is not None else 0)
+        n_o += n_xy - (int(sc.sum(mo).value) if mo is not None else 0)
+        # sum Var(D) over A∩B: mask the dark with the union of both sides' masks; sc.sum is
+        # mask-aware and propagates variance as the sum of unmasked variances.
+        excl = ms if mo is None else (mo if ms is None else (ms | mo))
+        if excl is not None:
+            d_roi.masks["_bg_excl"] = excl
+        roi_var_sum = sc.variances(sc.sum(d_roi, dim=["x", "y"]).data)  # scalar, counts**2
+        intersection_var_sum = roi_var_sum if intersection_var_sum is None else intersection_var_sum + roi_var_sum
 
     denom = n_s * n_o
     return intersection_var_sum / denom if denom > 0 else 0.0 * intersection_var_sum
@@ -115,7 +156,7 @@ def normalize_transmission(  # noqa: C901
     proton_charge_sample: Optional[Union[float, sc.Variable]] = None,
     proton_charge_ob: Optional[Union[float, sc.Variable]] = None,
     pc_uncertainty: float = 0.005,
-    background_roi: Optional[ROILike] = None,
+    background_roi: Optional[BackgroundROILike] = None,
 ) -> sc.DataArray:
     """
     Normalize sample by open beam to compute transmission.
@@ -180,20 +221,19 @@ def normalize_transmission(  # noqa: C901
     """
     logger.info("Normalizing transmission: T = Sample / OB")
 
-    if background_roi is not None:
-        background_roi = as_roi_bounds(background_roi)
+    roi_list = _as_roi_bounds_list(background_roi) if background_roi is not None else None
 
     # Background-ROI flux normalization: when no proton charge is available
-    # (e.g. MARS), scale each image by its mean counts in a sample-free ROI so per-image
-    # beam-flux differences cancel: T = (S/mean(S[B])) / (O/mean(O[B])). First-order UQ.
+    # (e.g. MARS), scale each image by its pooled mean counts in one or more sample-free ROIs so
+    # per-image beam-flux differences cancel: T = (S/mean(S[B])) / (O/mean(O[B])). First-order UQ.
     if background_roi is not None:
         if proton_charge_sample is not None or proton_charge_ob is not None:
             raise ValueError(
                 "background_roi and proton_charge_sample/proton_charge_ob are mutually exclusive: "
                 "background_roi is the flux-normalization proxy for when proton charge is unavailable."
             )
-        logger.info("Applying background-ROI flux normalization with ROI {}", background_roi)
-        cs, co = _background_roi_means(sample, ob, background_roi)
+        logger.info("Applying background-ROI flux normalization with ROI(s) {}", roi_list)
+        cs, co = _background_roi_means(sample, ob, roi_list)
         # scipp refuses to broadcast a variance-bearing scalar across the image (it would introduce
         # correlations), so divide by the variance-free means and re-add their variance contribution
         # below. Handle cs and co INDEPENDENTLY — the two inputs may carry variance on one side only
@@ -303,7 +343,7 @@ def normalize_with_dark(
     proton_charge_sample: Optional[Union[float, sc.Variable]] = None,
     proton_charge_ob: Optional[Union[float, sc.Variable]] = None,
     pc_uncertainty: float = 0.005,
-    background_roi: Optional[ROILike] = None,
+    background_roi: Optional[BackgroundROILike] = None,
 ) -> sc.DataArray:
     """Dark-correct and normalize in one step, treating the shared dark frame correctly.
 
@@ -341,8 +381,7 @@ def normalize_with_dark(
     sc.DataArray
         Transmission with correctly-propagated variance (no shared-dark double-counting).
     """
-    if background_roi is not None:
-        background_roi = as_roi_bounds(background_roi)
+    roi_list = _as_roi_bounds_list(background_roi) if background_roi is not None else None
 
     sample_dc = subtract_dark(sample, dark)
     ob_dc = subtract_dark(ob, dark)
@@ -368,7 +407,7 @@ def normalize_with_dark(
     # for proton charge, or k = co/cs (ratio of dark-corrected ROI means) for background_roi. Use
     # the coefficient values only (variance-free) — this is a variance correction, first-order in k.
     if background_roi is not None:
-        cs, co = _background_roi_means(sample_dc, ob_dc, background_roi)
+        cs, co = _background_roi_means(sample_dc, ob_dc, roi_list)
         cs_v, co_v = sc.values(cs), sc.values(co)
         k_squared = (co_v / cs_v) ** 2
     else:
@@ -385,7 +424,7 @@ def normalize_with_dark(
     if background_roi is not None:
         # Cov(cs,co) is mask-consistent with cs/co (it counts only the ROI dark pixels left unmasked
         # in BOTH sample and OB), so a dead/hot pixel masked from one side does not pollute it.
-        cov_cs_co = _roi_dark_mean_covariance(sample_dc, ob_dc, dark, background_roi)
+        cov_cs_co = _roi_dark_mean_covariance(sample_dc, ob_dc, dark, roi_list)
         t_v = sc.values(transmission)
         over_count = over_count + 2.0 * t_v * t_v * cov_cs_co / (cs_v * co_v)
 
@@ -419,3 +458,45 @@ def _proton_charge_ratio_squared(
     )
     k = sc.to_unit(pc_o / pc_s, "dimensionless")
     return k * k
+
+
+def apply_background_roi(
+    data: sc.DataArray,
+    background_roi: BackgroundROILike,
+) -> sc.DataArray:
+    """Flux-flatten a stack by its pooled background-ROI mean (no open beam).
+
+    Returns ``data / pooled_mean(data over background_roi)`` — the **sample-only** form of the
+    background-ROI flux proxy, for when there is no open beam to normalize against. ``background_roi``
+    is a single ROI or a sequence of ROIs (pooled as ``sum(counts) / sum(pixels)``); see
+    ``normalize_transmission(..., background_roi=)`` for the with-open-beam transmission form.
+
+    First-order uncertainty from the pooled ROI mean is propagated
+    (``Var += corrected**2 * Var(coeff) / coeff**2``); the in-ROI pixel/ROI-mean correlation is not
+    corrected. Reductions are mask-aware. Raises ``ValueError`` if the pooled mean is not strictly
+    positive and finite in every image.
+
+    Parameters
+    ----------
+    data : sc.DataArray
+        Image stack with ``x``/``y`` dims (e.g. ``(spectral, x, y)``), optionally carrying variance.
+    background_roi : ROI/tuple or a sequence of them
+        Sample-free background region(s), pooled.
+
+    Returns
+    -------
+    sc.DataArray
+        ``data`` scaled so its pooled background-ROI mean is 1 per image.
+    """
+    roi_list = _as_roi_bounds_list(background_roi)
+    logger.info("Applying sample-only background-ROI flux flattening with ROI(s) {}", roi_list)
+    coeff = _pooled_roi_coefficient(data, roi_list, "data")
+    coeff_var = sc.variances(coeff) if coeff.variances is not None else None
+    coeff = coeff.copy()
+    coeff.variances = None
+    corrected = data / coeff
+    if coeff_var is not None and corrected.variances is not None:
+        rel = coeff_var / (coeff * coeff)
+        extra = sc.array(dims=list(corrected.dims), values=corrected.values**2) * rel
+        corrected.variances = corrected.variances + extra.values.astype(corrected.variances.dtype, copy=False)
+    return corrected

@@ -27,6 +27,13 @@ class ROI(BaseModel):
     width, height : int, optional
         Extent in x and y; ``x1 = x0 + width`` and ``y1 = y0 + height``. Provide these **or**
         ``x1``/``y1``.
+    inclusive : bool, optional
+        Interpret the upper bounds as **inclusive** (default ``False`` = exclusive Python-slice
+        semantics). When ``True``, the resolved ``x1``/``y1`` are bumped by one so the region spans
+        ``(width + 1) x (height + 1)`` pixels (and an explicit ``x1``/``y1`` is included). This is the
+        legacy NeuNorm 1.x / iBeatles convention; ``as_bounds()`` always returns exclusive stops, so
+        the rest of the library stays exclusive. Bare tuples are always exclusive — use the ``ROI``
+        type to opt into inclusive extents.
 
     Examples
     --------
@@ -34,6 +41,8 @@ class ROI(BaseModel):
     (10, 20, 30, 40)
     >>> ROI(x0=10, y0=20, width=20, height=20).as_bounds()
     (10, 20, 30, 40)
+    >>> ROI(x0=10, y0=20, width=20, height=20, inclusive=True).as_bounds()
+    (10, 20, 31, 41)
     """
 
     x0: int
@@ -42,6 +51,7 @@ class ROI(BaseModel):
     y1: Optional[int] = None
     width: Optional[int] = None
     height: Optional[int] = None
+    inclusive: bool = False
 
     @model_validator(mode="after")
     def _resolve_bounds(self):
@@ -54,6 +64,10 @@ class ROI(BaseModel):
             self.x1 = self.x0 + self.width
         if self.y1 is None:
             self.y1 = self.y0 + self.height
+        if self.inclusive:
+            # inclusive upper bound -> exclusive stop covers one more pixel on each axis
+            self.x1 += 1
+            self.y1 += 1
         if self.x0 < 0 or self.y0 < 0 or self.x1 <= self.x0 or self.y1 <= self.y0:
             raise ValueError(f"Invalid ROI {self.as_bounds()}: need 0 <= x0 < x1 and 0 <= y0 < y1")
         return self

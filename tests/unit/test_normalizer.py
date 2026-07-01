@@ -496,7 +496,7 @@ def test_background_roi_with_dark_subtracts_both_shared_dark_terms():
     np.testing.assert_allclose(corrected.values, naive.values, rtol=1e-6)  # values unchanged
 
     s_dc, o_dc = s.values - d.values, o.values - d.values
-    cs, co = _background_roi_means(subtract_dark(s, d), subtract_dark(o, d), roi)
+    cs, co = _background_roi_means(subtract_dark(s, d), subtract_dark(o, d), [roi])
     k = co.value / cs.value
     assert abs(k - 1.0) > 0.3  # fixture exercises k != 1
     pixel_term = 2.0 * (k**2) * s_dc * d.values / (o_dc**3)  # pixel-level over-count
@@ -580,7 +580,19 @@ def test_background_roi_with_dark_covariance_is_mask_aware():
 
     # intersection covariance = sum Var(D over A∩B) / (n_s * n_o) = (1+1+1)/(3*4) = 0.25,
     # NOT the unmasked Var(mean(D_roi)) = (199+1+1+1)/16 = 12.625 that includes the masked hot pixel
-    cov = _roi_dark_mean_covariance(subtract_dark(s, d), subtract_dark(o, d), d, roi)
+    cov = _roi_dark_mean_covariance(subtract_dark(s, d), subtract_dark(o, d), d, [roi])
     np.testing.assert_allclose(cov.value, 0.25, rtol=1e-12)
     corrected = normalize_with_dark(s, o, d, background_roi=roi)
-    np.testing.assert_allclose(corrected.variances[3, 3], 2.3249784653905294, rtol=1e-9)
+
+    # Independent first-order oracle for the outside-ROI pixel [3,3]. The pooled ROI-mean variance is
+    # textbook Var(mean) = sum(unmasked var)/n_unmasked**2; the mask-aware Cov(cs,co) = 0.25 above.
+    # ROI (0,0,2,2): sample masks (0,0) -> 3 unmasked px; OB unmasked -> 4 px. Poisson Var = value.
+    s_dc, o_dc, var_d = 2 - 1, 200 - 1, 1  # (s-d), (o-d), Var(d) at [3,3] (d[3,3]=1)
+    var_s_dc, var_o_dc = 2 + 1, 200 + 1  # Var(s)+Var(d), Var(o)+Var(d) at [3,3]
+    cs, co = 1.0, 598.0 / 4.0  # pooled dark-corrected ROI means (sample 3 px of 1; OB {1,199,199,199})
+    var_cs = (3 + 3 + 3) / 3**2  # Var(s-d)=2+1 on the 3 unmasked sample ROI px
+    var_co = (399 + 201 + 201 + 201) / 4**2  # Var(o-d): (0,0)=200+199, others 200+1
+    t33 = (co / cs) * (s_dc / o_dc)
+    pixel = var_s_dc / s_dc**2 + var_o_dc / o_dc**2 - 2 * var_d / (s_dc * o_dc)
+    roi_mean = var_cs / cs**2 + var_co / co**2 - 2 * 0.25 / (cs * co)
+    np.testing.assert_allclose(corrected.variances[3, 3], t33**2 * (pixel + roi_mean), rtol=1e-9)
