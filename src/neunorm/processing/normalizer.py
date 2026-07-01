@@ -228,9 +228,10 @@ def normalize_transmission(  # noqa: C901
         spanning ``w+1`` pixels), use ``ROI(..., inclusive=True)``; see ``apply_background_roi`` for the
         open-beam-less form. Mutually exclusive with ``proton_charge_sample`` / ``proton_charge_ob``.
         Uncertainty is propagated first-order (the in-ROI sample/ROI-mean correlation is not
-        corrected). Raises ``ValueError`` if the pooled mean is not strictly positive and finite in
-        every image. Indices are resolved against the passed arrays; if a pipeline crops with ``roi``
-        first, give ``background_roi`` in the post-crop frame.
+        corrected). Unless ``background_roi_strict=False``, raises ``ValueError`` if the pooled mean
+        is not strictly positive and finite in every image. Indices are resolved against the passed
+        arrays; if a pipeline crops with ``roi`` first, give ``background_roi`` in the post-crop
+        frame.
     background_roi_strict : bool, optional
         With the default ``True``, a non-positive/non-finite pooled background mean raises
         ``ValueError``. ``False`` skips only that guard and lets zeros propagate through the
