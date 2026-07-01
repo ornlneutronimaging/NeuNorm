@@ -1,0 +1,3349 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2870
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fmodern\fcharset0 Courier;}
+{\colortbl;\red255\green255\blue255;\red0\green0\blue0;\red255\green255\blue255;}
+{\*\expandedcolortbl;;\cssrgb\c0\c0\c0;\cssrgb\c100000\c100000\c100000;}
+\margl1440\margr1440\vieww21400\viewh18000\viewkind0
+\deftab720
+\pard\pardeftab720\partightenfactor0
+
+\f0\fs26 \cf2 \expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec3 # Coefficient LLM Knowledge Base\
+\
+> Knowledge base for LLMs and agentic coding platforms to use to create application code in line with the ORNL UX Coefficient design system guidelines, including fundamentals, playbooks, and best practices.\
+\
+This file contains all documentation content in a single document following the llmstxt.org standard.\
+\
+## Definitions\
+\
+# Design System Definitions\
+\
+Ubiquitous language is a cornerstone of communicating effectively in an organization, so let's all get on the same page with a glossary of common terms used in design systems, component libraries, and modern product development.  \
+\
+## What is a Design System?\
+\
+A design system is simply a set of building blocks and standards that help make the experience of designing, developing, and, importantly, *using* different application more efficient and consistent.\
+\
+Think of it as a structured framework that guides teams through the complex process of creating digital products that are visually consistent, accessible, and usable without every team having to reinvent the wheel every time they start a new project.\
+\
+Most people, when they hear "design system", immediately think of *component library*, such as Material UI or Vuetify or something like Bootstrap, but component libraries, and code in general, are just one part of a design system, and, in some cases, not even the most important part.\
+\
+Coefficient is a design system that includes components, code, design tools, patterns & recipes, accessibility guidance, and other tools all backed by research and industry standards and driven by the unique needs and diverse technology stacks found at Oak Ridge National Laboratory.\
+\
+## Frequently-used Terms\
+\
+Below are some common terms that you will find throughout this documentation and in other material about Coefficient.\
+\
+### Accessibility (a11y)\
+\
+Practices that ensure digital products can be used by people of all abilities, including those with disabilities.  See our <Link to="/docs/coefficient/fundamentals/accessibility">Accessibility section</Link> for more.\
+\
+### Coded Component\
+\
+A component implemented as installable/usable code. When you think of a component library such as Material or Vuetify, these are "coded components".\
+\
+### Compiled Styles\
+\
+Combinations of design tokens and other style parameters that have been combined into usable CSS classes, such as a `body-xl` typography class that combines several tokens into a single utility. Compiled styles are all code-generated from our tokens and available as part of our <Link to="/docs/coefficient/framework-support/general-html-css-js">Foundations package</Link>.\
+\
+### Component\
+\
+A self-contained piece of UI (e.g., button, card, modal) that encapsulates structure, style, and behavior. It's different from the standard developer-centric definition of a "component", which is what we would call a "coded component".\
+\
+When we talk about a "component", we mean the abstract definition of a unit of UI as opposed to a specific implementation, e.g. some components may be availalbe as installable "coded components", some may be represented in CSS, some may just exist as documentation.\
+\
+### Component Library\
+  \
+A collection of reusable, documented coded components built to implement the design system for a certain platform or tech stack.  \
+\
+### Design Language\
+\
+The shared visual and interaction principles that shape a product\'e2\'80\'99s look and feel.  \
+\
+### Design Token\
+\
+Design decisions as data. Platform-agnostic variables that store design decisions like color, typography, spacing, and motion (e.g., `color-primary: #0f62fe`). Tokens bridge the gap between how UI is designed in a tool like Figma and implemented in code. \
+\
+### Documentation Reference Site\
+\
+Where you are right now. The published home of the design system, where guidelines, code examples, and usage rules are explained. As a user of the design system, this site is your *single source of truth* about Coefficent.\
+\
+### Guidance\
+\
+Prescriptive advice for how components and patterns should be used, often including accessibility requirements and do/don\'e2\'80\'99t examples.  \
+\
+### Pattern\
+\
+A set of guidance to help solve a class of UI/UX problem that is too application-specific to be a reusable component. For example, form layout and validation are a class of UI problem with broadly-applicable considerations common to most applications but the concrete implementation is very specific to a single application.\
+\
+### Recipe\
+\
+A concrete implementation plan for a specific pattern or part of a pattern that is meant to be taken wholesale and used in any application, but which doesn't make sense as a singular component. \
+As an example, there may be pattern guidance for forms in general, and then a specific recipe for a "login form" that encapsulates the guidance into an implementation that ensures consistent structure, design, and behavior across any application, but because it would be impossible to design a reusable "login form component" that covers all possible tech stacks and backends, it only exists in recipe form.\
+\
+### Theming\
+\
+Theming is the ability to apply different sets of tokens or styles to a system (e.g., light mode, dark mode, brand variations).\
+\
+In the abstract, a theme is a set of design foundations such as colors, fonts, and component-specific values like elevations, borders, etc, that encapsulates a brand identity or specific look-and-feel.\
+\
+Concretely, Coefficient aims to provide installable/applyable themes for most of the major platforms we support, such as our <Link to="/docs/coefficient/framework-support/vuetify/">Vuetify theme package</Link>.\
+\
+### UI Kit\
+\
+A set of pre-made design assets such as components and patterns (generally implemented in Figma) that designers can use to implement designs and mockups. Some UI kits are specific to a platform or component library, like Sharepoint or SAP, and some are more general to the Coefficient design system. See our <Link to="/docs/coefficient/resources">UI Kits *tk*</Link> page for more.\
+\
+---\
+\
+## FAQs\
+\
+# Frequently Asked Questions\
+\
+You got questions? We got answers. You got other questions that aren't here? Ask us in one of our [support](./support-contribute.md) channels!\
+\
+## General\
+\
+<details>\
+  <summary>Why should I use Coefficient?</summary>\
+\
+  The goal of Coefficient is to help teams at ORNL build faster, stay consistent, and deliver more accessible, higher-quality products. Lab leadership has repeatedly stressed the importance of UX and design in our application portfolio, and Coefficient is your force multiplier to help you get there without repaving all those roads yourself.\
+</details>\
+\
+<details>\
+  <summary>When should I start using Coefficient in my project?</summary>\
+\
+  The short answer is *as early as possible*. For some projects, such as anything built in Vuetify, we have plug-and-play tools to fit right into what you're already doing, If you're using Sharepoint or SAP you may be able to take advantage of our built-in themes. And in all cases, you can use one of our [UI Kits](./resources) to design your application.\
+  \
+  Unsure of where to begin? Check out our [Getting Started](./get-started/) guides. Or drop in on our Office Hours and various [support channels](./support-contribute) to ask us questions directly.\
+</details>\
+\
+<details>\
+  <summary>Why isn't my specific usage/design need already in the system?</summary>\
+\
+  We're constantly iterating on Coefficient and adapting to the needs and use cases we see emerging in the lab across many teams, applications, and divisions, so it's possible we just haven't gotten to it yet.\
+\
+However, it's important to note that a design system isn't meant to cover every possible design or implementation case in a plug-and-play way. The goal of Coefficient is to make "doing the right thing easy" and cover the common, broadly-applicable usage so that your team can focus on the application and domain-specific details.\
+\
+There's a balance to be struck with any prescriptive guidance/code between being useful enough to accellerate development and being too restrictive and becoming a burden, and we will always err on the side of not getting in your way.\
+\
+That said, if you feel like we're missing something important or want to talk more about how to adapt Coefficient to your specific needs, [reach out](./support-contribute)!\
+</details>\
+\
+<details>\
+  <summary>How do I report a bug or request a feature?</summary>\
+\
+  Reach out to the team for help by visiting [our support channels](./support-contribute) or come to our Office Hours.\
+</details>\
+\
+## Design\
+\
+<details>\
+  <summary>Can I customize or detach components?</summary>\
+\
+  Yes! While we recommend that you try to use the components out of the box as much as possible, you can detach and customize components as needed. Please use our tokens for any customizations and keep in mind accessibility requirements. \
+</details>\
+\
+<details>\
+  <summary>Where do I find common assets like logos and other images?</summary>\
+  \
+  We maintain an up to date list of approved reserouces on our [Brand](./fundamentals/brand) page.\
+</details>\
+\
+## Develop\
+\
+<details>\
+  <summary>What frameworks does Coefficient support?</summary>\
+  \
+  We aim to support most of the major frameworks and COTS platforms in use by the lab in some way. Check out our [framework support](./framework-support/) page for more details.\
+</details>\
+\
+<details>\
+  <summary>Can I used Coefficient with other design systems or component libraries?</summary>\
+  \
+  Yes! Our philosophy is to "meet teams where they are" and augment how you're already working rather than dictate new ways to work. We are investing a lot of time into finding ways to weave Coefficient into other commonly-used libraries, such as <Link to="/docs/coefficient/framework-support/vuetify">Vuetify</Link>, either by direct integration when there is a good mechanism for that to happen, or by giving you our <Link to="/docs/coefficient/framework-support/general-html-css-js">design tokens and compiled styles</Link> to plug into any HTML-based project.\
+\
+While we can't cover every possible framework out there, we are always looking for what integrations will make a big impact on how applications are developed at ORNL, so if there's support for a specific system or library that you want to talk about, [reach out](./support-contribute)! Or take a stab at building out those connectors yourself and [contributing back](./support-contribute) to Coefficient!\
+</details>\
+\
+<details>\
+  <summary>Where can I find the source code?</summary>\
+  \
+  All of our code is hosted on our internal Gitlab instance at [https://code.ornl.gov/ords/ornl-design-system](https://code.ornl.gov/ords/ornl-design-system). Anyone with internal access should be able to browse the repository or make a merge request.\
+</details>\
+\
+<details>\
+  <summary>How are code assets versioned?</summary>\
+  \
+  We practice [Semantic Versioning](https://semver.org/) for all code releases and in general will work to avoid breaking changes whenever possible. Because we're a small team, we don't have the resources or bandwidth to maintain and enhance multiple versions of software so in general, once released, a given previous version will not receive updates and patches on a parallel release branch from the current major version.\
+</details>\
+\
+## Accessibility\
+\
+<details>\
+  <summary>What accessibility standards has Coefficient implemented?</summary>\
+  \
+  Coefficient follows the [Web Content Accessibility Guidelines (WCAG) 2.1 AA](https://www.w3.org/TR/WCAG21/) and [Section 508](https://www.section508.gov/) standards, so teams can create applications and websites that work for everyone. These standards guide our components, patterns, and documentation, and we\'e2\'80\'99ll keep updating them as new guidelines are released and followed. \
+</details>\
+\
+<details>\
+  <summary>What tools can I use to ensure accessibility in my application?</summary>\
+  \
+  There are many automated/semi-automated tools such as linters and accessibility testers available for almost any type of project you are working on. For an in-depth look at tools, check out our [Tools & Resources](./resources) page.\
+</details>\
+\
+<details>\
+  <summary>Why is accessibility a primary focus of Coefficient?</summary>\
+  \
+The short answer is: it's [a regulatory requirement](https://www.section508.gov/). The better answer is: everyone who uses applications and websites developed at the lab should be able to do so in a way that works well for them and allows them to be productive and happy (or at least not frustrated). "Everyone" is a big category with a lot of variables, and approaching UX in an accessibility-first way ensures that we're including as many people in that "everyone" as possible.\
+</details>\
+\
+---\
+\
+## Coefficient\
+\
+\
+Coefficient is ORNL's *Multi-Framework Design System*\
+\
+Our aim is to enable designers and engineers to "speak the same language" and \'e2\'80\'9cmake the right thing the easy thing\'e2\'80\uc0\u157  while creating consistent user experiences end to end.\
+\
+<Columns>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardHeader>\
+        <IIcon icon="ph:play-thin" height="48" color="var(--ifm-color-primary)" />\
+        Start using Coefficient\
+      </CardHeader>\
+      <CardBody>\
+        Build with Coefficient via one of our supported frameworks, learn our fundamentals &amp; patterns.\
+      </CardBody>\
+      <CardFooter>\
+        <Link to="/docs/coefficient/get-started">Get Started</Link>\
+      </CardFooter>\
+    </Card>\
+  </Column>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardHeader>\
+        <IIcon icon="ph:question-thin" height="48" color="var(--ifm-color-primary)" />\
+        Support &amp; Contribution\
+      </CardHeader>\
+      <CardBody>\
+        See the some ways you can get in touch if you need help or have questions or want to get involved.\
+      </CardBody>\
+      <CardFooter>\
+        <Link to="/docs/coefficient/support-contribute">Get Support</Link>\
+      </CardFooter>\
+    </Card>\
+  </Column>\
+</Columns>\
+\
+## Our Philosophy\
+\
+ORNL builds across multiple technical frameworks (e.g. Vuetify, SAP Fiori, SharePoint, WordPress, Material UI, etc.) rather than a single unified tech stack. Traditional design systems that provide single component libraries don't work in this type of environment as they add friction when designers create framework-agnostic designs that require significant developer effort to implement.\
+\
+Coefficient solves this by providing framework-focused guidance and tools along with framework agnostic patterns, enabling efficient collaboration without forcing teams into one technical solution.\
+\
+### Comprehensive Patterns & Tools\
+\
+- Framework-agnostic guidance on UX patterns such as forms, headers, navigation flows\
+- Platform-specific implementation best practices and tooling\
+- Accessibility guidance embedded throughout\
+- Shared foundations across all frameworks: colors, typography, iconography\
+\
+### Focused UI Kits by Framework\
+\
+- Figma UI kits tailored to each supported framework at the lab\
+- Consistent \'e2\'80\'9csource of truth\'e2\'80\uc0\u157  foundational tokens across all UI kits\
+- Platform-specific elements that matching actual developer tools\
+\
+:::note\
+\
+- Coefficient is not a single component library; unlike traditional design systems we don't force a single technical solution. We enable teams at ORNL to work with the grain of the frameworks they are already comfortable with.\
+- Coefficient is not focused on coded components. Our primary focus is on enabling efficient designer-developer collaboration through tooling and guidance patterns (which *can* include coded components when needed)\
+\
+:::\
+\
+---\
+\
+## Support & Contribution\
+\
+# Support, Feedback, and Contributions\
+\
+We're here to help, and to listen! The success of Coefficient comes down to one thing - how well it works for all of you building things at the lab. These are some ways you can get in touch if you need help or have questions or want to get involved.\
+\
+## <IIcon icon="ph:calendar" color="var(--ifm-color-primary)" /> Office Hours\
+\
+We hold a monthly Office Hours conversation on Teams where anyone can come and bring their questions, whether they're specific to a project you're working on or more general about the state of the design system, and anywhere in between.\
+\
+Office Hours are scheduled for the third Wednesday of every month at 2PM. You can join the [Teams meeting here](https://gcc02.safelinks.protection.outlook.com/ap/t-59584e83/?url=https%3A%2F%2Fteams.microsoft.com%2Fl%2Fmeetup-join%2F19%253ameeting_ODljMTVmZGItYTEyOS00MjI4LWFhZjAtZWZkYTg0ZWQ0NDdi%2540thread.v2%2F0%3Fcontext%3D%257b%2522Tid%2522%253a%2522db3dbd43-4c4b-4544-9f8a-0553f9f5f25e%2522%252c%2522Oid%2522%253a%2522e953afa2-32ef-41ee-b074-577fb0254cb0%2522%257d&data=05%7C02%7Creynoldssc%40ornl.gov%7Ce81848b7acab40c2e75708ddde6afa1d%7Cdb3dbd434c4b45449f8a0553f9f5f25e%7C1%7C0%7C638911273254247615%7CUnknown%7CTWFpbGZsb3d8eyJFbXB0eU1hcGkiOnRydWUsIlYiOiIwLjAuMDAwMCIsIlAiOiJXaW4zMiIsIkFOIjoiTWFpbCIsIldUIjoyfQ%3D%3D%7C0%7C%7C%7C&sdata=mUU0%2FqnpbmZ3qFCcwQlgcVzsLpzbO0dVKp9KDTUfeNA%3D&reserved=0) or reach out via one of our [Support Channels](#-microsoft-teams-support-channels) to ask to be added to the invite.\
+\
+##  Microsoft Teams Support Channels\
+\
+We have them! For general feedback, bug reports, questions, and so on, you can join us on our [Feedback Channel](https://teams.microsoft.com/l/channel/19%3Adca3d4982439492998c5d942d1aef526%40thread.tacv2/Feedback?groupId=82fddc30-3a3a-4da9-9863-946120ec25b2&tenantId=db3dbd43-4c4b-4544-9f8a-0553f9f5f25e).\
+\
+To stay up-to-date with the latest news from the Coefficient Team, check out our [Announcements](https://teams.microsoft.com/l/channel/19%3A65155155579d414bba2b30db21217f5a%40thread.tacv2/Announcements?groupId=82fddc30-3a3a-4da9-9863-946120ec25b2&tenantId=db3dbd43-4c4b-4544-9f8a-0553f9f5f25e) channel.\
+\
+## <IIcon icon="ph:handshake" color="var(--ifm-color-primary)" /> Contributions\
+\
+There are a lot of ways to contribute to Coefficient, and one of the main ones is to use it and let us know what works and where the gaps are. Beyond that, there's several ways you can contribute back.\
+\
+Our [Office Hours](#-office-hours) is a great way to have an open coversation about your thoughts or proposals with both the Coefficient team and other users, which allows for more testing and honing of the idea.\
+\
+You can reach out on our [Feedback Channel](https://teams.microsoft.com/l/channel/19%3Adca3d4982439492998c5d942d1aef526%40thread.tacv2/Feedback?groupId=82fddc30-3a3a-4da9-9863-946120ec25b2&tenantId=db3dbd43-4c4b-4544-9f8a-0553f9f5f25e) on Teams (tk) and we'll get a conversation going there.\
+\
+If you're working on some code that you think could be useful as part of the Coefficient core repository, the Feedback Channel is still the best way to start the conversation but you're also welcome to open a merge request. You can find our Code Contribution Guidelines [on Gitlab](https://code.ornl.gov/ords/ornl-design-system/-/blob/main/CONTRIBUTING.md?ref_type=heads)\
+\
+---\
+\
+## Button\
+\
+Buttons are interactive elements that trigger actions when clicked or tapped. They guide users through workflows, initiate processes, and can alter the state of a given experience.\
+\
+## Anatomy\
+\
+[Figma UI Kit Reference](https://www.figma.com/design/LqnpoHfyFAXDJpZsOeunLP/Coefficient-UI-Kit?m=auto&node-id=7283-47618&t=GuylrMzcAsh1OVLT-1)\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/components/button/button-anatomy.png" />\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+1. **Left Icon (optional):** An optional icon to emphasize the button action.\
+2. **Label (required):** Text indicating the action that the button will trigger for the user.\
+3. **Right Icon (optional):** An optional icon to emphasize the button action.\
+\
+## Usage\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+				<IIcon\
+					icon="ph:check-circle-thin"\
+					height="48"\
+					color="var(--ifm-color-success)"\
+				/>\
+				When to use\
+			</CardHeader>\
+			<CardBody>\
+				Use buttons to trigger actions in an interface such as submitting a\
+				form, saving data, canceling an interaction or opening &amp; closing a\
+				modal.\
+			</CardBody>\
+		</Card>\
+	</Column>\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+				<IIcon\
+					icon="ph:x-circle-thin"\
+					height="48"\
+					color="var(--ifm-color-danger)"\
+				/>\
+				When not to use\
+			</CardHeader>\
+			<CardBody>\
+				Don't use buttons to navigate users within or between experiences. In\
+				those situations please use a\
+				[Link](/docs/coefficient/components/link/).\
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+### Label\
+\
+- Make sure to provide a descriptive, self explaining label that reflects the action that will happen next. Be brief, usually a single verb is best but include a noun if it increases clarity.\
+  - Examples:\
+  - When a button enables someone to create something new, start with \'e2\'80\'9cNew" and then include the name of the thing they can create (e.g. "New Message")\
+  - When a button enables someone to edit an existing set, start with \'e2\'80\'9cEdit" and then include the name of the thing they can edit (e.g. "Edit Contact Info")\
+- Use title case and no end punctuation (e.g., "Sign Up" instead of "sign up" or "SIGN UP") to improve readability.\
+\
+### Style\
+\
+- Use a primary button for the most important or desired action on a given page.\
+- Use demphasized buttons for less important or secondary actions.\
+- Use disabled buttons to indicate actions that are currently unavailable or incomplete, and provide context for why the button is disabled.\
+\
+### Icon\
+\
+- Add an icon for commonly recognized actions when the icon will improve scannability, such as a check mark for "Confirm" or a trash can for "Delete."\
+- Place an icon on the left side of the text when the icon is visually associated with the primary action or draws attention to the button.\
+- Place an icon on the right side of the text when the icon represents a secondary aspect of the action or complements it (e.g., an arrow icon to indicate a next step action).\
+\
+### Grouping\
+\
+- Buttons can be grouped visually together when there are two or more actions that a user needs to consider in context of each other. A common example is is Save or Cancel\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/components/button/button-grouping-do.png" />\
+			<CardHeader>\
+				\
+					<IIcon\
+						icon="ph:check-circle-thin"\
+						height="24"\
+						color="var(--ifm-color-success)"\
+					/>\{" "\}\
+					Do\
+				\
+			</CardHeader>\
+			<CardBody>\
+				- Create a logical order with one primary button & a set of lower\
+				emphasis buttons\
+			</CardBody>\
+		</Card>\
+	</Column>\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/components/button/button-grouping-dont.png" />\
+			<CardHeader>\
+				\
+					<IIcon\
+						icon="ph:x-circle-thin"\
+						height="24"\
+						color="var(--ifm-color-danger)"\
+					/>\{" "\}\
+					Don't\
+				\
+			</CardHeader>\
+			<CardBody>\
+				- Place more than one primary action in a group. - Use different levels\
+				of secondary emphasis in a group\
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+### Markup\
+\
+- Using the correct tags for buttons is important because it can disorient users if they hear the wrong tag read out to them by the screen reader.\
+- HTML\'c2\'a0`<button>`\'c2\'a0or\'c2\'a0`<input type="button">`:\'c2\'a0Buttons should be created created using the\'c2\'a0`<button>`\'c2\'a0or\'c2\'a0`<input>`\'c2\'a0tag with a\'c2\'a0type="button"\'c2\'a0attribute.\
+\
+## Accessibility\
+\
+### Human Impact Overview\
+\
+- Buttons facilitate user interaction by providing clear, clickable actions on web pages and applications.\
+- For users with disabilities, buttons must be easy to identify and use, with alternative methods for interaction, such as keyboard controls.\
+- Proper button design helps reduce confusion and ensures that all users can navigate more efficiently.\
+\
+### WCAG 2.1 A and AA Success Criteria\
+\
+- [1.4.1](https://www.w3.org/TR/WCAG21/#use-of-color) Use of Color: Buttons should not rely solely on color to convey their function. Text labels or universally recognized icons could accompany them.\
+- [2.4.7](https://www.w3.org/TR/WCAG21/#focus-visible) Focus Visible: Buttons must have a visible focus indicator when navigated to via keyboard.\
+- [4.1.2](https://www.w3.org/TR/UNDERSTANDING-WCAG20/ensure-compat-rsv.html) Name, Role, Value: Buttons must have clear names and roles defined to be operable and understandable by user agents, including assistive technologies.\
+\
+### Keep in mind\
+\
+- Buttons should display a visible focus state when users tab to them.\
+- Screen readers handle buttons and links differently. Pressing the Space/Enter key triggers a button, but pressing the Enter key triggers a link.\
+- Provide clear, concise labels for all actions to support users with cognitive disabilities.\
+  Avoid using generic labels like \'e2\'80\'9cClick Here\'e2\'80\uc0\u157  for buttons. Use more informative and descriptive labels. Please see our [Guidance](#label) for recommendations.\
+\
+### Keyboard Interaction\
+\
+- All buttons must be accessible using the keyboard alone.\
+- Buttons can be reached by tab\'c2\'a0and selected with\'c2\'a0space\'c2\'a0or\'c2\'a0enter.\
+\
+---\
+\
+## Link\
+\
+Links take users to a different page, section of a page, or an external resource. Links typically don't alter the current page's state.\
+\
+## Usage\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+				<IIcon\
+					icon="ph:check-circle-thin"\
+					height="48"\
+					color="var(--ifm-color-success)"\
+				/>\
+				When to use\
+			</CardHeader>\
+			<CardBody>\
+				Use buttons to trigger actions in an interface such as submitting a\
+				form, saving data, canceling an interaction or opening &amp; closing a\
+				modal.\
+			</CardBody>\
+		</Card>\
+	</Column>\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+				<IIcon\
+					icon="ph:x-circle-thin"\
+					height="48"\
+					color="var(--ifm-color-danger)"\
+				/>\
+				When not to use\
+			</CardHeader>\
+			<CardBody>\
+				Don't use buttons to navigate users within or between experiences. In\
+				those situations please use a\
+				[Link](/docs/coefficient/components/link/).\
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+### Label\
+\
+- Make sure to provide a descriptive, self explaining label that reflects the action that will happen next. Be brief, usually a single verb is best but include a noun if it increases clarity.\
+  - Examples:\
+  - When a button enables someone to create something new, start with \'e2\'80\'9cNew" and then include the name of the thing they can create (e.g. "New Message")\
+  - When a button enables someone to edit an existing set, start with \'e2\'80\'9cEdit" and then include the name of the thing they can edit (e.g. "Edit Contact Info")\
+- Use title case and no end punctuation (e.g., "Sign Up" instead of "sign up" or "SIGN UP") to improve readability.\
+\
+### Style\
+\
+- Use a primary button for the most important or desired action on a given page.\
+- Use demphasized buttons for less important or secondary actions.\
+- Use disabled buttons to indicate actions that are currently unavailable or incomplete, and provide context for why the button is disabled.\
+\
+### Icon\
+\
+- Add an icon for commonly recognized actions when the icon will improve scannability, such as a check mark for "Confirm" or a trash can for "Delete."\
+- Place an icon on the left side of the text when the icon is visually associated with the primary action or draws attention to the button.\
+- Place an icon on the right side of the text when the icon represents a secondary aspect of the action or complements it (e.g., an arrow icon to indicate a next step action).\
+\
+### Grouping\
+\
+- Buttons can be grouped visually together when there are two or more actions that a user needs to consider in context of each other. A common example is is Save or Cancel\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/components/button/button-grouping-do.png" />\
+			<CardHeader>\
+				\
+					<IIcon\
+						icon="ph:check-circle-thin"\
+						height="24"\
+						color="var(--ifm-color-success)"\
+					/>\{" "\}\
+					Do\
+				\
+			</CardHeader>\
+			<CardBody>\
+				- Create a logical order with one primary button & a set of lower\
+				emphasis buttons\
+			</CardBody>\
+		</Card>\
+	</Column>\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/components/button/button-grouping-dont.png" />\
+			<CardHeader>\
+				\
+					<IIcon\
+						icon="ph:x-circle-thin"\
+						height="24"\
+						color="var(--ifm-color-danger)"\
+					/>\{" "\}\
+					Don't\
+				\
+			</CardHeader>\
+			<CardBody>\
+				- Place more than one primary action in a group. - Use different levels\
+				of secondary emphasis in a group\
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+### Markup\
+\
+- Using the correct tags for buttons is important because it can disorient users if they hear the wrong tag read out to them by the screen reader.\
+- HTML\'c2\'a0`<button>`\'c2\'a0or\'c2\'a0`<input type="button">`:\'c2\'a0Buttons should be created created using the\'c2\'a0`<button>`\'c2\'a0or\'c2\'a0`<input>`\'c2\'a0tag with a\'c2\'a0type="button"\'c2\'a0attribute.\
+\
+---\
+\
+## General HTML/CSS/JS\
+\
+# HTML/CSS/JS\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+  <Column className="col col--2">\
+    \
+  </Column>\
+  <Column className="col col--10">\
+    If you're working with standard web technology, it's likely that Coefficient has you covered even if we don't have specific support for your framework or stack.\
+  </Column>\
+</Columns>\
+\
+## Coefficient Foundations Package\
+\
+We maintain a package of our "Foundations", which are [design tokens](#what-are-design-tokens) in the form of CSS/SCSS/JS variables and [utility classes](#what-are-compiled-styles) that you can include directly in your project and know that they will always contain the most up-to-date values defined in Coefficient.\
+\
+## Quickstart\
+\
+There are two primary ways to use the Coefficient Foundations package based on your needs -- [NPM Package](#npm-package) and [Direct File Include/Git Submodule](#git-submoduledirect-file-include).\
+\
+### NPM Package\
+\
+We publish an NPM package called [Coefficient Foundations](https://code.ornl.gov/ords/ornl-design-system/-/tree/main/packages/foundations) that includes exports for each theme's values as well as the top-level tokens and compiled utility classes.\
+\
+<details>\
+<summary>Current Exports</summary>\
+\
+| Export | Description |\
+|--------|-------------|\
+| `@ornl-ux/coefficient-foundations` | Default JS variables and types export for the ORNL Green theme |\
+| `@ornl-ux/coefficient-foundations/ornl-green.scss` | SCSS variables for the ORNL Green theme |\
+| `@ornl-ux/coefficient-foundations/ornl-green.css` | CSS variables with light and dark mode support |\
+| `@ornl-ux/coefficient-foundations/ornl-green-styles.css` | Utility CSS classes (compiled styles) for typography, spacing, and other styles |\
+| `@ornl-ux/coefficient-foundations/ornl-green` | JS token exports with theme support |\
+\
+:::note\
+As new color themes get introduced, they will expand these offerings\
+:::\
+</details>\
+\
+:::tip\
+More specific token documentation for this site is in progress, but until then, please refer to the individual files to see what is available within them. You can find them in your `node_modules/ornl-ux/coefficient-foundations/dist` folder.\
+:::\
+\
+#### Installation\
+\
+This package is hosted in the ORNL on-prem Gitlab instance, and as such you must add the appropriate registry to your `.npmrc` or otherwise let NPM know where to find it.\
+\
+```shell\
+echo @ornl-ux:registry=https://code.ornl.gov/api/v4/projects/17520/packages/npm/ >> .npmrc\
+```\
+\
+:::warning\
+\
+On some Windows command prompts, using the `echo` command might add unknown invisible unicode characters to your `.npmrc` file and you may get errors trying to install the package, indicating that it can't be found. When in doubt, just make a fresh `.npmrc` file in your project root and copy the contents indicated below.\
+\
+:::\
+\
+Alternatively, copy the following into a new or existing `.npmrc` file at your project root:\
+\
+```shell title=".npmrc"\
+@ornl-ux:registry=https://code.ornl.gov/api/v4/projects/17520/packages/npm/\
+```\
+\
+Then you can `npm i @ornl-ux/coefficient-foundations` as normal.\
+\
+:::info Gitlab Package Registry\
+For more information on Gitlab's package registry see the official [Gitlab instructions here](https://code.ornl.gov/help/user/packages/npm_registry/index.md)\
+:::\
+\
+### Git Submodule/Direct File Include\
+\
+If your project is set up in such a way that you prefer to either include a git submodule or directly download and include specific files, then we also have a separate [Coefficient Compiled Styles](https://code.ornl.gov/ords/ords-compiled-styles) Gitlab repo you can use.\
+\
+It is effectively a mirror of the Foundations package project (they are both outputs of our codegen process).\
+\
+Grab anything you need from the `/assets` folder and you're good to go. You will need to manually check for updates or use a git submodule workflow that ensures you have any changes.\
+\
+:::tip Submodule Includes\
+If you only want to include the specific files you need from the submodule and ignore the rest, look into `git sparse-checkout`\
+:::\
+\
+:::warning Experimental Assets\
+Anything in the `/assets/experimental` folder are just that - experimental. Use at your own risk\
+:::\
+\
+### Use Coefficient in Your Project\
+\
+The package supports all the standard ways of including CSS/SCSS/JS in a web project, though your mileage may vary based on project differences.\
+\
+#### Importing/Referencing\
+\
+<Tabs>\
+<TabItem value="cssimport" label="CSS">\
+\
+```css\
+@import "@ornl-ux/coefficient-foundations/ornl-green.css";\
+@import "@ornl-ux/coefficient-foundations/ornl-green-styles.css"; \
+```\
+\
+</TabItem>\
+<TabItem value="cssinjs" label="CSS in JS">\
+\
+```js\
+import "@ornl-ux/coefficient-foundations/ornl-green.css"\
+import "@ornl-ux/coefficient-foundations/ornl-green-styles.css"\
+```\
+\
+:::info CSS Modules\
+If you're using CSS Modules in your project, doing an `@import` into a single module isn't a supported use-case, but if you're importing globally you'll be able to access the variables and/or classes from within any downstream modules or components.\
+::: \
+\
+</TabItem>\
+<TabItem value="js" label="JavaScript">\
+For the JavaScript variables, just import where needed:\
+\
+```js\
+import coefficient from "@ornl-ux/coefficient-foundations/ornl-green"\
+\
+const primary_text = coefficient.LIGHT_MODE.primary_text_rich\
+```\
+\
+:::info About JS/TS Variables\
+The JS variables are really only intended for if you are going to implement your own high level theming and styling system. In most cases you're going to want to make use of the CSS/SCSS exports to just style your application in which case you don't need the JS variables.\
+:::\
+\
+</TabItem>\
+<TabItem value="html" label="HTML">\
+\
+```html\
+<link\
+  rel="stylesheet"\
+  type="text/css"\
+  href="./node_modules/@ornl-ux/coefficient-foundations/dist/ornl-green-vars.css" />\
+```\
+\
+</TabItem>\
+</Tabs>\
+:::warning Where to Import CSS Token Variables\
+These tokens are meant to be global variables, available to your whole application, so the best practice is to import them somewhere at a root level in your application, wherever is appropriate for your framework.\
+\
+For instance, you could do this in your top level `App.tsx/App.vue` where the main css file is usually imported, or you can import into a top level `app.css`, or you could even pull it in via a `<link>` in the main HTML page header.\
+:::\
+\
+ \
+#### Using Coefficient variables in your CSS\
+\
+The CSS variables work like any other CSS variables, if you've imported them correctly they should be able to be referenced in any of your styles.\
+\
+Look for opportunities to abstract specific values into a semantic concept, such as a `bg-primary` or `bg-accent` utility class that encapsulates the specific value variable so that if you change themes or change between light and dark mode, everything works without needing changes:\
+\
+```css \
+.bg-primary \{\
+  background-color: var(--primary-weak);\
+\}\
+\
+.bg-accent \{\
+  background-color: var(--accent-weak);\
+\}\
+```\
+\
+For more information on using CSS variables/custom properties, see the [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_cascading_variables/Using_CSS_custom_properties).\
+\
+### What are Design Tokens?\
+\
+Tokens are variables that represent design decisions such as color, typography, and spacing, in a consistent and reusable way.\
+\
+Essentially they're design values as data.\
+\
+Tokens allow designers and developers to talk about the implementation of designs using *semantic abstractions*, such as `primary-dark`, instead of *concrete values*, such as `#ab231c`. This creates a separation layer that allows for upstream changes, such as new themes or best practices or brand guidelines, to be implemented with as little change surface area as possible.\
+\
+For example, if the brand guideline is that primary ORNL green is `#0F8723` and all your main buttons in your application are set to that value and that value changes, you have a lot of changing to do. But if your buttons are set to `var(--ords-primary)` and you get that from this repo, you just have to update the package if that primary color changes.\
+\
+Tokens are meant to be used as building blocks for bigger things. You can combine them into your own CSS classes or plug them into a customization layer for a component library like Material or use them as the source values for theming a COTS system like Sharepoint.\
+\
+Tokens are available as SCSS variables, CSS variables, and JS variables (with types).\
+\
+#### How Do I Use Tokens?\
+\
+In practice, you'd use these foundational tokens to construct a more comprehensive style, so as an example, if you wanted to construct a global `H1` style that applies all of the appropriate values from the design system, it would look something like:\
+\
+```css\
+h1 \{ \
+    font-family: var(--heading-h1-font-family);\
+    font-weight: var(--heading-h1-font-weight);\
+    font-size: var(--heading-h1-font-size);\
+    line-height: var(--heading-h1-line-height);\
+    letter-spacing: var(--heading-h1-letter-spacing); \
+\}\
+```\
+\
+But, you don't need to create basic foundational utility CSS like this for typography because we also provide compiled styles.\
+\
+### What are Compiled Styles?\
+\
+Compiled styles is just a fancy way to say "we turned some of the tokens into usable CSS utility classes."\
+\
+A good example is a typography class for an `H1` style:\
+\
+```css\
+.ords-heading-h1 \{ \
+    font-family: Mulish; \
+    font-weight: 500; \
+    font-size: 3rem; \
+    line-height: 1.2; \
+    letter-spacing: -0.02em; \}\
+```\
+\
+This combines the tokens for font family, weight, size, line height, etc, into a single usable class. It doesn't use the variables because it is code-generated from the variables to match to the current theme, but if those variables change in the design system, that class gets re-generated and pushed out with the next version.\
+\
+:::note What is 'ords'?\
+To avoid annoying collisions as much as possible, we namespaced the styles `ords-xxx` which just stands for `Oak Ridge Design System` which seems to be a good enough trade-off of uniqueness/descriptiveness and annoyingness to type because nobody wants to have a bunch of `coefficient-header-h1` in their code.\
+:::\
+\
+The primary use of compiled styles is foundational, global utilities like typography, spacing, elevation, and so on. \
+\
+The compiled styles will grow over time but will never be a comprehensive representation of all styling in the Coefficient Design System. However, if you find yourself really wishing something were a part of the compiled styles we offer, reach out!\
+\
+---\
+\
+## Headers\
+\
+## Implementation\
+\
+Teams using SAP technologies (SAPUI5 or UI5 Web Components) can utilize the SAP's native [Shell Bar](https://www.sap.com/design-system/fiori-design-web/ui-elements/shell-bar/) component. This component is designed to be the consistent global anchor across all Fiori applications.\
+\
+- **Branding Slot**: Use the primaryTitle (and secondaryTitle if needed) properties along with the logo property to help aligns with the "Main Level" and "Second Level" hierarchy needs described above.\
+- **Navigation Slot**: The Fiori Shell Bar natively handles navigation through a Menu button to trigger a side navigation drawer so please feel free to leverage that directly in place of adding the navigation directly inline.\
+- **User Actions Slot**: Use the dedicated slots for profile, searchField, and notifications as needed for the given application. Out of the box The Shell Bar already includes a right-alignment for these items.\
+\
+## Anatomy\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/patterns/header/header-anatomy.png" />\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+1. **Branding Slot (Left):** Establish site identity using logos, site titles, or hierarchy indicators.\
+2. **Navigation Slot (Middle):** Contains primary navigation items. If content exceeds available space, this slot can remain empty while navigation moves to a secondary row or sidebar.\
+3. **User Actions Slot (Right):** Optional global utilities such as search, profile management, and theme toggles. If a site does not have the need for displaying actions then this slot can be left empty.\
+\
+## Usage\
+\
+- **Think in Slots:** View the header as three rigid containers (Branding, Navigation, Actions) that can flexibly accept different content based on the site's specific needs.\
+- **Consistent Positioning:** Always maintain the Branding (left) and User Actions (right) positions to build user expectation, regardless of the specific content within those slots.\
+- **Adapt to Hierarchy:** Use the Branding slot to differentiate between Main Level sites (ORNL.gov) and Second Level sites (Internal Systems) using the appropriate visual treatments.\
+- **Handle Overflow Gracefully:** If navigation items are too numerous for the center slot, move them to a dedicated navigation row below the header or a left-sidebar rather than overcrowding the header.\
+\
+### Layout\
+\
+#### Slots\
+\
+The header layout relies on anchoring elements to expected locations (aka slots). This predictability allows users to find tools quickly, even when switching between different applications.\
+\
+<Columns>\
+	<Column className="margin-top--md">\
+		<Card className="padding--md card--full-height">\
+			<CardHeader>\
+				<IIcon\
+					icon="ph:leaf-thin"\
+					height="48"\
+					color="var(--ifm-color-primary)"\
+				/>\
+				Branding Slot\
+			</CardHeader>\
+			<CardBody>\
+				- Main Level Sites: Use the full ORNL logo. - Second Level Sites: Use\
+				the Leaf symbol followed by a chevron and the site name. - Function: The\
+				primary logo or site title should always link to the homepage of the\
+				specific site.\
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+<Columns>\
+	<Column className="margin-top--md">\
+		<Card className="padding--md card--full-height">\
+			<CardHeader>\
+				<IIcon\
+					icon="ph:compass-thin"\
+					height="48"\
+					color="var(--ifm-color-primary)"\
+				/>\
+				Navigation Slot\
+			</CardHeader>\
+			<CardBody>\
+				- Located directly to the right of the Branding slot. - Contains\
+				top-level links and sub-menus. - Overflow: If the navigation is too\
+				large to fit, leave this slot empty and display navigation in a\
+				full-width row below the header.\
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+<Columns>\
+	<Column className="margin-top--md">\
+		<Card className="padding--md card--full-height">\
+			<CardHeader>\
+				<IIcon\
+					icon="ph:user-circle-thin"\
+					height="48"\
+					color="var(--ifm-color-primary)"\
+				/>\
+				User Actions Slot\
+			</CardHeader>\
+			<CardBody>\
+				- Aligned to the far right. - Contains actions specific to the user's\
+				needs for that site (e.g., Search, Profile, Dark Mode). - Only include\
+				actions supported by the site.\
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+#### Responsive Behavior\
+\
+On smaller screens, the Navigation slot should collapse into a "hamburger" menu within the User Actions slot or Branding slot, while Branding remains visible.\
+\
+Example:\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/patterns/header/header-responsive.png" />\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+#### Handling Navigation Overflow\
+\
+When the number of navigation items exceeds the width of the center slot move navigation to a dedicated row immediately below the header and keep the navigation slot empty\
+\
+Example:\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/patterns/header/header-nav-overflow.png" />\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+#### Touch Targets\
+\
+Ensure interactive elements in the User Actions slot (like icons) have sufficient padding for touch interaction.\
+\
+### Content\
+\
+#### Branding\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/patterns/header/branding-examples.png" />\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+- Logos: For primary sites, link the full logo to the homepage.\
+  - For ORNL Branded sites, please only use logos provided by Creative Services. Links to latest assets can always be found in the [branding documentation](/docs/coefficient/fundamentals/brand#assets).\
+  - For non-ORNL branded sites, please work with Creative Services to identify the appropriate logo assets to be used.\
+- Titles: Site titles can be the full name or an abbreviation depending on space constraints.\
+- Hierarchy Icons: The "Leaf" and "Chevron" combination is reserved for secondary/sub-level sites to visually distinguish them from main-level public facing pages.\
+\
+#### User Actions\
+\
+Only populate the right-hand slot with actions that make sense for the specific site.\
+\
+<Columns>\
+	<Column className="margin-bottom--lg">\
+		<Columns>\
+			<Column className="margin-top--md">\
+				<Card className="card--full-height padding--md">\
+					<CardHeader>\
+						<IIcon\
+							icon="ph:info-thin"\
+							height="48"\
+							color="var(--ifm-color-secondary)"\
+						/>\
+						Common Actions\
+					</CardHeader>\
+					<CardBody>\
+						\
+							\
+								Search: Include only if the site provides a\
+								functional search experience.\
+							\
+							\
+								Profile/User: For authenticated sites requiring\
+								user management.\
+							\
+							\
+								Theme Toggle: Light/Dark mode switches.\
+							\
+							\
+								Favorites: For applications allowing saved\
+								items.\
+							\
+						\
+					</CardBody>\
+				</Card>\
+			</Column>\
+			<Column className="margin-top--md">\
+				<Card className="card--full-height padding--md">\
+					<CardHeader>\
+						<IIcon\
+							icon="ph:x-circle-thin"\
+							height="48"\
+							color="var(--ifm-color-danger)"\
+						/>\
+						Avoid\
+					</CardHeader>\
+					<CardBody>\
+						\
+							\
+								Primary Navigation: Do not place core site\
+								links (like "Home" or "About") in the action slot; keep them in\
+								the nav slot.\
+							\
+							\
+								Decorative Icons: Do not place non-interactive\
+								icons in the action slot.\
+							\
+						\
+					</CardBody>\
+				</Card>\
+			</Column>\
+		</Columns>\
+	</Column>\
+</Columns>\
+\
+### Color\
+\
+We recommend selecting a color approach from below that aligns with the site's overall color scheme and hierarchy.\
+\
+#### Solid Color\
+\
+<Columns>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardHeader>\
+        <IIcon icon="ph:paint-brush-broad-thin" height="48" color="var(--ifm-color-primary)" />\
+        Standard\
+      </CardHeader>\
+      <CardBody>\
+        Use surface variables to allow the header to adapt naturally to system preferences.\
+          - **Background:** `--surface-base` or `--surface-weak`\
+          - **Foreground:** `--text-base`\
+\
+        Renders as white/light in light mode and dark/grey in dark mode.\
+      </CardBody>\
+    </Card>\
+\
+  </Column>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardHeader>\
+        <IIcon icon="ph:paint-bucket-thin" height="48" color="var(--ifm-color-primary)" />\
+        Branded\
+      </CardHeader>\
+      <CardBody>\
+        Use the rich primary color for sites requiring strong brand presence.\
+          - **Background:** `--primary-rich`\
+          - **Foreground:** `--text-white`\
+\
+        A bold, colored header that maintains legibility through high contrast text.\
+      </CardBody>\
+    </Card>\
+\
+  </Column>\
+</Columns>\
+\
+#### Textures\
+\
+In addition to solid colors, a set of approved background textures is available provided by Creative Services. These can be used in place of the background color to add visual depth while maintaining the standard slot structure. You may find links to the most up to date textures in the assets section of the [Branding](/docs/coefficient/fundamentals/brand.md#assets) documentation.\
+\
+## Accessibility\
+\
+### Semantic Structure and Landmarks\
+\
+Use semantic HTML to clearly define page regions.\
+\
+- Wrap the header in a native `<header>` element.\
+- Use `<nav>` for navigation regions.\
+- Apply `role="search"` to search components when applicable.\
+\
+Landmarks should be used intentionally. Overuse can create noise for screen reader users and make the page structure harder to understand.\
+\
+### Navigation Organization and Hierarchy\
+\
+- Avoid placing commonly used menu items last, since keyboard users must navigate sequentially.\
+- Use list elements for navigation links to improve screen reader comprehension.\
+\
+### Keyboard Navigation\
+\
+- Users must be able to tab through all interactive elements.\
+- Top level navigation items must receive visible focus.\
+- Use Enter or Space to activate links and open dropdowns.\
+- Dropdown menus must open via click or keyboard interaction, not hover, since they are difficult for users with motor or vision impairments and do not work on touch devices.\
+\
+### Skip Navigation Links\
+\
+Provide a skip navigation link to allow users to bypass the long navigation lists and jump directly to main content.\
+\
+- Add a skip navigation link before the header and place it at the very top of the page.\
+- The link should be visible on focus.\
+- The link must point to an id at the beginning of the main content area.\
+- Avoid placing other interactive elements before the skip link.\
+\
+Read more: [Skip Navigation Links from WebAIM](https://webaim.org/techniques/skipnav/)\
+\
+### Icons and Visual Elements\
+\
+- Always pair icons with visible text labels.\
+- Do not replace navigation labels with icons.\
+\
+### Logo Accessibility\
+\
+- Provide alternative text for logo images.\
+- If the logo is text, use a neutral inline element such as ``.\
+- Do not use an h1 for the logo unless it is the homepage.\
+\
+---\
+\
+## SAP Fiori\
+\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column className="col col--2">\
+		\
+	</Column>\
+	<Column className="col col--10">\
+		[SAP Fiori\
+		UI5](https://www.sap.com/design-system/fiori-design-web/discover/get-started/ui5)\
+		is one of the standard development frameworks at ORNL. Coefficient supports\
+		SAP Fiori UI5 applications through a custom theme and a Figma UI kit.\
+	</Column>\
+</Columns>\
+\
+## Figma UI Kit\
+\
+Coefficient maintains a SAP-specifc UI kit that combines the SAP-specific components, variables, and settings with Coefficient's design tokens, allowing designers and developers to work directly with SAP components and properties without the friction of an additional translation step to convert designs to their SAP equivalents.\
+\
+Get the [UI Kit here](https://www.figma.com/design/Pu3zyWEc5VhI5Ccmbfe1fM/SAP-Fiori-for-Web-UI-Kit?node-id=2-8&t=R9SpG7zDPfez4w3V-1) and please use it as your base when creating designs for SAP Fiori applicaitons.\
+\
+## Theme\
+\
+We've also created 2 custom themes for SAP that directly map our design tokens to SAP Fiori variables. This allows new applications to be stood and simply leverage these themes to bring in ORNL's branding and colors while enabling devlopers to work direclty with the common properites they expect to use when building an SAP application.\
+\
+The themes are built direclty into SAP Theme Designer and there is both a dark theme (`ORNL Theme Dark`) and a light theme (`ORNL Theme Light`)\
+\
+---\
+\
+## SharePoint\
+\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column className="col col--2">\
+		\
+	</Column>\
+	<Column className="col col--10">\
+		SharePoint sites are one of ways that organization and teams can stand up internal sites at ORNL. Coefficient supports SharePoint site consistency through a pre-built theme, a Figma UI kit and a set of best practices for structuring available web parts.\
+	</Column>\
+</Columns>\
+\
+## Figma UI Kit\
+\
+Coefficient maintains a SharePoint UI kit that combines the SharePoint components, variables, and settings with Coefficient's design tokens, allowing designers and developers to work directly with SharePoint components and properties without the friction of an additional translation step to convert designs to their SharePoint equivalents.\
+\
+Get the [UI Kit here](https://www.figma.com/design/2TkFx4WcN6czqawGHd37Ee/SharePoint-Web-UI-Kit?node-id=0-1&t=R9SpG7zDPfez4w3V-1) and please use it as your base when creating designs for SharePoint applicaitons.\
+\
+## Theme\
+\
+We've also created a custom theme for SharePoint that can be accessed directly in the SharePoint web UI when setting up a site.\
+\
+You can set the theme on any interal site through the following steps:\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/frameworks/sharepoint/theme-instructions.png" />\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+1) Open your site settings by clicking the gear icon at the top right of your site\
+2) Click on "Change the look"\
+3) Click on "Theme"\
+4) Under the header "From your organization" you will see 3 themes that have been built to map directly to ORNL's branding and colors called `Green`, `Dark Green 1` &amp; `Dark Green 2`\
+5) Select a theme from this list and then click "Save"\
+\
+---\
+\
+## Button(Components)\
+\
+## Implementation\
+\
+Coefficient is built work with Vuetify's native button compnent `v-btn`. Please refer to Vuetify's documenatation for [v-btn](https://vuetifyjs.com/en/components/buttons) for details on implementation.\
+\
+## Usage\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+				<IIcon\
+					icon="ph:check-circle-thin"\
+					height="48"\
+					color="var(--ifm-color-success)"\
+				/>\
+				When to use\
+			</CardHeader>\
+			<CardBody>\
+				Use buttons to trigger actions in an interface such as submitting a\
+				form, saving data, canceling an interaction or opening &amp; closing a\
+				modal.\
+			</CardBody>\
+		</Card>\
+	</Column>\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+				<IIcon\
+					icon="ph:x-circle-thin"\
+					height="48"\
+					color="var(--ifm-color-danger)"\
+				/>\
+				When not to use\
+			</CardHeader>\
+			<CardBody>\
+				Don't use buttons to navigate users within or between experiences. In\
+				those situations please use a\
+				[Link](/docs/coefficient/components/link/).\
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+### Label\
+\
+- Make sure to provide a descriptive, self explaining label that reflects the action that will happen next. Be brief, usually a single verb is best but include a noun if it increases clarity.\
+  - Examples:\
+  - When a button enables someone to create something new, start with \'e2\'80\'9cNew" and then include the name of the thing they can create (e.g. "New Message")\
+  - When a button enables someone to edit an existing set, start with \'e2\'80\'9cEdit" and then include the name of the thing they can edit (e.g. "Edit Contact Info")\
+- Use title case and no end punctuation (e.g., "Sign Up" instead of "sign up" or "SIGN UP") to improve readability.\
+\
+### Style\
+\
+- Use a primary button for the most important or desired action on a given page.\
+- Use demphasized buttons for less important or secondary actions.\
+- Use disabled buttons to indicate actions that are currently unavailable or incomplete, and provide context for why the button is disabled.\
+\
+### Icon\
+\
+- Add an icon for commonly recognized actions when the icon will improve scannability, such as a check mark for "Confirm" or a trash can for "Delete."\
+- Place an icon on the left side of the text when the icon is visually associated with the primary action or draws attention to the button.\
+- Place an icon on the right side of the text when the icon represents a secondary aspect of the action or complements it (e.g., an arrow icon to indicate a next step action).\
+\
+### Grouping\
+\
+- Buttons can be grouped visually together when there are two or more actions that a user needs to consider in context of each other. A common example is is Save or Cancel\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/components/button/button-grouping-do.png" />\
+			<CardHeader>\
+				\
+					<IIcon\
+						icon="ph:check-circle-thin"\
+						height="24"\
+						color="var(--ifm-color-success)"\
+					/>\{" "\}\
+					Do\
+				\
+			</CardHeader>\
+			<CardBody>\
+				- Create a logical order with one primary button & a set of lower\
+				emphasis buttons\
+			</CardBody>\
+		</Card>\
+	</Column>\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/components/button/button-grouping-dont.png" />\
+			<CardHeader>\
+				\
+					<IIcon\
+						icon="ph:x-circle-thin"\
+						height="24"\
+						color="var(--ifm-color-danger)"\
+					/>\{" "\}\
+					Don't\
+				\
+			</CardHeader>\
+			<CardBody>\
+				- Place more than one primary action in a group. - Use different levels\
+				of secondary emphasis in a group\
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+### Markup\
+\
+- Using the correct tags for buttons is important because it can disorient users if they hear the wrong tag read out to them by the screen reader.\
+- HTML\'c2\'a0`<button>`\'c2\'a0or\'c2\'a0`<input type="button">`:\'c2\'a0Buttons should be created created using the\'c2\'a0`<button>`\'c2\'a0or\'c2\'a0`<input>`\'c2\'a0tag with a\'c2\'a0type="button"\'c2\'a0attribute.\
+\
+## Accessibility\
+\
+### Human Impact Overview\
+\
+- Buttons facilitate user interaction by providing clear, clickable actions on web pages and applications.\
+- For users with disabilities, buttons must be easy to identify and use, with alternative methods for interaction, such as keyboard controls.\
+- Proper button design helps reduce confusion and ensures that all users can navigate more efficiently.\
+\
+### WCAG 2.1 A and AA Success Criteria\
+\
+- [1.4.1](https://www.w3.org/TR/WCAG21/#use-of-color) Use of Color: Buttons should not rely solely on color to convey their function. Text labels or universally recognized icons could accompany them.\
+- [2.4.7](https://www.w3.org/TR/WCAG21/#focus-visible) Focus Visible: Buttons must have a visible focus indicator when navigated to via keyboard.\
+- [4.1.2](https://www.w3.org/TR/UNDERSTANDING-WCAG20/ensure-compat-rsv.html) Name, Role, Value: Buttons must have clear names and roles defined to be operable and understandable by user agents, including assistive technologies.\
+\
+### Keep in mind\
+\
+- Buttons should display a visible focus state when users tab to them.\
+- Screen readers handle buttons and links differently. Pressing the Space/Enter key triggers a button, but pressing the Enter key triggers a link.\
+- Provide clear, concise labels for all actions to support users with cognitive disabilities.\
+  Avoid using generic labels like \'e2\'80\'9cClick Here\'e2\'80\uc0\u157  for buttons. Use more informative and descriptive labels. Please see our [Guidance](#label) for recommendations.\
+\
+### Keyboard Interaction\
+\
+- All buttons must be accessible using the keyboard alone.\
+- Buttons can be reached by tab\'c2\'a0and selected with\'c2\'a0space\'c2\'a0or\'c2\'a0enter.\
+\
+---\
+\
+## Headers(Patterns)\
+\
+## Implementation\
+\
+import CodeBlock from "@theme/CodeBlock"\
+import VuetifyHeaderSource from "!!raw-loader!../../../shared/vuetify/code/headerTemplate.vue"\
+\
+Teams using Vuetify can directly leverage its [v-app-bar](https://vuetifyjs.com/en/components/app-bars) or [v-toolbar](https://vuetifyjs.com/en/components/toolbars) components. The slot architecture maps well to Vuetify's layout logic by utilizing the v-spacer component to control alignment.\
+\
+- **Branding Slot:** Use the `v-app-bar-title` or `v-toolbar-title` component (depending on which root component you selected). This ensures the logo or site title remains anchored to the left.\
+- **Navigation Slot:** Place top-level navigation items immediately after the branding title. Note: For mobile layouts, use v-app-bar-nav-icon to house collapsed navigation which will help implement the [Responsive Behavior](#responsive-behavior) guidance from above.\
+- **The Split (Spacer):** Insert a `<v-spacer></v-spacer>` component after the navigation items. This can be used to push everything following it to the align to the right, creating the separation between Navigation and User Actions.\
+- **User Actions Slot:** Place icon buttons or toggles after the spacer to anchor them to the right.\
+\
+#### Example\
+\
+:::tip Recipe\
+You can view and play with the below example on [Vuetify Play](https://play.vuetifyjs.com/#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).\
+:::\
+\
+<CodeBlock showLineNumbers language="markup">\
+	\{VuetifyHeaderSource\}\
+</CodeBlock>\
+\
+## Anatomy\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/patterns/header/header-anatomy.png" />\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+1. **Branding Slot (Left):** Establish site identity using logos, site titles, or hierarchy indicators.\
+2. **Navigation Slot (Middle):** Contains primary navigation items. If content exceeds available space, this slot can remain empty while navigation moves to a secondary row or sidebar.\
+3. **User Actions Slot (Right):** Optional global utilities such as search, profile management, and theme toggles. If a site does not have the need for displaying actions then this slot can be left empty.\
+\
+## Usage\
+\
+- **Think in Slots:** View the header as three rigid containers (Branding, Navigation, Actions) that can flexibly accept different content based on the site's specific needs.\
+- **Consistent Positioning:** Always maintain the Branding (left) and User Actions (right) positions to build user expectation, regardless of the specific content within those slots.\
+- **Adapt to Hierarchy:** Use the Branding slot to differentiate between Main Level sites (ORNL.gov) and Second Level sites (Internal Systems) using the appropriate visual treatments.\
+- **Handle Overflow Gracefully:** If navigation items are too numerous for the center slot, move them to a dedicated navigation row below the header or a left-sidebar rather than overcrowding the header.\
+\
+### Layout\
+\
+#### Slots\
+\
+The header layout relies on anchoring elements to expected locations (aka slots). This predictability allows users to find tools quickly, even when switching between different applications.\
+\
+<Columns>\
+	<Column className="margin-top--md">\
+		<Card className="padding--md card--full-height">\
+			<CardHeader>\
+				<IIcon\
+					icon="ph:leaf-thin"\
+					height="48"\
+					color="var(--ifm-color-primary)"\
+				/>\
+				Branding Slot\
+			</CardHeader>\
+			<CardBody>\
+				- Main Level Sites: Use the full ORNL logo. - Second Level Sites: Use\
+				the Leaf symbol followed by a chevron and the site name. - Function: The\
+				primary logo or site title should always link to the homepage of the\
+				specific site.\
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+<Columns>\
+	<Column className="margin-top--md">\
+		<Card className="padding--md card--full-height">\
+			<CardHeader>\
+				<IIcon\
+					icon="ph:compass-thin"\
+					height="48"\
+					color="var(--ifm-color-primary)"\
+				/>\
+				Navigation Slot\
+			</CardHeader>\
+			<CardBody>\
+				- Located directly to the right of the Branding slot. - Contains\
+				top-level links and sub-menus. - Overflow: If the navigation is too\
+				large to fit, leave this slot empty and display navigation in a\
+				full-width row below the header.\
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+<Columns>\
+	<Column className="margin-top--md">\
+		<Card className="padding--md card--full-height">\
+			<CardHeader>\
+				<IIcon\
+					icon="ph:user-circle-thin"\
+					height="48"\
+					color="var(--ifm-color-primary)"\
+				/>\
+				User Actions Slot\
+			</CardHeader>\
+			<CardBody>\
+				- Aligned to the far right. - Contains actions specific to the user's\
+				needs for that site (e.g., Search, Profile, Dark Mode). - Only include\
+				actions supported by the site.\
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+#### Responsive Behavior\
+\
+On smaller screens, the Navigation slot should collapse into a "hamburger" menu within the User Actions slot or Branding slot, while Branding remains visible.\
+\
+Example:\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/patterns/header/header-responsive.png" />\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+#### Handling Navigation Overflow\
+\
+When the number of navigation items exceeds the width of the center slot move navigation to a dedicated row immediately below the header and keep the navigation slot empty\
+\
+Example:\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/patterns/header/header-nav-overflow.png" />\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+#### Touch Targets\
+\
+Ensure interactive elements in the User Actions slot (like icons) have sufficient padding for touch interaction.\
+\
+### Content\
+\
+#### Branding\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/patterns/header/branding-examples.png" />\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+- Logos: For primary sites, link the full logo to the homepage.\
+  - For ORNL Branded sites, please only use logos provided by Creative Services. Links to latest assets can always be found in the [branding documentation](/docs/coefficient/fundamentals/brand#assets).\
+  - For non-ORNL branded sites, please work with Creative Services to identify the appropriate logo assets to be used.\
+- Titles: Site titles can be the full name or an abbreviation depending on space constraints.\
+- Hierarchy Icons: The "Leaf" and "Chevron" combination is reserved for secondary/sub-level sites to visually distinguish them from main-level public facing pages.\
+\
+#### User Actions\
+\
+Only populate the right-hand slot with actions that make sense for the specific site.\
+\
+<Columns>\
+	<Column className="margin-bottom--lg">\
+		<Columns>\
+			<Column className="margin-top--md">\
+				<Card className="card--full-height padding--md">\
+					<CardHeader>\
+						<IIcon\
+							icon="ph:info-thin"\
+							height="48"\
+							color="var(--ifm-color-secondary)"\
+						/>\
+						Common Actions\
+					</CardHeader>\
+					<CardBody>\
+						\
+							\
+								Search: Include only if the site provides a\
+								functional search experience.\
+							\
+							\
+								Profile/User: For authenticated sites requiring\
+								user management.\
+							\
+							\
+								Theme Toggle: Light/Dark mode switches.\
+							\
+							\
+								Favorites: For applications allowing saved\
+								items.\
+							\
+						\
+					</CardBody>\
+				</Card>\
+			</Column>\
+			<Column className="margin-top--md">\
+				<Card className="card--full-height padding--md">\
+					<CardHeader>\
+						<IIcon\
+							icon="ph:x-circle-thin"\
+							height="48"\
+							color="var(--ifm-color-danger)"\
+						/>\
+						Avoid\
+					</CardHeader>\
+					<CardBody>\
+						\
+							\
+								Primary Navigation: Do not place core site\
+								links (like "Home" or "About") in the action slot; keep them in\
+								the nav slot.\
+							\
+							\
+								Decorative Icons: Do not place non-interactive\
+								icons in the action slot.\
+							\
+						\
+					</CardBody>\
+				</Card>\
+			</Column>\
+		</Columns>\
+	</Column>\
+</Columns>\
+\
+### Color\
+\
+We recommend selecting a color approach from below that aligns with the site's overall color scheme and hierarchy.\
+\
+#### Solid Color\
+\
+<Columns>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardHeader>\
+        <IIcon icon="ph:paint-brush-broad-thin" height="48" color="var(--ifm-color-primary)" />\
+        Standard\
+      </CardHeader>\
+      <CardBody>\
+        Use surface variables to allow the header to adapt naturally to system preferences.\
+          - **Background:** `--surface-base` or `--surface-weak`\
+          - **Foreground:** `--text-base`\
+\
+        Renders as white/light in light mode and dark/grey in dark mode.\
+      </CardBody>\
+    </Card>\
+\
+  </Column>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardHeader>\
+        <IIcon icon="ph:paint-bucket-thin" height="48" color="var(--ifm-color-primary)" />\
+        Branded\
+      </CardHeader>\
+      <CardBody>\
+        Use the rich primary color for sites requiring strong brand presence.\
+          - **Background:** `--primary-rich`\
+          - **Foreground:** `--text-white`\
+\
+        A bold, colored header that maintains legibility through high contrast text.\
+      </CardBody>\
+    </Card>\
+\
+  </Column>\
+</Columns>\
+\
+#### Textures\
+\
+In addition to solid colors, a set of approved background textures is available provided by Creative Services. These can be used in place of the background color to add visual depth while maintaining the standard slot structure. You may find links to the most up to date textures in the assets section of the [Branding](/docs/coefficient/fundamentals/brand.md#assets) documentation.\
+\
+## Accessibility\
+\
+### Semantic Structure and Landmarks\
+\
+Use semantic HTML to clearly define page regions.\
+\
+- Wrap the header in a native `<header>` element.\
+- Use `<nav>` for navigation regions.\
+- Apply `role="search"` to search components when applicable.\
+\
+Landmarks should be used intentionally. Overuse can create noise for screen reader users and make the page structure harder to understand.\
+\
+### Navigation Organization and Hierarchy\
+\
+- Avoid placing commonly used menu items last, since keyboard users must navigate sequentially.\
+- Use list elements for navigation links to improve screen reader comprehension.\
+\
+### Keyboard Navigation\
+\
+- Users must be able to tab through all interactive elements.\
+- Top level navigation items must receive visible focus.\
+- Use Enter or Space to activate links and open dropdowns.\
+- Dropdown menus must open via click or keyboard interaction, not hover, since they are difficult for users with motor or vision impairments and do not work on touch devices.\
+\
+### Skip Navigation Links\
+\
+Provide a skip navigation link to allow users to bypass the long navigation lists and jump directly to main content.\
+\
+- Add a skip navigation link before the header and place it at the very top of the page.\
+- The link should be visible on focus.\
+- The link must point to an id at the beginning of the main content area.\
+- Avoid placing other interactive elements before the skip link.\
+\
+Read more: [Skip Navigation Links from WebAIM](https://webaim.org/techniques/skipnav/)\
+\
+### Icons and Visual Elements\
+\
+- Always pair icons with visible text labels.\
+- Do not replace navigation labels with icons.\
+\
+### Logo Accessibility\
+\
+- Provide alternative text for logo images.\
+- If the logo is text, use a neutral inline element such as ``.\
+- Do not use an h1 for the logo unless it is the homepage.\
+\
+---\
+\
+## Vuetify\
+\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column className="col col--2">\
+		\
+	</Column>\
+	<Column className="col col--10">\
+		[Vue.js](https://vuejs.org/) with [Vuetify](https://vuetifyjs.com/en/) is\
+		one of the standard development frameworks for custom application\
+		development at ORNL. Coefficient supports Vuetify 3.x applications through a\
+		custom theme package and a Figma UI kit.\
+	</Column>\
+</Columns>\
+\
+## Coefficient Vuetify Figma UI Kit\
+\
+The Coefficient team maintains a Vuetify-specifc UI kit that combines the Vuetify-specific components, variables, and settings with Coefficient's design tokens, allowing designers and developers to work directly with Vuetify components and properties without the friction of an additional translation step to convert designs to their Vuetify equivalents.\
+\
+Not only does this reduce the communication gap between developers and designers, it also ensures designers are working within the realm of what already exists, increasing the overall efficency of everyone involved.\
+\
+Get the [UI Kit here](https://www.figma.com/design/mjyvXN2dNQ71t7nNwMJTaL/Vuetify-UI-Kit?m=auto)!\
+\
+## Coefficient Vuetify Theme Package\
+\
+[project README](https://code.ornl.gov/ords/ornl-design-system/-/blob/main/packages/vuetify-theme/README.md)\
+\
+### Quickstart\
+\
+To get up and running with the theme package in your project, you'll need to install it and wire it up to your Vuetify config.\
+\
+#### Installation\
+\
+This package is hosted in the ORNL on-prem Gitlab instance, and as such you must add the appropriate registry to your `.npmrc` or otherwise let NPM know where to find it.\
+\
+```shell title="command line"\
+echo @ornl-ux:registry=https://code.ornl.gov/api/v4/projects/17520/packages/npm/ >> .npmrc\
+```\
+\
+:::warning\
+\
+On some Windows command prompts, using the `echo` command might add unknown invisible unicode characters to your `.npmrc` file and you may get errors trying to install the package, indicating that it can't be found. When in doubt, just make a fresh `.npmrc` file in your project root and copy the contents indicated below.\
+\
+:::\
+\
+Alternatively, copy the following into a new or existing `.npmrc` file at your project root:\
+\
+```shell title=".npmrc"\
+@ornl-ux:registry=https://code.ornl.gov/api/v4/projects/17520/packages/npm/\
+```\
+\
+Once you've pointed NPM at the `@ornl-ux` registry source,  you can install as normal.\
+\
+```shell npm2yarn\
+npm i @ornl-ux/coefficient-vuetify-theme\
+```\
+\
+The package also has a peer dependency on [@phosphor-icons/vue](https://github.com/phosphor-icons/vue), so if you intend to use the icon set (optional), you need that as well.\
+\
+(from partial)\
+\
+#### Setup and Use\
+\
+To wire up the Vuetify theme and use it in your project, you need to:\
+\
+- [ ] Import the theme\
+- [ ] Set Up the SCSS Variables\
+- [ ] Install Mulish Font\
+- [ ] Install Icons\
+\
+:::info Vuetify Themes\
+For more information about using custom themes in Vuetify, see the [official documentation](https://vuetifyjs.com/en/features/theme/#custom-themes).\
+:::\
+\
+<Tabs>\
+\
+<TabItem value="import" label="Import Theme">\
+\
+##### Import Theme\
+\
+Import themes into your Vuetify loader and update your `createVuetify(...)` call to use them:\
+\
+```javascript\
+import "vuetify/styles"\
+\
+// Composables\
+import \{ createVuetify \} from "vuetify"\
+import \{ ORDS, ORDSDark \} from "@ornl-ux/coefficient-vuetify-theme"\
+\
+// https://vuetifyjs.com/en/introduction/why-vuetify/#feature-guides\
+export default createVuetify(\{\
+	theme: \{\
+		defaultTheme: "ORDS",\
+		themes: \{\
+			ORDS,\
+			ORDSDark,\
+		\},\
+	\},\
+\})\
+```\
+\
+</TabItem>\
+<TabItem value="sass" label="SCSS Variables">\
+\
+Use the `_ords.scss` variables in your SASS entrypoint (probably `settings.scss`) and override the appropriate Vuetify settings\
+\
+```scss\
+@use "@ornl-ux/coefficient-vuetify-theme/_ords.scss" as ords;\
+\
+@forward "vuetify/settings" with (\
+	$body-font-family: ords.$body-font-family,\
+	$border-radius-root: ords.$border-radius-root,\
+	$font-weights: ords.$font-weights,\
+	$typography: ords.$typography\
+);\
+```\
+\
+</TabItem>\
+<TabItem value="font" label="Font">\
+\
+Import the [`Mulish`](https://fonts.google.com/specimen/Mulish?query=mulish) font into your application. If you're using Vite you can use a font-loader in your `vite.config.ts` (this is technically optional but Mulish is the official brand font for the ORNL theme).\
+\
+```javascript\
+ViteFonts(\{\
+    google: \{\
+      families: [\
+        \{\
+          name: "Mulish",\
+          styles: "ital,wght@0,200..1000;1,200..1000",\
+        \},\
+      ],\
+    \},\
+  \}),\
+```\
+\
+</TabItem>\
+<TabItem value="icons" label="Icons">\
+\
+Add the [Phosphor Icons](https://phosphoricons.com/) to your application (This is technically optional but the Phosphor Icons are the official ORNL brand iconset).\
+\
+1. Install the [Phosphor Icons Vue package](https://github.com/phosphor-icons/vue#installation) if you haven't already (see [installation](#installation)).\
+\
+2. Next, add the iconset into your Vue application:\
+\
+```javascript\
+// index.ts or similar ...\
+import \{ ORDSIconSet \} from "@ornl-ux/coefficient-vuetify-theme"\
+\
+app.use(ORDSIconSet).use(vuetify).use(router)\
+```\
+\
+1. Next, in your Vuetify loader, import the `aliases` and `phosphor` objects and add an `icons` key to your `createVuetify()` call:\
+\
+```javascript\
+import "@mdi/font/css/materialdesignicons.css"\
+import "vuetify/styles"\
+import \{ aliases, ORDS, ORDSDark, phosphor \} from "@ornl-ux/coefficient-vuetify-theme"\
+//...\
+export default createVuetify(\{\
+	icons: \{\
+		defaultSet: "mdi",\
+		aliases: \{\
+			...aliases,\
+		\},\
+		sets: \{ phosphor \},\
+	\},\
+	theme: \{\
+		defaultTheme: "ORDS",\
+  ...\
+  \}\
+\})\
+```\
+\
+:::tip\
+if you leave the `defaultSet` as `"mdi"` you can also still use the material icons that come packaged with Vuetify by default, e.g. `<v-icon icon="mdi-pencil-outline"></v-icon>`.\
+:::\
+\
+##### Using Additional Phosphor Icons\
+\
+The `ORDSIconSet` loader is optimized to only register the components defined by the iconset, which is a small subset of the overall Phosphor package. To use others, you'll need to also load them in here individually, e.g.:\
+\
+```javascript\
+//...\
+import \{ PhArmchair \} from "@phosphor-icons/vue"\
+\
+app.component("PhArmchair", PhArmchair)\
+```\
+\
+And then you can use a `<PhArmchair />` component anywhere in your app.\
+\
+:::info\
+You can also just [globally install the full Phosphor iconset](https://github.com/phosphor-icons/vue#global-install) in your app (in which case you don't need the `ORDSIconSet` loader) though this is generally not recommended by the maintainers as it may not play well with tree shaking. But if convienience outweighs bundle size, go for it.\
+:::\
+\
+</TabItem>\
+</Tabs>\
+\
+## Patterns and Guidance\
+\
+Section tk, framework specific implementation guidance\
+\
+import CodeBlock from "@theme/CodeBlock"\
+import VuetifyHeaderSource from "!!raw-loader!../../../shared/vuetify/code/headerTemplate.vue"\
+\
+Teams using Vuetify can directly leverage its [v-app-bar](https://vuetifyjs.com/en/components/app-bars) or [v-toolbar](https://vuetifyjs.com/en/components/toolbars) components. The slot architecture maps well to Vuetify's layout logic by utilizing the v-spacer component to control alignment.\
+\
+- **Branding Slot:** Use the `v-app-bar-title` or `v-toolbar-title` component (depending on which root component you selected). This ensures the logo or site title remains anchored to the left.\
+- **Navigation Slot:** Place top-level navigation items immediately after the branding title. Note: For mobile layouts, use v-app-bar-nav-icon to house collapsed navigation which will help implement the [Responsive Behavior](#responsive-behavior) guidance from above.\
+- **The Split (Spacer):** Insert a `<v-spacer></v-spacer>` component after the navigation items. This can be used to push everything following it to the align to the right, creating the separation between Navigation and User Actions.\
+- **User Actions Slot:** Place icon buttons or toggles after the spacer to anchor them to the right.\
+\
+#### Example\
+\
+:::tip Recipe\
+You can view and play with the below example on [Vuetify Play](https://play.vuetifyjs.com/#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).\
+:::\
+\
+<CodeBlock showLineNumbers language="markup">\
+	\{VuetifyHeaderSource\}\
+</CodeBlock>\
+## Gallery\
+\
+Section TK, examples and gallery of images\
+\
+## FAQs\
+\
+<details>\
+    <summary>How do we test the package?</summary>\
+\
+We maintain a test application for every major framework we support that allows us to QA updates before we release them.\
+\
+In the future, we may also have an external pre-release QA cycle for development teams to participate in. If this would interest you, let us know!\
+\
+</details>\
+<details>\
+<summary>Do you support Vue/Vuetify 2.x?</summary>\
+\
+At present we do not have built-in support for Vue and Vuetify versions less than 3.x, but we are exploring the options and viability of doing so. Please [let us know](../../support-contribute) so we can talk to you about how that might work with your application.\
+\
+Additionally, any web application should be able to implement our standard [Foundations](/docs/coefficient/framework-support/general-html-css-js) which include CSS and JS design token variables and CSS utility classes.\
+\
+</details>\
+\
+---\
+\
+## Accessibility\
+\
+\
+Accessibility (A11y) is a fundamental part of user experience (UX). It is through accessibility that we ensure that everyone can use applications and websites developed by Oak Ridge National Laboratory effectively and efficiently.\
+\
+While accessibility is critical to ensure equitable access to digital applications for people with one or more disabilities that may affect how they move, see, hear, communicate, learn, understand, and process information, a focus on accessibility is, at root, a focus on ensuring that *everyone* has the best possible user experience.\
+\
+At ORNL, accessibility matters for three big reasons: \
+\
+1. It\'e2\'80\'99s the right thing to do - Inclusion strengthens our science, our collaborations, and our community. \
+\
+2. It\'e2\'80\'99s the law - We must meet requirements such as Section 508 and WCAG 2.1 AA. Our global collaborations often require meeting other international accessibility laws, too. \
+\
+3. It\'e2\'80\'99s good for innovation and reach - Accessibility improves usability for everyone, makes content easier to find and share, and ensures our work reaches the widest possible audience. \
+\
+## Accessibility Playbook\
+\
+For a deep dive into all things Accessibility, check out our [Accessibility Playbook *link tk*](../)\
+\
+## Component and Pattern Accessibility\
+\
+Accessibility guidance is available for each component and pattern implemented in the system. Check the pages dedicated to whichever component you're interested in to learn more.\
+\
+## Regulatory Requirements\
+\
+Accessibility is a regulatory requirement under [Section 508](https://section508.gov).\
+\
+Section 508 is the sub-section of the U.S. Rehabilitation Act of 1973 that requires electronic content produced by the federal government be accessible to people with disabilities. It also sets the accessibility standards for websites, applications, digital kiosks and other digital communications tools and content, known as information communication technology (ICT). The goal of Section 508 is to ensure that people with disabilities have equal access to government information and services through its digital content.\
+\
+Under Section 508 there are four primary principles of accessibility:\
+\
+- **Perceivable**: Users must be able to perceive the information presented.\
+- **Operable**: Users must be able to operate the interface.\
+- **Understandable**: Users must be able to understand both how the user interface operates and the meaning of information presented.\
+- **Robust**: Users must be able to access the content as technologies advance. As technologies like browsers and other assistive technology evolve, the content should remain accessible.\
+\
+## We Test for Accessibility, You Should Too\
+\
+While we have rigorously tested and validated Coefficient against the most stringent accessibility rules possible, that's only the first step to ensuring accessible applications.\
+\
+At both the design phase and the implementation phase, it's critical to test your own application for accessibility. You can reference our [component](../components/) documentation, our [patterns & recipes](../patterns/), and our [Accessibility Playbook](../) for guidance.\
+\
+---\
+\
+## Brand\
+\
+\
+Creative Services provides a source of truth for brand assets (logos, backgrounds, etc...). This page provides up to date links to those assets that are approved by Creative Services for use.\
+\
+## Guidelines\
+\
+ORNL\'e2\'80\'99s tagline, **"Big Science, Big Impact"**, is an integral part of our brand identity and illustrates the importance and impact of the work that we do.  Creative services provides a comprehensive set of brand guidelines which go into depth on brand voice, logo usage, etc.  Please reference their guidelines in combination with the assets provided below when representing ORNL branding in any user experience.\
+\
+[View Brand Guidelines](https://www.dropbox.com/scl/fi/if8y6huidhad519ggjhyz/BrandGuidelines.pdf?rlkey=9l6ud4klilka4s9zhwpd61l19&e=1&st=vyo7tiy2&dl=0)\
+\
+## Assets\
+\
+- **[ORNL logo](https://www.dropbox.com/scl/fo/wb9l09wlk8f8okwfp7vc6/ACVtUqrmh5wHH2jngH6zEQA/Black?rlkey=tkz1c9c6rku75yocvko3yq1t8&subfolder_nav_tracking=1&st=x7bsnp53&dl=0)**\
+  - Contains the official ORNL logo in black, white and ORNL Green in the following file formats: .eps, .ai, .jpg, .png, .pdf, .svg.  Please refer to the logo section of the guidelines above for details on its use.\
+- **[Oak leaf](https://www.dropbox.com/scl/fo/s0rp3vemhw8ylaoc0htau/AE3PDuqpptY-wRRE-sdo3q8?rlkey=68r0pvqhvjuowjc9hxo9yfldw&e=1&st=gv5d9j35&dl=0)** \
+  - Contains the oak leaf in black, white and ORNL Green in the following file formats: .eps, .ai, .jpg, .png, .pdf, .svg.   Please refer to the logo section of the guidelines above for details on its use.\
+- **[Brand colors](https://www.dropbox.com/scl/fi/rxyod32qcc5cycbmm5etq/ORNL-Color-Palette.pdf?rlkey=2689iou3z6xv31llxu46ouwlq&e=1&st=kf8qgprn&dl=0)** \
+  - These colors compliment the out of the box themes and semantic colors that Coefficient provides. They can be used when a more distinct color or accent is needed than what we provide out of the box.\
+- **[Background textures](https://www.dropbox.com/scl/fo/18psegqa4v6yrgyw211ki/AO_2UkOM7bl7BHtyR_v5ZQI?rlkey=r90mwrboq3qhjndrd6ngxuwet&e=1&st=fqvtoy7y&dl=0)**\
+  - Approved background textures that can be used for things like headers, heroes and cards.\
+\
+---\
+\
+## Color\
+\
+\
+The semantics, patterns, and abstractions that define Coefficient's color system.\
+\
+## How we think about color\
+\
+### Color has explicit meaning and purpose\
+\
+<Columns className="margin-top--lg">\
+  <Column className="padding-left--none col col--8">\
+\
+Color is an essential element in web applications, influencing user perception and interaction. Each color carries its own set of meanings and emotions, which can significantly impact how users engage with the interface. For example, red is often associated with urgency or danger, making it an effective choice for alerts or warnings. By thoughtfully incorporating these colors into the design, developers can create a more intuitive user experience. A well-planned color scheme not only enhances the aesthetic appeal of the application but also serves as a navigational tool, guiding users toward their goals. When users can easily interpret the visual cues provided by color, they are more likely to interact confidently and efficiently with the application, ultimately leading to a more satisfying experience.\
+\
+  </Column>\
+  <Column className="padding-right--none col col--4">\
+    \
+  </Column>\
+</Columns>\
+\
+### Color acts as an affordance for action\
+\
+<Columns className="margin-top--md">\
+  <Column className="padding-left--none col col--8">\
+\
+Color serves as a powerful affordance in web applications, guiding users toward actionable elements. By utilizing distinct colors for buttons, links, and interactive features, designers can create visual cues that indicate where users should focus their attention. For instance, vibrant hues like blue or green can signal clickable items, while muted tones may suggest non-interactive content. This intentional use of color not only enhances usability but also fosters a more engaging experience, as users can quickly identify pathways for interaction and navigate the interface with confidence.\
+\
+  </Column>\
+  <Column className="padding-right--none col col--4">\
+    \
+  </Column>\
+</Columns>\
+\
+### Color creates hierarchy\
+\
+<Columns className="margin-top--md">\
+  <Column className="padding-left--none col col--8">\
+\
+Color is important for establishing visual hierarchy within web applications. By strategically using different colors, designers can guide users' attention to the most important elements on a page. For instance, a vibrant color can highlight primary actions, while softer hues can be used for secondary information, creating a clear distinction between various levels of content. This intentional use of color not only enhances the aesthetic appeal but also improves usability, allowing users to navigate the interface more intuitively. When users can easily discern the importance of elements through color differentiation, they are more likely to engage effectively with the application.\
+\
+  </Column>\
+  <Column className="padding-right--none col col--4">\
+    \
+  </Column>\
+</Columns>\
+\
+### Color powers accessible experiences\
+\
+<Columns className="margin-top--md">\
+  <Column className="padding-left--none col col--8">\
+\
+Color plays a critical role in creating accessible web applications, enhancing both usability and aesthetic appeal. By ensuring that color contrast adheres to established accessibility standards, designers can significantly improve navigation for all users, including those with visual impairments. Thoughtful color selections not only help differentiate between various interface elements but also create a more engaging experience. This inclusivity fosters confidence among users, allowing them to interact with the application without hesitation, ultimately leading to a more satisfying user journey.\
+\
+  </Column>\
+  <Column className="padding-right--none col col--4">\
+    \
+  </Column>\
+</Columns>\
+\
+## Semantic System Colors\
+\
+System colors are named to reflect their purpose within the system. We provide (and can work with you to create) themes with color ramps defined for each system color.  In the table below we are representing an `ORNL Green` theme which is derived from our color system and defined in collaboration between UX and Creative services to reflect the ORNL brand.\
+\
+| Role | Description |\
+| -- | -- | \
+| Primary | Primary is the primary color of the system and is used to denote the interactivity of an element and is associated with the most important actions of an interaction point. |\
+| Supporting | Supporting is used to highlight actions that are important, but don\'e2\'80\'99t directly help the user achieve the goal of a page. Secondary should be reserved for elements or information that complement the primary focus that draws attention to an action without disrupting the flow. |\
+| Accent | Accent should be used sparingly throughout the design of a page. It can be used for elements that need to stand out and call attention to themselves and also for visual pops of color that maintain cohesion with the brand. |\
+| Neutral | Neutral should be used to de-emphasize interactions that are less important or not encouraged. It is also for non-interactive elements, backgrounds, borders, and typography to provide a consistent and balanced visual experience. |\
+| Danger | Danger is used to communicate errors or critical issues that require immediate attention or indicate potential negative consequences. |\
+| Warning | Warning is used to indicate potential hazards, risks, or situations that require caution before proceeding with an action. |\
+| Success | Success is used to communicate positive outcomes, confirmations, or the successful completion of a task. |\
+| Information | Info is used to indicate that there is important information that the user should be aware of that isn\'e2\'80\'99t necessarily system critical. |\
+\
+## Color Applications\
+\
+Semantic system tokens are also provided help color to be implemented consistently, accessibly, and purposefully across ORNL's experiences.  Here are some of the common applications of color (and recommendations for how tokens could be leveraged for each) that you'll come across when building expereinces at ORNL.\
+\
+### Surfaces & Backgrounds\
+\
+Surfaces are the backbone of most designs. They are a way to convey hierarchy and separation among background elements and containers without the use of a border or divider.\
+\
+We recommend using neutrals as the foundation for most backgrounds (`--neutral-bg-*`, `--surface-*`).\
+\
+Please reserve color backgrounds for use cases where emphasis is needed (like in Heroes, Cards or Calls to action).  For example: notification panels (--info-bg-soft), confirmation states (--success-bg-soft), or warnings (--warning-bg-soft).\
+\
+Please try to avoid overusing vivid colors behind large amounts of body content as depending on the implementation it can reduce readability and accessibility.\
+\
+### Text\
+\
+For overall body text we recommend relying on neutral tokens (and using these will naturally handle both light and dark implementations):\
+\
+- `--neutral-text-strong` for primary copy.\
+- `--neutral-text-emphasis` for secondary text or metadata.\
+\
+We also recommend using semantic colors to convey meaning for specific use cases:\
+\
+- `--success-text-*` for positive outcomes.\
+- `--danger-text-*` for errors or destructive actions.\
+- `--warning-text-*` for cautions or alerts.\
+- `--info-text-*` for informational highlights.\
+\
+For accent or primary text colors (e.g., --primary-text-emphasis) we recommend using those sparingly\'e2\'80\'94to highlight key text, selected states, or interactive text.\
+\
+### Icons\
+\
+Icon colors should follow a similar pattern as text colors to ensure that icons can be used with text content consistently\
+\
+For base icons we recommend using neutral colors such as `--icon-medium` or `--neutral-icon-strong` to maintain contrast with text.\
+\
+For status icons we recommend leveraging the semantic colors directly (e.g. `--success-icon-strong` for positive outcomes, `--warning-icon-strong` for cautions or alerts, etc...)\
+\
+### Borders\
+\
+Borders provide separation between elements in a design. They can be applied as a part of a component or independently in the form of dividers.\
+\
+For default borders: use neutral tones like `--neutral-border-subtle` or `--border-light`.\
+\
+For interactive elements: try to align the border color with intent. e.g. `--primary-border-strong` for active states, `--danger-border-emphasis` for error states.\
+\
+For dividers: use subtle contrasts (`--neutral-border-soft` or opacity variants) to define sections without drawing attention.\
+\
+## Accessibility Considerations\
+\
+- Always verify contrast ratios between background and text (\'e2\'89\'a5 4.5:1 for body, \'e2\'89\'a5 3:1 for large text).\
+- Focus on semantic meaning first.  Hue\'e2\'80\'94color alone should never convey critical information.\
+- Ensure dark theme parity, using provided inverted semantic variables to maintain brand consistency in all modes.\
+\
+## Frequently Asked Questions\
+\
+### How do I pick which color to use?\
+\
+Picking the right color for your component can be difficult, but we can help you find the right solution by answering a simple question:\
+\
+How important is this action to the user?\
+\
+Think about the context of your page. What is the user trying to accomplish, and does this element help them achieve that goal? \
+For example, if the user is trying submit a form, the button that the user clicks to submit the form is almost certainly a primary action. However, if the user is trying to submit a form and the button is a link that will take them to a different page or otherwise distract from the primary action, it\'e2\'80\'99s likely a secondary action.\
+\
+### What if I have multiple important actions on a page?\
+\
+They can all be primary! The system has multiple ways of showing hierarchy and visual weight in a design. If you have multiple actions that feel important, they can all be primary.\
+\
+### What if I don\'e2\'80\'99t have any secondary actions?\
+\
+That\'e2\'80\'99s okay! Color is only one way of showing the hierarchy in a design. Not every page will have secondary actions, it\'e2\'80\'99s just a way to provide affordances to a user when an action is important, but not serving their immediate goal.\
+\
+### How do I know how much of each color to use?\
+\
+Using the components provided in the Coefficient UI Kit should provide you with a well balanced design. However, if your design feels off and seems like it could use some tweaking, try following the 60-30-10 rule of design:\
+\
+- 60% of the colored elements in a design should use the primary color\
+- 30% of the colored elements in a design should use the secondary color\
+- 10% of the colored elements in a design should use the accent color\
+- Use neutrals liberally to balance the design\
+\
+Note that these ratios are not hard rules, but a guideline that can be helpful when you\'e2\'80\'99re struggling to create something that works visually.\
+\
+---\
+\
+## Typography\
+\
+Guidance and accessibility best practices to help enhance the readability of typography in our user experiences.\
+\
+## How we think about typography\
+\
+### Typography establishes hierarchy\
+\
+Hierarchy is how we visually communicate order. A structured heirarchy will help our users answer:\
+\
+- Where should my attention go first?\
+- How is this content organized?\
+- What belongs together?\
+\
+Size, weight, spacing, and positioning work together to establish visual prominence and guide users through content at a glance. Consistent hierarchy supports scannability, especially in data-dense environments or long-form sections.\
+\
+Hierarchy is about clarity. It\'e2\'80\'99s the structure that makes information instantly understandable.\
+\
+### Typography defines purpose\
+\
+Purpose helps define when a given style should be used and what you want the user to recognize.\
+\
+When selecting type which type token to use for a given purpose, consider these questions:\
+\
+- Is this text introducing, informing, or inviting action?\
+- Is this content primary or supporting?\
+\
+Purpose ensures that each type style is used intentionally rather than decoratively. It allows us to make consistent decisions:\
+\
+- Display call for attention\
+- Heading groups and structures content\
+- Body supports comfortable reading\
+- Link communicate interactivity\
+\
+Purpose is about intention. It\'e2\'80\'99s how we choose the right tool for the job.\
+\
+## Fonts\
+\
+### Mulish\
+\
+Mulish is used as the primary font for ORNL. It is a minimalist yet versatile Sans Serif typeface, designed for both display and body typography. [Source](https://fonts.google.com/specimen/Mulish)\
+\
+### Roboto\
+\
+Roboto can be used as an alternative font for body typography. [Source](https://fonts.google.com/specimen/Roboto)\
+\
+## Type ramp\
+\
+Our type ramp is built to support most typography use cases needed at the lab. \
+\
+If you are able to leverage our tokens directly that is the recommended approach as the tokens bring along all their settings automatically.  However if you are not able to leverage our tokens then we also provide the specs for each level of the ramp as well. Details on both can be found in our [General HTML/CSS/JS](/docs/coefficient/framework-support/general-html-css-js) documentation.\
+\
+While using these styles, please keep in mind the hierarchy and the intended use cases for each style.\
+\
+### Display \
+\
+Use to introduce key moments in the UI. Display creates high visibility and should be used sparingly. Its ideal for hero banners, landing pages and marketing sections.\
+\
+#### Display properties\
+\
+- Extra-bold weights (900) for strong visual presence\
+- Very large sizes (3rem \'e2\'80\'93 7.5rem)\
+- Tighter letter spacing to feel clean and modern\
+- Single-line emphasis (line-height: 1)\
+\
+#### Display is good for\
+\
+- Page hero titles\
+- Dashboard \'e2\'80\'9cbig number\'e2\'80\uc0\u157  visualizations\
+- Section intros and marketing panels\
+\
+### Header\
+\
+Use to introduce content sections and define visual hierarchy. Headers create order and support scannability.\
+\
+#### Header properties\
+\
+- Medium font weight (500) for clarity and structure\
+- Consistent line-height of 1.2 for readable multi-line titles\
+- Logical step-downs in size from 3rem to 1rem\
+\
+#### Header is good for\
+\
+- Page titles (H1)\
+- Section headings (H2\'e2\'80\'93H3)\
+- Inline group labels and card titles (H4\'e2\'80\'93H6)\
+\
+Please follow semantic HTML structure as much as possible (H1, then H2, etc.). This helps accessibility, screen readers, and document scanning. Screen readers for example use headings to help users navigate quickly through content and correct structure improves understanding and accessibility.\
+\
+**The specific accessibility standard we follow:**\
+WCAG 2.1, 2.4.6 Headings and Labels (Level AA) ([Reference](https://www.w3.org/WAI/WCAG21/Understanding/headings-and-labels.html))\
+\
+- Use proper semantic HTML elements (``, ``, ``, etc.) to establish a clear information hierarchy.\
+- Headings should be meaningful and descriptive, not just styled visually.\
+- Maintain logical heading order (don\'e2\'80\'99t jump from `` to ``, for example).\
+\
+:::tip When to use Display vs Header\
+\
+Display is intended to be used for visual impact and attention-grabbing use cases whereas Heading is intended to aid readability and create hierarchy within the structure of a user experience.\
+\
+  \
+    \
+      Use Display\
+      \
+        For large, prominent text elements such as heros, banners, and featured text\
+        When creating visual interest is the priority\
+        For brand statements or key messages\
+      \
+    \
+  \
+  \
+    \
+      Use Heading\
+      \
+        For section titles, subheadings, and content organization\
+        For creating a clear information hierarchy in a document\
+        Please see the \'e2\'80\'9cSemantic Hierarchy\'e2\'80\uc0\u157  section below for best practices on structure\
+      \
+    \
+  \
+\
+:::\
+\
+### Body\
+\
+Best for comfortable, long-form reading, dense content areas, lists and paragraphs.\
+\
+#### Body properties\
+\
+- Regular weight (400) for legibility\
+- Line-height of 1.5 to reduce eye fatigue\
+- Subtle letter spacing (+0.02em) for clarity at smaller sizes\
+\
+#### Body sizes\
+\
+- XL (1.5rem) \'e2\'80\'93 prominent text blocks, feature copy\
+- Large and Medium (1.25rem / 1rem) \'e2\'80\'93 standard paragraph text\
+- Small, XS, XXS (0.875rem / 0.75rem / 0.625rem) \'e2\'80\'93 captions, supporting text\
+\
+#### Body is good for\
+\
+- Article-style content\
+- List views and tables\
+- UI supporting text and captions\
+\
+### Link\
+\
+Link can be used to communicate interactive, actionable text\
+\
+#### Link properties\
+\
+- Matches body weights, line-heights and sizes\
+- Always include underline styling out-of-the-box\
+\
+## Guidance\
+\
+### Text spacing\
+\
+Our tokens meet recommended accessibility standards for line height, letter spacing, and word spacing ratios to ensure readability.  If you are not able to leverage our tokens directly please implement the specs listed for each font style to meet the same standards manually.\
+\
+**Why is this important?**\
+Adequate spacing improves readability for all users, especially for those with dyslexia or cognitive disabilities.\
+\
+**Accessibility standard we follow**\
+WCAG 2.1, 1.4.12 Text Spacing (Level AA) ([Reference](https://www.w3.org/WAI/WCAG21/Understanding/text-spacing.html))\
+\
+- Line height (line spacing) to at least 1.5 times the font size;\
+- Spacing following paragraphs to at least 2 times the font size;\
+- Letter spacing (tracking) to at least 0.12 times the font size;\
+- Word spacing to at least 0.16 times the font size.\
+\
+### Text resizing\
+\
+Our components support zoom up to 200% without loss of content or functionality by default.\
+\
+**Why is this important?**\
+Some users, especially those with low vision, rely on browser zoom to read content. Text that does not scale properly can become unreadable or cause layout issues.\
+\
+**Accessibility standard we follow**\
+WCAG 2.1, 1.4.4 Resize Text (Level AA) ([Reference](https://www.w3.org/WAI/WCAG21/Understanding/resize-text.html))\
+\
+- Ensure text remains readable when users zoom up to 200% without loss of content or functionality.\
+- Support responsive typography that adapts to different devices and user settings.\
+- Avoid fixed pixel heights for containers that could cause text clipping.\
+\
+<!-- TBD \
+### Letter casing\
+\
+  \
+    \
+      Use Title Case for\
+      \
+        Page Titles\
+        Menu Items\
+        Buttons\
+        Badges &amp; Chips\
+      \
+    \
+  \
+  \
+    \
+      Use Sentance case for\
+      \
+        Section Headings\
+        Body text\
+        Tooltips and helper text\
+        Notifications and alerts\
+        Form labels and instructions\
+      \
+    \
+  \
+\
+-->\
+\
+### Text alignment\
+\
+  \
+    \
+      Use left-aligned text for all major content (e.g. headers, body)\
+    \
+  \
+  \
+    \
+      Use center-alignmment for text in self-contained ui elements such as buttons, badges and menu items\
+    \
+  \
+\
+### Line length\
+\
+Source: ["Readability: The Optimal Line Length"](https://baymard.com/blog/line-length-readability) by Baymard Institute \
+\
+The ideal line length is around 50-75 characters, including spaces, or 12-14 words per line. Longer lines of text can feel intimidating and overwhelming to users, potentially leading them to avoid reading. Conversely, lines that are too short disrupt the reader\'e2\'80\'99s rhythm by requiring frequent eye movements.\
+\
+---\
+\
+## Usability\
+\
+These principles provide a structured way to create expereinces that are intuitive, efficient, and accessible at ORNL. They are useful throughout the design and development process, from early stage wire-framing to post launch testing.\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+        <IIcon icon="ph:layout-thin" height="48" color="var(--ifm-color-primary)" />\
+				Aesthetic &amp; Minimalist Design\
+			</CardHeader>\
+			<CardBody>\
+				The interface should present elements simply and have an attractive and appropriate design.\
+        \
+          Remove gratuitous graphics.\
+          Remove irrelevant information, actions, or\'c2\'a0labels.\
+          Remove steps or actions that don\'e2\'80\'99t (yet)\'c2\'a0apply.\'e2\'80\'8b\
+        \
+			</CardBody>\
+		</Card>\
+	</Column>\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+        <IIcon icon="ph:shield-thin" height="48" color="var(--ifm-color-primary)" />\
+				Error Prevention\
+			</CardHeader>\
+			<CardBody>\
+				The system will prevent errors as much as possible and provide simple error handling in meaningful terms.\
+        \
+          Assume people will make mistakes, anticipate what they will be and try to prevent them.\
+          Add validation to form fields to prevent user error.\
+          Provide helpful instructions to assist the user in plain language to explain errors.\'e2\'80\'8b\
+        \
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+        <IIcon icon="ph:arrows-clockwise-thin" height="48" color="var(--ifm-color-primary)" />\
+				Consistency &amp; Standards\
+			</CardHeader>\
+			<CardBody>\
+				Users should not have to wonder whether different words, situations, or actions mean the same thing. Follow industry and platform conventions.\
+        \
+          Is the same word or icon used for\'c2\'a0every instance?\'e2\'80\'8b\'e2\'80\'8b\
+          Is the product internally\'c2\'a0consistent on visuals, processes,\'c2\'a0and tone?\'e2\'80\'8b\
+          Are terms, UI elements, and\'c2\'a0interactions standard convention?\'e2\'80\'8b\
+        \
+			</CardBody>\
+		</Card>\
+	</Column>\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+        <IIcon icon="ph:strategy-thin" height="48" color="var(--ifm-color-primary)" />\
+				Flexibility &amp; Efficiency of Use\
+			</CardHeader>\
+			<CardBody>\
+				Shortcuts &amp; alternative methods can speed up\'c2\'a0the interaction for the expert users so the\'c2\'a0design can cater to both inexperienced and\'c2\'a0experienced users.\
+        \
+          Are there shortcuts for frequent or\'c2\'a0repetitive steps/actions?\'e2\'80\'8b\
+          Can core functions be performed\'c2\'a0across modalities?\'e2\'80\'8b\
+        \
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+        <IIcon icon="ph:book-open-text-thin" height="48" color="var(--ifm-color-primary)" />\
+				Help &amp; Documentation\
+			</CardHeader>\
+			<CardBody>\
+				The interface will provide additional assistance as needed or requested.\
+        \
+          Is help and documentation accessible where the end user\'c2\'a0needs it?\'e2\'80\'8b\'e2\'80\'8b\
+          Informative for the end user?\'e2\'80\'8b\'e2\'80\'8b\
+          Used where needed & not an\'c2\'a0excuse?\'e2\'80\'8b\'e2\'80\'8b\
+        \
+			</CardBody>\
+		</Card>\
+	</Column>\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+        <IIcon icon="ph:warning-thin" height="48" color="var(--ifm-color-primary)" />\
+				Recognize, Diagnose &amp; Recover from Errors\
+			</CardHeader>\
+			<CardBody>\
+				Error message should be expressed in plain language, precisely indicate the problem, &amp;\'c2\'a0give an actionable solution.\'e2\'80\'8b\
+        \
+          Can end user see the precise problem?\'e2\'80\'8b\'e2\'80\'8b\
+          Learn from the message to avoid\'c2\'a0the same error?\'e2\'80\'8b\'e2\'80\'8b\
+          Take action to resolve the error?\'e2\'80\'8b\'e2\'80\'8b\
+        \
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+        <IIcon icon="ph:hand-swipe-right-thin" height="48" color="var(--ifm-color-primary)" />\
+				Match System to Real World\
+			</CardHeader>\
+			<CardBody>\
+				The design should speak the users\'e2\'80\'99 language. Use words, phrases and  concepts familiar to the user, rather than internal jargon.\
+        \
+          Are the labels and terms what the\'c2\'a0end user uses?\'e2\'80\'8b\'e2\'80\'8b\'e2\'80\'8b\
+          Are processes, workflows, and\'c2\'a0visuals correlated to the real\'c2\'a0world or industry expectations?\'e2\'80\'8b\
+        \
+			</CardBody>\
+		</Card>\
+	</Column>\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+        <IIcon icon="ph:door-open-thin" height="48" color="var(--ifm-color-primary)" />\
+				User Control &amp; Freedom\
+			</CardHeader>\
+			<CardBody>\
+				Users often perform actions by mistake. They need a clearly marked \'e2\'80\'9cemergency exit\'e2\'80\uc0\u157  to leave the unwanted action.\
+        \
+          Can end user change a mid-point setting\'c2\'a0without restarting the process?\'e2\'80\'8b\'e2\'80\'8b\
+          Can end user get out of a process?\'e2\'80\'8b Undo and redo steps? \'e2\'80\'8b\'e2\'80\'8b\
+        \
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+        <IIcon icon="ph:eye-thin" height="48" color="var(--ifm-color-primary)" />\
+				Recognition Rather Than Recall\
+			</CardHeader>\
+			<CardBody>\
+				Reduce short-term memory load by assisting user and providing needed information through the interface.\
+        \
+          Can end user recognize a button\'e2\'80\'99s purpose?\'e2\'80\'8b\
+          What navigation labels mean?\'e2\'80\'8b\
+          Which file they are looking for?\'e2\'80\'8b\
+          Where a change needs to be made?\'e2\'80\'8b\
+        \
+			</CardBody>\
+		</Card>\
+	</Column>\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardHeader>\
+        <IIcon icon="ph:traffic-signal-thin" height="48" color="var(--ifm-color-primary)" />\
+				Visibility of System Status\
+			</CardHeader>\
+			<CardBody>\
+				The interface should always keep users informed about what is going on, through appropriate, timely feedback.\
+        \
+          If the system is responding to\'c2\'a0their actions?\'e2\'80\'8b\'e2\'80\'8b\
+          Where they are in a workflow?\'e2\'80\'8b\'e2\'80\'8b\
+          How long they need to wait?\'e2\'80\'8b\'e2\'80\'8b\
+          Where the system is in the\'c2\'a0process?\'e2\'80\'8b\'e2\'80\'8b\'e2\'80\'8b\
+        \
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+---\
+\
+## Get Started\
+\
+\
+Build with Coefficient via one of our [supported frameworks](/docs/coefficient/framework-support), learn our [fundamentals](/docs/coefficient/fundamentals) &amp; [patterns](/docs/coefficient/patterns) or use our [tools &amp; resources](/docs/coefficient/resources/). \
+\
+## Build with your framework\
+\
+We provide direct integration with the following frameworks so you can leverage Coefficient's core fundamentals and patterns while still working with your preferred framework.\
+\
+<Columns>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardImage \
+        cardImageUrl="/img/frameworks/vuetify-logo.svg" \
+        alt="Vuetify Logo"\
+      />\
+      <CardHeader>\
+        <Link to="/docs/coefficient/framework-support/vuetify/">Vuetify</Link>\
+      </CardHeader>\
+    </Card>\
+  </Column>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardImage \
+        cardImageUrl="/img/frameworks/sharepoint-logo.svg" \
+        alt="SharePoint Logo"\
+      />\
+      <CardHeader>\
+        <Link to="/docs/coefficient/framework-support/sharepoint">SharePoint</Link>\
+      </CardHeader>\
+    </Card>\
+  </Column>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardImage \
+        cardImageUrl="/img/frameworks/sap-logo.svg" \
+        alt="SAP Logo"\
+      />\
+      <CardHeader>\
+        <Link to="/docs/coefficient/framework-support/sap">SAP</Link>\
+      </CardHeader>\
+    </Card>\
+  </Column>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardImage \
+        cardImageUrl="/img/frameworks/html-css-js-logo.svg" \
+        alt="HTML/CSS/JS Logo"\
+      />\
+      <CardHeader>\
+        <Link to="/docs/coefficient/framework-support/general-html-css-js">General HTML/CSS</Link>\
+      </CardHeader>\
+    </Card>\
+  </Column>\
+</Columns>\
+\
+## Learn our fundamentals\
+\
+<Columns>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardHeader>\
+        <IIcon icon="ph:lego-thin" height="48" color="var(--ifm-color-primary)" />\
+        Fundamentals\
+      </CardHeader>\
+      <CardBody>\
+        Learn the design principles including typography, color, spacing, and accessibility of Coefficient.\
+      </CardBody>\
+      <CardFooter>\
+        <Link to="/docs/coefficient/fundamentals">Explore Fundamentals</Link>\
+      </CardFooter>\
+    </Card>\
+  </Column>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardHeader>\
+        <IIcon icon="ph:layout-thin" height="48" color="var(--ifm-color-primary)" />\
+        Patterns &amp; Recipes\
+      </CardHeader>\
+      <CardBody>\
+        Discover reusable design patterns and component recipes that solve common user interface challenges and improve user experience.\
+      </CardBody>\
+      <CardFooter>\
+        <Link to="/docs/coefficient/patterns">Browse Patterns &amp; Recipes</Link>\
+      </CardFooter>\
+    </Card>\
+  </Column>\
+</Columns>\
+\
+## Use our tools &amp; resources\
+\
+<!-- Access everything you need to implement Coefficient effectively, from design files to tutorials and documentation about the system itself.-->\
+\
+<Columns>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardHeader>\
+        <IIcon icon="ph:figma-logo-thin" height="48" color="var(--ifm-color-primary)" />\
+        Figma Libraries\
+      </CardHeader>\
+      <CardBody>\
+        Access our comprehensive Figma component libraries and design tokens to streamline your design workflow.\
+      </CardBody>\
+      <CardFooter>\
+        <Link \
+          to="https://www.figma.com/files/1230572035428161235/project/358107061/UI-Kits?fuid=1397570705944078206"\
+        >\
+          Access Figma Libraries\
+        </Link>\
+      </CardFooter>\
+    </Card>\
+  </Column>\
+  <!-- <Column>\
+    <Card shadow="lt" className="margin-bottom--lg card--full-height padding--md">\
+      <CardHeader>\
+        <Icon icon="ph:student-thin" height="48" color="var(--ifm-color-primary)" />\
+        Tutorials\
+      </CardHeader>\
+      <CardBody>\
+        Follow step-by-step guides to get up and running quickly with Coefficient in your preferred development environment.\
+      </CardBody>\
+      <CardFooter>\
+        <Link \
+          to="#"\
+        >\
+          View Tutorials\
+        </Link>\
+      </CardFooter>\
+    </Card>\
+  </Column> -->\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardHeader>\
+        <IIcon icon="ph:question-thin" height="48" color="var(--ifm-color-primary)" />\
+        About Coefficient\
+      </CardHeader>\
+      <CardBody>\
+        Learn about the philosophy, goals, and roadmap behind Coefficient and how it supports ORNL's mission.\
+      </CardBody>\
+      <CardFooter>\
+        <Link \
+          to="/docs/coefficient"\
+        >\
+          Learn About Coefficient\
+        </Link>\
+      </CardFooter>\
+    </Card>\
+  </Column>\
+</Columns>\
+\
+---\
+\
+## Forms\
+\
+Forms enable our users to enter information and complete tasks across ORNL experiences. This guidance combines input, select, and button components with other context-specific guidance to create usable and accessible forms that help users enter accurate information with clear instructions.\
+\
+## Anatomy\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/patterns/forms-anatomy.png" />\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+1. **Field labels:** Text indicating the purpose of each field and whether information is required.\
+2. **Message text:** Optional additional guidance about format requirements or field purpose.\
+3. **States:** Implement states to help inform a user of their status in a given form.\
+4. **Actions:** Buttons enabling users to submit, cancel or conduct other form actions.\
+\
+## Usage\
+\
+- **Keep it focused:** Focus on collecting only information needed for the core task &amp; remove fields that can be derived elsewhere or collected more conveniently later. See the [Content > Fields](#fields) section below for more information.\
+- **Be logical:** Order fields from the user's perspective, not the system's perspective. Design the form as a conversation between you and the user. See the [Layout](#layout) section below for more information.\
+- **Make it accessible:** Ensure that users can interact with the form from any mode (e.g. keyboard, screen reader, etc...) or device (desktop, mobile, etc...)\
+- **Provide clarity:** Use clear language for labels and message text that guide the user to what information should be entered in each field. See the [Content > Labels](#labels) section below for more information.\
+\
+### Overview\
+\
+#### Components\
+\
+- Match the input component used to content and action you want the user to take.\
+- Use native HTML controls as they provide the ability to trigger appropriate mobile keyboards, zooming options and can provide built-in validation\
+- Size fields appropriately (narrow for postal codes, wider for addresses) to provides visual cues about expected input length and type of content that is expected.\
+- Use HTML autocomplete attributes to help browsers and password managers auto-fill forms, this will help reduce completion time for returning users on commonly used forms.\
+\
+<Columns>\
+	<Column>\
+		<Columns>\
+			<Column className="margin-top--md">\
+				<Card className="padding--md card--full-height">\
+					<CardHeader>\
+						<IIcon\
+							icon="ph:textbox-thin"\
+							height="48"\
+							color="var(--ifm-color-primary)"\
+						/>\
+						Inputs\
+					</CardHeader>\
+					<CardBody>\
+						- Use single-line inputs for entering one line of content, for\
+						example: name/username, email, date of birth, and more. - Use\
+						Multi-line inputs for entering multiple lines of content including\
+						comments and descriptions which are typically open-ended.\
+					</CardBody>\
+				</Card>\
+			</Column>\
+			<Column className="margin-top--md">\
+				<Card className="padding--md card--full-height">\
+					<CardHeader>\
+						<IIcon\
+							icon="ph:text-indent-thin"\
+							height="48"\
+							color="var(--ifm-color-primary)"\
+						/>\
+						Select\
+					</CardHeader>\
+					<CardBody>\
+						- Use when you need to enable the selection of a single option from\
+						a set of multiple, related options in a dropdown list. - Avoid using\
+						a select for 2-3 options. In those situations please use radio or\
+						checkbox instead.\
+					</CardBody>\
+				</Card>\
+			</Column>\
+		</Columns>\
+		<Columns className="margin-bottom--lg">\
+			<Column className="margin-top--md">\
+				<Card className="padding--md card--full-height">\
+					<CardHeader>\
+						<IIcon\
+							icon="ph:check-square-thin"\
+							height="48"\
+							color="var(--ifm-color-primary)"\
+						/>\
+						Checkbox\
+					</CardHeader>\
+					<CardBody>\
+						- Checkboxes enable the user to select one or more options from a\
+						list where each choice is independent of the other options available\
+						in the list.\
+					</CardBody>\
+				</Card>\
+			</Column>\
+			<Column className="margin-top--md">\
+				<Card className="padding--md card--full-height">\
+					<CardHeader>\
+						<IIcon\
+							icon="ph:radio-button-thin"\
+							height="48"\
+							color="var(--ifm-color-primary)"\
+						/>\
+						Radio\
+					</CardHeader>\
+					<CardBody>\
+						- Radio controls enable the user to choose a single option from a\
+						list of two, but no more than four different options. If providing\
+						more than four options, consider using a Select dropdown menu.\
+					</CardBody>\
+				</Card>\
+			</Column>\
+		</Columns>\
+	</Column>\
+</Columns>\
+\
+#### Calls to action\
+\
+- **Make primary actions prominent:** The main action should be visually distinct through color, size, or positioning. Use "primary" styling for the main action button.\
+- **Position primary actions consistently:** Place the primary action in the same location across forms to build user expectations and reduce cognitive load.\
+- **Provide clear secondary actions:** Include secondary actions like "Cancel" or "Save Draft" when appropriate, but make them visually less prominent than the primary action.\
+- **Enable keyboard navigation:** Ensure all form actions can be triggered using keyboard navigation (Tab, Enter, Space) to support accessibility.\
+\
+#### Validation & feedback\
+\
+- **Provide immediate validation feedback:** Show validation messages as users complete fields (on blur) rather than waiting for form submission. This allows users to correct errors while context is fresh.\
+- **Use inline error messages:** Display error messages directly next to relevant input fields rather than at the top of the form. This creates a clear connection between the error and its location.\
+- **Show progress indicators:** For multi-step forms, show users their current position and remaining steps. This helps manage expectations and reduces abandonment.\
+- **Preserve user input during errors:** When validation fails, preserve all correct user input so users don't have to re-enter information.\
+\
+#### Optional vs. required fields\
+\
+- Always ensure required fields are clearly labeled as it will help users scan for necessary information and reduces errors.\
+- Add `(*)` to indicate if a field is required\
+  - Adding `(*)` alongside the label ensures it\'e2\'80\'99s easy to associate with the field its for, particularly when instructions at the top might not be visible while scrolling.\
+  - Include a space between the last word of the label and the first parenthesis.\
+- **When required is implied**\
+  - Understanding its recommended to label required fields, there are cases where it\'e2\'80\'99s implied that the field is required. This is common when there\'e2\'80\'99s a one or two fields fundamental to completing of a task, like the username and password fields on a login screen.\
+  - In these cases, marking the fields required isn\'e2\'80\'99t necessary but can add additional clarity.\
+- **Labeling optional fields**\
+  - It\'e2\'80\'99s not generally necessary to mark which fields are optional. While doing so can support clarity, it also adds unnecessary visual noise.\
+  - We recommend to only denote required fields however if you choose also denote option fields then please apply that choice consistently to avoid confusion.\
+\
+### Layout\
+\
+#### Order fields logically\
+\
+- Display fields in an order that is logical from the user's perspective; not to your backend.\
+- Think of the form as a conversation with the user; what should you know before asking for the next piece of information?\
+\
+#### Group related information\
+\
+- Use descriptive headings to organize related fields into logical sections. This helps users understand the form's structure and track their progress.\
+- For longer forms, consider breaking them into steps to prevent users from feeling overwhelmed.\
+\
+#### Position labels above input fields\
+\
+- Top-aligned labels are easier to scan and work better across different screen sizes, creating a clear visual connection between label and input.\
+- Note: For frameworks leveraging Material as their root (like Vuetify), please continue to follow Material's out of the box structure for labels (e.g. where the label starts visually inside the input and then moves above the input field when focused). For more details see: [Vuetify](/docs/coefficient/framework-support/vuetify/)\
+\
+### Content\
+\
+#### Fields\
+\
+Only include fields needed for the core task. Remove fields which collect information that can be (a) derived in some other way or (b) collected more conveniently later.\
+\
+<Columns>\
+	<Column className="margin-bottom--lg">\
+		<Columns>\
+			<Column className="margin-top--md">\
+				<Card className="card--full-height padding--md">\
+					<CardHeader>\
+						<IIcon\
+							icon="ph:check-circle-thin"\
+							height="48"\
+							color="var(--ifm-color-success)"\
+						/>\
+						Add the field if\
+					</CardHeader>\
+					<CardBody>\
+						\
+							\
+								Failure to collect the requested info would cause a breakdown in\
+								the experience for the user\
+							\
+							\
+								A specific person or team needs the data from that field for\
+								their work\
+							\
+							\
+								A clear business process depends on the data that would be\
+								collected\
+							\
+						\
+					</CardBody>\
+				</Card>\
+			</Column>\
+			<Column className="margin-top--md">\
+				<Card className="card--full-height padding--md">\
+					<CardHeader>\
+						<IIcon\
+							icon="ph:x-circle-thin"\
+							height="48"\
+							color="var(--ifm-color-danger)"\
+						/>\
+						Don't add the field if\
+					</CardHeader>\
+					<CardBody>\
+						\
+							No one can explain how they'd use the data from the field\
+							We might need it someday \'f0\'9f\'98\'89\
+							Other applications collect the information already\
+						\
+					</CardBody>\
+				</Card>\
+			</Column>\
+		</Columns>\
+	</Column>\
+</Columns>\
+\
+The following questions can help you work through the purpose of each field in a given form to make sure you're collecting the right data while also keeping the form accessible for your users.\
+\
+1. What question are we asking of the user? (the exact field/input)\
+2. Who in our organization uses this data? (specific person/role, not just department)\
+3. What exactly do they use it for? (specific business process or decision)\
+4. Based on the above; is this answer required or optional?\
+5. What would happen if someone entered fake/incomplete data just to proceed?\
+6. Could we prepopulate this field from existing data?\
+7. Could we estimate this value using system data (user context, previous entries, defaults)?\
+8. Can we simplify data entry for this field (dropdowns, auto-complete, smart defaults)?\
+9. What's the cost to the user if we don't collect this data?\
+10. What's the user friction of collecting this data?\
+\
+#### Labels\
+\
+- **Use clear, descriptive labels:** Labels should clearly describe what information is needed without jargon or ambiguous terms. Users should understand what to enter without additional explanation.\
+- **Use sentence case for labels:** Sentence case (capitalizing only the first word) is easier to read and maintains consistency with other interface text.\
+- **Don't use placeholder text as labels:** Placeholder text disappears when users start typing, making it difficult to review entries and causing accessibility issues. Use helper text for format examples instead.\
+\
+#### Buttons\
+\
+- Please see [Button](/docs/coefficient/components/button#label) for guidance on creating button labels\
+\
+#### Message text\
+\
+- Show users the expected format for complex inputs through helper text. This is especially important when format requirements aren't obvious (e.g., whether decimals are allowed).\
+\
+#### Errors\
+\
+- Error messages should explain what went wrong and how to fix it using plain language. Avoid technical jargon or system-generated error codes.\
+\
+---\
+\
+## Header\
+\
+A header provides a consistent anchor for users across ORNL experiences, establishing site identity, navigation, and access to global tools. This guidance relies on a "slot-based" architecture to balance consistency with the flexibility needed for different site hierarchies and content requirements.\
+\
+## Anatomy\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/patterns/header/header-anatomy.png" />\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+1. **Branding Slot (Left):** Establish site identity using logos, site titles, or hierarchy indicators.\
+2. **Navigation Slot (Middle):** Contains primary navigation items. If content exceeds available space, this slot can remain empty while navigation moves to a secondary row or sidebar.\
+3. **User Actions Slot (Right):** Optional global utilities such as search, profile management, and theme toggles. If a site does not have the need for displaying actions then this slot can be left empty.\
+\
+## Usage\
+\
+- **Think in Slots:** View the header as three rigid containers (Branding, Navigation, Actions) that can flexibly accept different content based on the site's specific needs.\
+- **Consistent Positioning:** Always maintain the Branding (left) and User Actions (right) positions to build user expectation, regardless of the specific content within those slots.\
+- **Adapt to Hierarchy:** Use the Branding slot to differentiate between Main Level sites (ORNL.gov) and Second Level sites (Internal Systems) using the appropriate visual treatments.\
+- **Handle Overflow Gracefully:** If navigation items are too numerous for the center slot, move them to a dedicated navigation row below the header or a left-sidebar rather than overcrowding the header.\
+\
+### Layout\
+\
+#### Slots\
+\
+The header layout relies on anchoring elements to expected locations (aka slots). This predictability allows users to find tools quickly, even when switching between different applications.\
+\
+<Columns>\
+	<Column className="margin-top--md">\
+		<Card className="padding--md card--full-height">\
+			<CardHeader>\
+				<IIcon\
+					icon="ph:leaf-thin"\
+					height="48"\
+					color="var(--ifm-color-primary)"\
+				/>\
+				Branding Slot\
+			</CardHeader>\
+			<CardBody>\
+				- Main Level Sites: Use the full ORNL logo. - Second Level Sites: Use\
+				the Leaf symbol followed by a chevron and the site name. - Function: The\
+				primary logo or site title should always link to the homepage of the\
+				specific site.\
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+<Columns>\
+	<Column className="margin-top--md">\
+		<Card className="padding--md card--full-height">\
+			<CardHeader>\
+				<IIcon\
+					icon="ph:compass-thin"\
+					height="48"\
+					color="var(--ifm-color-primary)"\
+				/>\
+				Navigation Slot\
+			</CardHeader>\
+			<CardBody>\
+				- Located directly to the right of the Branding slot. - Contains\
+				top-level links and sub-menus. - Overflow: If the navigation is too\
+				large to fit, leave this slot empty and display navigation in a\
+				full-width row below the header.\
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+<Columns>\
+	<Column className="margin-top--md">\
+		<Card className="padding--md card--full-height">\
+			<CardHeader>\
+				<IIcon\
+					icon="ph:user-circle-thin"\
+					height="48"\
+					color="var(--ifm-color-primary)"\
+				/>\
+				User Actions Slot\
+			</CardHeader>\
+			<CardBody>\
+				- Aligned to the far right. - Contains actions specific to the user's\
+				needs for that site (e.g., Search, Profile, Dark Mode). - Only include\
+				actions supported by the site.\
+			</CardBody>\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+#### Responsive Behavior\
+\
+On smaller screens, the Navigation slot should collapse into a "hamburger" menu within the User Actions slot or Branding slot, while Branding remains visible.\
+\
+Example:\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/patterns/header/header-responsive.png" />\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+#### Handling Navigation Overflow\
+\
+When the number of navigation items exceeds the width of the center slot move navigation to a dedicated row immediately below the header and keep the navigation slot empty\
+\
+Example:\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/patterns/header/header-nav-overflow.png" />\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+#### Touch Targets\
+\
+Ensure interactive elements in the User Actions slot (like icons) have sufficient padding for touch interaction.\
+\
+### Content\
+\
+#### Branding\
+\
+<Columns className="margin-top--lg margin-bottom--lg">\
+	<Column>\
+		<Card className="card--full-height padding--md">\
+			<CardImage cardImageUrl="/img/docs/coefficient/patterns/header/branding-examples.png" />\
+		</Card>\
+	</Column>\
+</Columns>\
+\
+- Logos: For primary sites, link the full logo to the homepage.\
+  - For ORNL Branded sites, please only use logos provided by Creative Services. Links to latest assets can always be found in the [branding documentation](/docs/coefficient/fundamentals/brand#assets).\
+  - For non-ORNL branded sites, please work with Creative Services to identify the appropriate logo assets to be used.\
+- Titles: Site titles can be the full name or an abbreviation depending on space constraints.\
+- Hierarchy Icons: The "Leaf" and "Chevron" combination is reserved for secondary/sub-level sites to visually distinguish them from main-level public facing pages.\
+\
+#### User Actions\
+\
+Only populate the right-hand slot with actions that make sense for the specific site.\
+\
+<Columns>\
+	<Column className="margin-bottom--lg">\
+		<Columns>\
+			<Column className="margin-top--md">\
+				<Card className="card--full-height padding--md">\
+					<CardHeader>\
+						<IIcon\
+							icon="ph:info-thin"\
+							height="48"\
+							color="var(--ifm-color-secondary)"\
+						/>\
+						Common Actions\
+					</CardHeader>\
+					<CardBody>\
+						\
+							\
+								Search: Include only if the site provides a\
+								functional search experience.\
+							\
+							\
+								Profile/User: For authenticated sites requiring\
+								user management.\
+							\
+							\
+								Theme Toggle: Light/Dark mode switches.\
+							\
+							\
+								Favorites: For applications allowing saved\
+								items.\
+							\
+						\
+					</CardBody>\
+				</Card>\
+			</Column>\
+			<Column className="margin-top--md">\
+				<Card className="card--full-height padding--md">\
+					<CardHeader>\
+						<IIcon\
+							icon="ph:x-circle-thin"\
+							height="48"\
+							color="var(--ifm-color-danger)"\
+						/>\
+						Avoid\
+					</CardHeader>\
+					<CardBody>\
+						\
+							\
+								Primary Navigation: Do not place core site\
+								links (like "Home" or "About") in the action slot; keep them in\
+								the nav slot.\
+							\
+							\
+								Decorative Icons: Do not place non-interactive\
+								icons in the action slot.\
+							\
+						\
+					</CardBody>\
+				</Card>\
+			</Column>\
+		</Columns>\
+	</Column>\
+</Columns>\
+\
+### Color\
+\
+We recommend selecting a color approach from below that aligns with the site's overall color scheme and hierarchy.\
+\
+#### Solid Color\
+\
+<Columns>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardHeader>\
+        <IIcon icon="ph:paint-brush-broad-thin" height="48" color="var(--ifm-color-primary)" />\
+        Standard\
+      </CardHeader>\
+      <CardBody>\
+        Use surface variables to allow the header to adapt naturally to system preferences.\
+          - **Background:** `--surface-base` or `--surface-weak`\
+          - **Foreground:** `--text-base`\
+\
+        Renders as white/light in light mode and dark/grey in dark mode.\
+      </CardBody>\
+    </Card>\
+\
+  </Column>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardHeader>\
+        <IIcon icon="ph:paint-bucket-thin" height="48" color="var(--ifm-color-primary)" />\
+        Branded\
+      </CardHeader>\
+      <CardBody>\
+        Use the rich primary color for sites requiring strong brand presence.\
+          - **Background:** `--primary-rich`\
+          - **Foreground:** `--text-white`\
+\
+        A bold, colored header that maintains legibility through high contrast text.\
+      </CardBody>\
+    </Card>\
+\
+  </Column>\
+</Columns>\
+\
+#### Textures\
+\
+In addition to solid colors, a set of approved background textures is available provided by Creative Services. These can be used in place of the background color to add visual depth while maintaining the standard slot structure. You may find links to the most up to date textures in the assets section of the [Branding](/docs/coefficient/fundamentals/brand.md#assets) documentation.\
+\
+## Accessibility\
+\
+### Semantic Structure and Landmarks\
+\
+Use semantic HTML to clearly define page regions.\
+\
+- Wrap the header in a native `<header>` element.\
+- Use `<nav>` for navigation regions.\
+- Apply `role="search"` to search components when applicable.\
+\
+Landmarks should be used intentionally. Overuse can create noise for screen reader users and make the page structure harder to understand.\
+\
+### Navigation Organization and Hierarchy\
+\
+- Avoid placing commonly used menu items last, since keyboard users must navigate sequentially.\
+- Use list elements for navigation links to improve screen reader comprehension.\
+\
+### Keyboard Navigation\
+\
+- Users must be able to tab through all interactive elements.\
+- Top level navigation items must receive visible focus.\
+- Use Enter or Space to activate links and open dropdowns.\
+- Dropdown menus must open via click or keyboard interaction, not hover, since they are difficult for users with motor or vision impairments and do not work on touch devices.\
+\
+### Skip Navigation Links\
+\
+Provide a skip navigation link to allow users to bypass the long navigation lists and jump directly to main content.\
+\
+- Add a skip navigation link before the header and place it at the very top of the page.\
+- The link should be visible on focus.\
+- The link must point to an id at the beginning of the main content area.\
+- Avoid placing other interactive elements before the skip link.\
+\
+Read more: [Skip Navigation Links from WebAIM](https://webaim.org/techniques/skipnav/)\
+\
+### Icons and Visual Elements\
+\
+- Always pair icons with visible text labels.\
+- Do not replace navigation labels with icons.\
+\
+### Logo Accessibility\
+\
+- Provide alternative text for logo images.\
+- If the logo is text, use a neutral inline element such as ``.\
+- Do not use an h1 for the logo unless it is the homepage.\
+\
+## Framework Notes\
+\
+While the "Slot" concept is framework-agnostic, specific implementations may require adapting native components to match this guidance.\
+\
+<Tabs>\
+	<TabItem value="header-vueitfy" label="Vueitfy">\
+		import CodeBlock from "@theme/CodeBlock"\
+import VuetifyHeaderSource from "!!raw-loader!../../../shared/vuetify/code/headerTemplate.vue"\
+\
+Teams using Vuetify can directly leverage its [v-app-bar](https://vuetifyjs.com/en/components/app-bars) or [v-toolbar](https://vuetifyjs.com/en/components/toolbars) components. The slot architecture maps well to Vuetify's layout logic by utilizing the v-spacer component to control alignment.\
+\
+- **Branding Slot:** Use the `v-app-bar-title` or `v-toolbar-title` component (depending on which root component you selected). This ensures the logo or site title remains anchored to the left.\
+- **Navigation Slot:** Place top-level navigation items immediately after the branding title. Note: For mobile layouts, use v-app-bar-nav-icon to house collapsed navigation which will help implement the [Responsive Behavior](#responsive-behavior) guidance from above.\
+- **The Split (Spacer):** Insert a `<v-spacer></v-spacer>` component after the navigation items. This can be used to push everything following it to the align to the right, creating the separation between Navigation and User Actions.\
+- **User Actions Slot:** Place icon buttons or toggles after the spacer to anchor them to the right.\
+\
+#### Example\
+\
+:::tip Recipe\
+You can view and play with the below example on [Vuetify Play](https://play.vuetifyjs.com/#eNqtWGtv2zYX/iuc98EKXktOurXD68Vd0y7DCqTpkGTDhrofaOnIZieRGkkp8Yr89z2kLpbkLO2wBXEik+fynCsP9e7jROSF0jbMeRF9MEpOFpOPK8nYqtkwq8mC+RW3VpXkvq8mW2sLs5jP40SCLaFMVDqSZOeyyOcvQDbXpbQipzBR+YuvoqfRk2fzRBjbX4/I5OFaq1tDGlJWk1lPzxyLFelQk0xIk/5cvSO2ge7R3qP6rUh3n6GzoYSak5OoUdOshRlfG6fDy3ai71fyfjKbZEL+bkbejo339LsWwb9T6qU5Ue9rjUbH87OiiEAElaeW8iLjlp47ktMq5EXhH9sv4ZprtohVpvQSiWBeag6PJew7Ni20yLneTdmCTU2pUx7TdDVhlFHFrVAS9CerSSMN8r4IQ3ZFplDSiIrYS9rySijNwnBI81ZmO1YJI9YZMSWZyXmWMRNrImlYsBVJQjLMkxBIwrI4Ggho7WFVaDJlF4WmAjHuCPp2hZJXoYihIs64McA7lg34p/ND+r26ec9/AyO8n4TcsGugGCDci7PCZrQH1oJIlbThLYnN1oZrlSUs1+HXdQzrH2N3GYEwLrVResEKJaQl/S3LhQxvRWK3C5YKGwKpJWn3rH0vJKLqNCZhmtEd45nYyDAGi6uxHnEbmMKFlZ0t2Juz15fs4vyX8wt2/frmvG/fOAoihQIjLF1QRRlbLpdsmnMhkSoDHnCZgu9DYenOmZ/swhPW90hOiShzML+9urxgNyrhu9O54xwieCgwY0NeLtj1+au3l9+fXf32mDWO5YJ4yjK1Uex/7BrWsBsXvMcMp8zUVdXbbtLN/YGJeSLCDHKbLBtk1t8yxFuqtJKhdt5AubX+yu/gqHwX8tKqRwT+Mx///OunfLtfREL16mKU5ePyuETpb3yXOCyQfmY2BYnm7AoyUbdykDbwz9pKVnEtuLSNRT2neANjXgiL3P4TB9bzH1VODh3Y/pWcN8IYoDf/haxLuv1P5LziaJH6QFQbmkEAfirNlv2M046dxS4MhlnF7JaYz6tRw0IKxKR9TjWPI2kDQY8G9FOtxou7Jq7j7bC4Gnf0KiHnG+lP5gMfeaQjb3Ywf9IqFePSPZTO41hhPgljoWN06c9Q0i+BXgF0vvIQWuIrikVB7BWqTqvMtMvBzVYYhl8JHxZcW6ZSHxYe25JnbEsc88qMCWvYh9JYlK1mVu/cSaNKC1Lwai/7qJbZmQkTXd/tIrHehBtNmBJcwFFjOGL6MXeHB8jhsJah4OHJ8bj8Yq6Tfg9y7QfAw2fwWM7v6uMIW8+Oh6xg3j4Z5vL2KcvXHsbIOafz7ZMha7FXCQ6272NPDk6VG71rPEMsEWmKaU/Cq/4EMIxXXGBMQjrAMz3nRcOG52aiwQoK4VbYeDvUBQ8rzGf9Qal/brsfKPMESMV6RsAs9ZLHv280su2Aup27mlFrvI3uiOmZEKd9Bg1nCbgHLunv1VXswR8apXkiFNJClUXPmO70RkyFxMhKnRn+KGz2Ds8uL66jfeOyr54CHJsvqax0g4zLy6agPMunJF0TsjOBQx4WZ9rtv5XZrda2Ds6xOqcHR1lXC73qdpjrobkudTyPho5TjKyisMyQbVTU9yj2EUmWsnuWapWzKQbxaR0IqEFF72fspaMLUo5Bwhdzvd+bpfz+tDN3Ciqc114r9DXDvgMaWYNhv1OPURogcQsYgegImhtEtx21d4o9keNuN5v7xH4Ta95qb1gNGy4C4E5zgA/gYjXCfio2EWmt9I+wPEPPWTJiy+feYpVRvRc4L9QspaGgQdSt5a5dB9Mv8ewc0VjvYdTma8pVRddueL7hmwA0OApyYSjC/SJ4lyme/IBAB0czDHo8ee2UB0fvvYK0lP50g8f7QlhwVN+IaxstVpYsUXGZo8lEf5Skd9e4D8UW6KdftvcytCLcev0Ub7ZE1sFFcqQs+AISjqDDltpnBL5GOAUg7DwDD2TW+l9tRZYEjhiXugE+h9yj85JxW0KKNBhrsUzSrTsDneFBoAn+rWiGzQ+AeeSc3lzxa5PcBbVvUx3ABk0wdds1fLQ2PAOfy8tpz7jepgODXfevt8qT5LyCtAvcXQlFBqkwYuoweXB98Ye0PjU8sTegpu3gukMhQkbgChg4AX7//kGvudh38Wx8NfRmMG2v4m5YNtFGqQ3m90Lglq3yOW7a36U8F9lueaXWyqrFyfHx7Ct8vsbnKT7f4PP/42PnsEP9Pt8+F8DDLz0wt3hoL76J7hwc1D7mK8GzhAzmLTfdmAiXRPdSoAHRlEmTmg/2iV9GzWDfClaS7jxpnStt12jLvGEMvEE+6bv3RwmlvMzsTb2INMIMMm3eucznPkj45gI1uZ9N6hc3gFq/5ZjMfE8cvsto1xoQk9nH7nHR8t2//wsC0A2R).\
+:::\
+\
+<CodeBlock showLineNumbers language="markup">\
+	\{VuetifyHeaderSource\}\
+</CodeBlock>\
+	</TabItem>\
+	<TabItem value="header-sap" label="SAP">\
+		Teams using SAP technologies (SAPUI5 or UI5 Web Components) can utilize the SAP's native [Shell Bar](https://www.sap.com/design-system/fiori-design-web/ui-elements/shell-bar/) component. This component is designed to be the consistent global anchor across all Fiori applications.\
+\
+- **Branding Slot**: Use the primaryTitle (and secondaryTitle if needed) properties along with the logo property to help aligns with the "Main Level" and "Second Level" hierarchy needs described above.\
+- **Navigation Slot**: The Fiori Shell Bar natively handles navigation through a Menu button to trigger a side navigation drawer so please feel free to leverage that directly in place of adding the navigation directly inline.\
+- **User Actions Slot**: Use the dedicated slots for profile, searchField, and notifications as needed for the given application. Out of the box The Shell Bar already includes a right-alignment for these items.\
+	</TabItem>\
+</Tabs>\
+\
+---\
+\
+## Tools & Resources\
+\
+# Tools and Resources\
+\
+A collection of tools provided by or recommended by the Coefficient team for application design and development.\
+\
+## UI Kits and Figma Resources\
+\
+The Coefficient team provides many resources for working within Figma, including UI Kits for specific frameworks and COTS applications as well as an Accessibility Annotation kit to help designers ensure that accessibility is well-communicated in their designs.\
+\
+<Columns>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardImage \
+        cardImageUrl="/img/resources/coefficient-uikit.png" \
+        alt="Coefficient UI Kit"\
+      />\
+      <CardHeader>\
+        <Link to="https://www.figma.com/design/LqnpoHfyFAXDJpZsOeunLP/Coefficient-UI-Kit?m=auto&node-id=11016-2795&t=isWWLXauJv3ahCJE-1">Coefficient UI Kit</Link>\
+      </CardHeader>\
+    </Card>\
+  </Column>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardImage \
+        cardImageUrl="/img/resources/vuetify-uikit.png" \
+        alt="Vuetify UI Kit"\
+      />\
+      <CardHeader>\
+        <Link to="https://www.figma.com/design/mjyvXN2dNQ71t7nNwMJTaL/Vuetify-UI-Kit?m=auto&node-id=634-1890&t=AyLcSYuxMg1QcMhZ-1">Vuetify UI Kit for Coefficient</Link>\
+      </CardHeader>\
+    </Card>\
+  </Column>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardImage \
+        cardImageUrl="/img/resources/sharepoint-uikit.png" \
+        alt="Sharepoint UI Kit"\
+      />\
+      <CardHeader>\
+        <Link to="https://www.figma.com/design/2TkFx4WcN6czqawGHd37Ee/SharePoint-Web-UI-Kit?node-id=2001-15533&t=E5Y66qDPCS1I4DbQ-1">Sharepoint UI Kit for Coefficient</Link>\
+      </CardHeader>\
+    </Card>\
+  </Column>\
+  <Column className="margin-top--md">\
+    <Card className="padding--md card--full-height">\
+      <CardImage \
+        cardImageUrl="/img/resources/accessibility-annotations-kit.png" \
+        alt="Accessibility Annotations Kit"\
+      />\
+      <CardHeader>\
+        <Link to="https://www.figma.com/design/dDVG4yOhqA3acuKQyE7plD/A11y-Annotation-Kit?node-id=32-222&m=dev">Accessibility Annotations Kit</Link>\
+      </CardHeader>\
+    </Card>\
+  </Column>\
+</Columns>\
+\
+## Coding Agent and LLM Resources\
+\
+This site has an llms.txt at the root, along with a standard sitemap for navigational reference.\
+\
+In addition, we publish the following:\
+\
+- llms-full.txt - Full-text representation of this Coefficitient reference site that can be used directly as context for a coding agent or LLM such as ChatGPT or Claude.\
+- llms-accessibility.txt - pared down reference including the accessibility-related guidance in this reference site that can be used for specific A11y guidance/tasks or as context to seed an a11y-specific agent.\
+\
+## Accessibility Testing Resources\
+\
+### Linting and Automated Testing\
+\
+- <Link to="https://github.com/be-lenka/be-a11y">be-a11y</Link> - nodejs-based CLI tool to report common a11y issues in HTML pages. Great for analyzing static markup.\
+- <Link to="https://marketplace.visualstudio.com/items?itemName=deque-systems.vscode-axe-linter">axe Accessibility Linter for VSCode</Link> - linting in your editor for HTML, Angular, React, Markdown, Vue, React Native, and Liquid templates.\
+- <Link to="https://willmendesneto.com/posts/linting-web-accessibility-issues-in-your-html-using-just-css/">A11Y-Dev-Mode.css</Link> - A CSS-only drop-in that will highlight common a11y issues right in your rendered page, meant to be used in dev mode for visual testing.\
+\
+#### eslint Plugins\
+\
+- <Link to="https://vue-a11y.github.io/eslint-plugin-vuejs-accessibility/">eslint-plugin-vuejs-a11y</Link>\
+- <Link to="https://github.com/jsx-eslint/eslint-plugin-jsx-a11y">eslint-plugin-jsx-a11y</Link>\
+- <Link to="https://open-wc.org/docs/linting/eslint-plugin-lit-a11y/overview/">eslint-plugin-lit-a11y</Link>\
+- <Link to="https://github.com/FormidableLabs/eslint-plugin-react-native-a11y">eslint-plugin-react-native-a11y</Link>\
+- <Link to="https://github.com/angular-eslint/angular-eslint">angular-eslint</Link> - not a dedicated a11y plugin but has many accessibility-focused rules.\
+\
+---\
+\
+## Layers & Structure\
+\
+\
+Understanding the basics of how layers work in Figma and how the structure of our designs parallels the structure of the web.\
+\
+<iframe class="video-embed" src="https://ornl.sharepoint.com/sites/DesignSystem/_layouts/15/embed.aspx?UniqueId=be52d8dd-bdf5-4d4d-9f24-31a9f2f61275&embed=%7B%22hvm%22%3Atrue%2C%22ust%22%3Afalse%7D&referrer=StreamWebApp&referrerScenario=EmbedDialog.Create" width="640" height="360" frameborder="0" scrolling="no" allowfullscreen title="layers-and-structure.mov"></iframe>\
+\
+Source: [Coefficient SharePoint](https://ornl.sharepoint.com/:v:/s/DesignSystem/IQDd2FK-9b1NTZ8kMany9hJ1AUkB1J8S6p8UWhXaopn6JCk?e=7kS27V)\
+}

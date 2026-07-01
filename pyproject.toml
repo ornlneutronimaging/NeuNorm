@@ -244,6 +244,7 @@ streamlit = ">=1.40"
 
 [tool.pixi.feature.streamlit.tasks]
 streamlit-app = { cmd = "streamlit run apps/streamlit/neunorm_app.py", description = "Launch the NeuNorm Streamlit app", env = { PYTHONUNBUFFERED = "1" } }
+streamlit-app-ornl = { cmd = "streamlit run apps/streamlit/neunorm_app_ornl_design.py", description = "Launch the NeuNorm Streamlit app (ORNL Coefficient design)", env = { PYTHONUNBUFFERED = "1" } }
 
 [tool.pixi.tasks]
 # Documentation

@@ -8658,8 +8658,8 @@ packages:
   timestamp: 1770973502283
 - pypi: ./
   name: neunorm
-  version: 2.1.0.dev3
-  sha256: 934eda46112d266475842a91142b0b75436759c877cf5762157a528aa3706aaa
+  version: 2.1.0.dev4
+  sha256: 46b2d772c9a32cbc08c462d1949e00185018d6e1fbeb890ffed5677dbf734145
   requires_dist:
   - astropy
   - h5py>=3.0

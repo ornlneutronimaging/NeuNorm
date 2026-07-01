@@ -7,15 +7,27 @@
 # server running until you press Ctrl-C (which shuts the server down cleanly).
 #
 # Usage:
-#   apps/streamlit/launch.sh            # default port 8501
-#   PORT=8600 apps/streamlit/launch.sh  # override the port
+#   apps/streamlit/launch.sh                             # base app, port 8501
+#   apps/streamlit/launch.sh neunorm_app_ornl_design.py  # ORNL-styled app
+#   PORT=8600 apps/streamlit/launch.sh                   # override the port
 #
 set -euo pipefail
 
 # --- Resolve paths (works regardless of the current working directory) ------ #
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-APP="${SCRIPT_DIR}/neunorm_app.py"
+
+# App to launch: first argument (bare name or path), defaults to the base app.
+APP_ARG="${1:-neunorm_app.py}"
+if [[ "${APP_ARG}" = /* ]]; then
+    APP="${APP_ARG}"                 # absolute path as-given
+else
+    APP="${SCRIPT_DIR}/${APP_ARG}"   # resolve relative to this script's dir
+fi
+if [[ ! -f "${APP}" ]]; then
+    echo "ERROR: app file not found: ${APP}" >&2
+    exit 1
+fi
 
 # --- Pick a free port (start at $PORT, default 8501; scan up to +20) -------- #
 START_PORT="${PORT:-8501}"
