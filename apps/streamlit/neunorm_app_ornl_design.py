@@ -293,6 +293,9 @@ def main() -> None:  # noqa: C901  (UI assembly is intentionally one linear flow
         out_dir = DEBUG_OUTPUT_DIR if DEBUG else Path.home()
         out_path = st.text_input("Output path", value=str(Path(out_dir) / default_out))
 
+        st.divider()
+        st.caption(f"NeuNorm v{__version__}")
+
     # ---- Main: inputs ----------------------------------------------------- #
     section("Input files")
     if spec.nested:
