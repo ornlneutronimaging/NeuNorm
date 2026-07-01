@@ -115,7 +115,7 @@ platforms = ["linux-64", "osx-arm64"] # Add additional platforms as needed
 
 [tool.pixi.dependencies]
 # Core scientific stack
-python = ">=3.11,<3.14"
+python = ">=3.11,<3.15"
 numpy = ">=2.0,<3"
 scipy = ">=1.11"
 # Scipp for labeled data
@@ -125,7 +125,7 @@ plopp = ">=25.10.0" # Scipp visualization
 h5py = ">=3.0"
 pillow = ">=12.2.0"
 astropy = "*"
-aiohttp = ">=3.13.4" # required by astropy; 3.14.0 (CVE fix) not yet on conda-forge
+aiohttp = ">=3.14.1" # required by astropy; >=3.14.1 for the 3.14.x CVE fixes
 idna = ">=3.15"      # required by aiohttp/requests, setting minimum to avoid vulnerabilities
 # Data validation
 pydantic = ">=2.0"

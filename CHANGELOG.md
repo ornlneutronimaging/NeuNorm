@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`background_roi` now supports pooled multiple ROIs, inclusive extents, and an open-beam-less
+  mode.** `normalize_transmission(..., background_roi=)` — and the MARS CCD/TPX3 and VENUS CCD
+  pipelines — accept a **sequence** of ROIs, pooled as `sum(counts) / sum(pixels)` per image;
+  `ROI(..., inclusive=True)` opts into legacy inclusive extents (a width-`w` ROI spans `w+1`
+  pixels); and the new `neunorm.processing.normalizer.apply_background_roi(data, background_roi)`
+  applies the flux proxy to a sample stack with no open beam. A single ROI / bare tuple is
+  unchanged. This makes `background_roi` a superset of the downstream (iBeatles) pooled-inclusive
+  re-implementation so it can be removed.
+  ([#172](https://github.com/ornlneutronimaging/NeuNorm/issues/172),
+  [#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159))
+- **Python 3.14 support.** NeuNorm builds, installs, and passes its full test suite on
+  CPython 3.14; the development/CI pixi environments and `pixi.lock` move to 3.14
+  (`requires-python` stays `>=3.11`).
+
+### Fixed
+
+- **TIFF export is compatible with scitiff ≥ 26.6.** scitiff 26.6 tightened its metadata schema
+  to reject object-dtype (`PyObject`) scipp variables. `write_tiff_stack` now JSON-encodes
+  sequence metadata (mirroring the HDF5 writer's provenance convention — read it back with
+  `json.loads`) and drops object-dtype coords/masks (e.g. tuple-valued TIFF header tags carried
+  over from the input files) that scitiff cannot serialize. HDF5 output and the written image
+  data are unchanged.
+
 ## [2.2.0] - 2026-06-30
 
 ### Added

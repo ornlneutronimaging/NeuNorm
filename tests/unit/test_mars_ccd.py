@@ -207,13 +207,13 @@ class TestMarsCCDPipeline:
 
         # Check extra metadata
         extra = dg["extra"]
-        assert len(extra["sample_paths"].values) == 5
-        assert len(extra["ob_paths"].values) == 3
-        assert len(extra["dark_paths"].values) == 2
+        assert json.loads(extra["sample_paths"]) == [[str(p) for p in self.sample_paths]]
+        assert json.loads(extra["ob_paths"]) == [[str(p) for p in self.ob_paths]]
+        assert json.loads(extra["dark_paths"]) == [[str(p) for p in self.dark_paths]]
         assert extra["gamma_filter_applied"]
 
         assert "processing_timestamp" in extra
-        np.testing.assert_equal(extra["roi_applied"].value, (5, 5, 25, 25))
+        np.testing.assert_equal(json.loads(extra["roi_applied"]), (5, 5, 25, 25))
         assert extra["version"] == __version__
 
     def test_mars_ccd_pipeline_dark_gamma_spike_pixels(self):
@@ -639,3 +639,42 @@ class TestMarsCCDPipelineFITS:
                 # stored as a native int array (the coerced tuple), NOT the JSON str(ROI) fallback
                 assert ds.attrs.get("encoding") != "json"
                 np.testing.assert_array_equal(ds[()], [5, 5, 25, 25])
+
+    def test_mars_ccd_pipeline_pooled_background_rois(self):
+        """background_roi accepts a pooled SEQUENCE of ROIs end-to-end (#172); provenance stores the list."""
+        from neunorm.data_models.roi import ROI
+
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            t = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=[ROI(x0=0, y0=0, width=8, height=8), ROI(x0=10, y0=10, width=8, height=8)],
+            )
+            assert t.shape == (5, 32, 32)
+            # uniform images -> the pooled flux proxy still cancels to T = 1
+            np.testing.assert_allclose(t.values, 1.0, rtol=1e-5)
+            with h5py.File(output_path, "r") as hf:
+                # a pooled (multi-ROI) list is stored as a nested list; write_hdf5 JSON-encodes it
+                # WITH the encoding="json" marker (matching the writer's provenance convention).
+                ds = hf["metadata/background_roi"]
+                assert ds.attrs.get("encoding") == "json"
+                assert json.loads(ds.asstr()[()]) == [[0, 0, 8, 8], [10, 10, 18, 18]]
+
+    def test_mars_ccd_pipeline_single_background_roi_provenance_is_flat(self):
+        """A single background_roi keeps the pre-#172 flat int-array provenance (backward compatible)."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=(0, 0, 8, 8),
+            )
+            with h5py.File(output_path, "r") as hf:
+                ds = hf["metadata/background_roi"]
+                assert ds.attrs.get("encoding") != "json"  # native int array, not the JSON backstop
+                np.testing.assert_array_equal(ds[()], [0, 0, 8, 8])

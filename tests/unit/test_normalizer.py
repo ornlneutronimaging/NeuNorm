@@ -157,6 +157,122 @@ def _ccd_frames(sample_counts, ob_counts, dark_counts):
     return sample, ob, dark
 
 
+def test_normalize_with_dark_background_roi_supports_per_image_mask():
+    """normalize_with_dark(background_roi=) handles a 3D per-image mask (regression: was DimensionError).
+
+    The sibling paths (normalize_transmission / apply_background_roi) already support per-image
+    (spectral, x, y) masks; the shared-dark covariance path must too. Values match the plain
+    subtract_dark+normalize path, and the covariance correction still reduces the variance.
+    """
+    from neunorm.processing.dark_corrector import subtract_dark
+    from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
+
+    n = 3
+    s_vals = np.full((n, 6, 6), 80.0)
+    o_vals = np.full((n, 6, 6), 100.0)
+    sample = sc.DataArray(
+        sc.array(dims=["N_image", "x", "y"], values=s_vals.copy(), variances=s_vals.copy(), unit="counts")
+    )
+    ob = sc.DataArray(
+        sc.array(dims=["N_image", "x", "y"], values=o_vals.copy(), variances=o_vals.copy(), unit="counts")
+    )
+    dark = sc.DataArray(
+        sc.array(dims=["x", "y"], values=np.full((6, 6), 5.0), variances=np.full((6, 6), 5.0), unit="counts")
+    )
+    # per-image (3D) mask on a single background-ROI pixel of the first frame only
+    m = np.zeros((n, 6, 6), dtype=bool)
+    m[0, 0, 0] = True
+    sample.masks["dead"] = sc.array(dims=["N_image", "x", "y"], values=m)
+    ob.masks["dead"] = sc.array(dims=["N_image", "x", "y"], values=m)
+    roi = [(0, 0, 4, 4)]  # background ROI covering the masked pixel
+
+    # regression: this used to raise scipp DimensionError (3D mask attached to the 2D dark ROI)
+    t = normalize_with_dark(sample, ob, dark, background_roi=roi)
+    assert t.variances is not None
+    assert np.all(np.isfinite(t.variances)) and np.all(t.variances >= 0)
+
+    # values are unaffected by the covariance correction (it only adjusts the variance)
+    plain = normalize_transmission(subtract_dark(sample, dark), subtract_dark(ob, dark), background_roi=roi)
+    np.testing.assert_allclose(t.values, plain.values, rtol=1e-6)
+    # the shared-dark covariance correction reduces (or leaves) the variance vs independent propagation
+    assert np.all(t.variances <= plain.variances + 1e-9)
+
+
+def test_roi_dark_mean_covariance_per_image_mask_exact():
+    """Exact per-spectral shared-dark covariance for DIFFERING per-image sample/OB masks.
+
+    Cov[i] = sum_{ROI pixels kept in BOTH sample and OB on frame i} Var(D) / (n_s[i] * n_o[i]).
+    Pins the spectral dim, the exact numerator (A∩B differs per frame), and the denominator —
+    a scalar-collapsed or wrong-denominator covariance would fail this.
+    """
+    from neunorm.processing.normalizer import _roi_dark_mean_covariance
+
+    n = 2
+    dvar = np.array([[1.0, 2.0], [3.0, 4.0]])  # Var(D)[x, y] over the 2x2 ROI
+    dark = sc.DataArray(sc.array(dims=["x", "y"], values=np.zeros((2, 2)), variances=dvar, unit="counts"))
+    s = sc.DataArray(
+        sc.array(
+            dims=["N_image", "x", "y"],
+            values=np.full((n, 2, 2), 50.0),
+            variances=np.full((n, 2, 2), 50.0),
+            unit="counts",
+        )
+    )
+    o = sc.DataArray(
+        sc.array(
+            dims=["N_image", "x", "y"],
+            values=np.full((n, 2, 2), 60.0),
+            variances=np.full((n, 2, 2), 60.0),
+            unit="counts",
+        )
+    )
+    smask = np.zeros((n, 2, 2), dtype=bool)
+    smask[0, 0, 0] = True  # frame 0: sample excludes (0, 0)
+    omask = np.zeros((n, 2, 2), dtype=bool)
+    omask[1, 1, 1] = True  # frame 1: OB excludes (1, 1)
+    s.masks["m"] = sc.array(dims=["N_image", "x", "y"], values=smask)
+    o.masks["m"] = sc.array(dims=["N_image", "x", "y"], values=omask)
+
+    cov = _roi_dark_mean_covariance(s, o, dark, [(0, 0, 2, 2)])
+    assert cov.dims == ("N_image",)
+    # frame 0: kept {(0,1),(1,0),(1,1)} -> 2+3+4=9; n_s=3, n_o=4 -> 9/12 = 0.75
+    # frame 1: kept {(0,0),(0,1),(1,0)} -> 1+2+3=6; n_s=4, n_o=3 -> 6/12 = 0.50
+    np.testing.assert_allclose(cov.values, [0.75, 0.5], rtol=1e-12)
+
+
+def test_roi_dark_mean_covariance_purely_spectral_mask():
+    """A purely-spectral (per-frame) mask must not crash (guard on dim-membership, not ndim)."""
+    from neunorm.processing.normalizer import _roi_dark_mean_covariance
+
+    n = 3
+    dvar = np.array([[1.0, 2.0], [3.0, 4.0]])  # sum = 10
+    dark = sc.DataArray(sc.array(dims=["x", "y"], values=np.zeros((2, 2)), variances=dvar, unit="counts"))
+    s = sc.DataArray(
+        sc.array(
+            dims=["N_image", "x", "y"],
+            values=np.full((n, 2, 2), 50.0),
+            variances=np.full((n, 2, 2), 50.0),
+            unit="counts",
+        )
+    )
+    o = sc.DataArray(
+        sc.array(
+            dims=["N_image", "x", "y"],
+            values=np.full((n, 2, 2), 60.0),
+            variances=np.full((n, 2, 2), 60.0),
+            unit="counts",
+        )
+    )
+    # per-frame rejection mask (dims=[N_image], ndim 1) — the shape the old ndim guard missed
+    s.masks["frame"] = sc.array(dims=["N_image"], values=[False, True, False])
+
+    cov = _roi_dark_mean_covariance(s, o, dark, [(0, 0, 2, 2)])  # regression: used to raise DimensionError
+    assert cov.dims == ("N_image",)
+    assert np.all(np.isfinite(cov.values))
+    # kept frames: sum Var(D)=10 over 4x4 pixel pairs -> 10/16 = 0.625
+    np.testing.assert_allclose(cov.values[[0, 2]], [0.625, 0.625], rtol=1e-12)
+
+
 def test_normalize_with_dark_values_match_old_path():
     """normalize_with_dark returns the SAME transmission values as subtract_dark+normalize."""
     from neunorm.processing.dark_corrector import subtract_dark
@@ -496,7 +612,7 @@ def test_background_roi_with_dark_subtracts_both_shared_dark_terms():
     np.testing.assert_allclose(corrected.values, naive.values, rtol=1e-6)  # values unchanged
 
     s_dc, o_dc = s.values - d.values, o.values - d.values
-    cs, co = _background_roi_means(subtract_dark(s, d), subtract_dark(o, d), roi)
+    cs, co = _background_roi_means(subtract_dark(s, d), subtract_dark(o, d), [roi])
     k = co.value / cs.value
     assert abs(k - 1.0) > 0.3  # fixture exercises k != 1
     pixel_term = 2.0 * (k**2) * s_dc * d.values / (o_dc**3)  # pixel-level over-count
@@ -580,7 +696,19 @@ def test_background_roi_with_dark_covariance_is_mask_aware():
 
     # intersection covariance = sum Var(D over A∩B) / (n_s * n_o) = (1+1+1)/(3*4) = 0.25,
     # NOT the unmasked Var(mean(D_roi)) = (199+1+1+1)/16 = 12.625 that includes the masked hot pixel
-    cov = _roi_dark_mean_covariance(subtract_dark(s, d), subtract_dark(o, d), d, roi)
+    cov = _roi_dark_mean_covariance(subtract_dark(s, d), subtract_dark(o, d), d, [roi])
     np.testing.assert_allclose(cov.value, 0.25, rtol=1e-12)
     corrected = normalize_with_dark(s, o, d, background_roi=roi)
-    np.testing.assert_allclose(corrected.variances[3, 3], 2.3249784653905294, rtol=1e-9)
+
+    # Independent first-order oracle for the outside-ROI pixel [3,3]. The pooled ROI-mean variance is
+    # textbook Var(mean) = sum(unmasked var)/n_unmasked**2; the mask-aware Cov(cs,co) = 0.25 above.
+    # ROI (0,0,2,2): sample masks (0,0) -> 3 unmasked px; OB unmasked -> 4 px. Poisson Var = value.
+    s_dc, o_dc, var_d = 2 - 1, 200 - 1, 1  # (s-d), (o-d), Var(d) at [3,3] (d[3,3]=1)
+    var_s_dc, var_o_dc = 2 + 1, 200 + 1  # Var(s)+Var(d), Var(o)+Var(d) at [3,3]
+    cs, co = 1.0, 598.0 / 4.0  # pooled dark-corrected ROI means (sample 3 px of 1; OB {1,199,199,199})
+    var_cs = (3 + 3 + 3) / 3**2  # Var(s-d)=2+1 on the 3 unmasked sample ROI px
+    var_co = (399 + 201 + 201 + 201) / 4**2  # Var(o-d): (0,0)=200+199, others 200+1
+    t33 = (co / cs) * (s_dc / o_dc)
+    pixel = var_s_dc / s_dc**2 + var_o_dc / o_dc**2 - 2 * var_d / (s_dc * o_dc)
+    roi_mean = var_cs / cs**2 + var_co / co**2 - 2 * 0.25 / (cs * co)
+    np.testing.assert_allclose(corrected.variances[3, 3], t33**2 * (pixel + roi_mean), rtol=1e-9)
