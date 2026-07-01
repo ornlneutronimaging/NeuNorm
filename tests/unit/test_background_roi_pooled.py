@@ -153,3 +153,40 @@ def test_apply_background_roi_propagates_first_order_variance():
     np.testing.assert_allclose(out.values[7, 7], val, rtol=1e-6)
     expected_var = s[7, 7] / pool**2 + val**2 * var_pool / pool**2
     np.testing.assert_allclose(out.variances[7, 7], expected_var, rtol=1e-6)
+
+
+def test_background_roi_nonstrict_zero_count_roi_propagates_inf():
+    """strict=False skips the positivity guard: a zero-count ROI yields inf, not ValueError.
+
+    The 1.x / iBeatles semantics (a zero-count background ROI propagates inf in the sample-only
+    path) — the escape hatch that lets downstreams reproduce 1.x outputs bit for bit.
+    """
+    import pytest
+
+    s = np.ones((2, 8, 8))
+    s[:, 0:2, 0:2] = 0.0  # ROI (0,0,2,2) pooled mean -> 0
+    da = sc.DataArray(sc.array(dims=["N_image", "x", "y"], values=s, unit="counts"))
+
+    # default remains strict: raises
+    with pytest.raises(ValueError, match="strictly positive"):
+        apply_background_roi(da, (0, 0, 2, 2))
+
+    # non-strict: inf propagates (1.x), values outside the ROI are 1/0 = inf
+    out = apply_background_roi(da, (0, 0, 2, 2), strict=False)
+    assert np.isinf(out.values).any()
+
+    # matched-OB path: same opt-out on normalize_transmission
+    ob = sc.DataArray(sc.array(dims=["N_image", "x", "y"], values=np.ones((2, 8, 8)), unit="counts"))
+    with pytest.raises(ValueError, match="strictly positive"):
+        normalize_transmission(da, ob, background_roi=(0, 0, 2, 2))
+    t = normalize_transmission(da, ob, background_roi=(0, 0, 2, 2), background_roi_strict=False)
+    assert not np.isfinite(t.values).all()
+
+
+def test_background_roi_nonstrict_still_raises_structural_errors():
+    """strict=False relaxes ONLY the positivity guard — bad ROI bounds still raise."""
+    import pytest
+
+    da = sc.DataArray(sc.array(dims=["N_image", "x", "y"], values=np.ones((2, 8, 8)), unit="counts"))
+    with pytest.raises(ValueError, match="exceeds"):
+        apply_background_roi(da, (0, 0, 99, 99), strict=False)
