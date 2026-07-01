@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-implementation so it can be removed.
   ([#172](https://github.com/ornlneutronimaging/NeuNorm/issues/172),
   [#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159))
+- **Python 3.14 support.** NeuNorm builds, installs, and passes its full test suite on
+  CPython 3.14; the development/CI pixi environments and `pixi.lock` move to 3.14
+  (`requires-python` stays `>=3.11`).
+
+### Fixed
+
+- **TIFF export is compatible with scitiff ≥ 26.6.** scitiff 26.6 tightened its metadata schema
+  to reject object-dtype (`PyObject`) scipp variables. `write_tiff_stack` now JSON-encodes
+  sequence metadata (mirroring the HDF5 writer's provenance convention — read it back with
+  `json.loads`) and drops object-dtype coords/masks (e.g. tuple-valued TIFF header tags carried
+  over from the input files) that scitiff cannot serialize. HDF5 output and the written image
+  data are unchanged.
 
 ## [2.2.0] - 2026-06-30
 

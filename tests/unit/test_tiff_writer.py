@@ -1,5 +1,6 @@
 """Unit tests for TIFF writer DataGroup construction and SciTiff integration call."""
 
+import json
 import tempfile
 
 import numpy as np
@@ -68,9 +69,9 @@ def test_write_tiff_stack_2d():
 
     # Check extra metadata
     extra = dg["extra"]
-    assert extra["input_files"].value == ["file1.fits", "file2.fits"]
+    assert json.loads(extra["input_files"]) == ["file1.fits", "file2.fits"]
     assert extra["processing_timestamp"] == "2024-06-01T12:00:00Z"
-    np.testing.assert_equal(extra["roi_applied"].value, (0, 0, 5, 5))
+    np.testing.assert_equal(json.loads(extra["roi_applied"]), (0, 0, 5, 5))
     assert extra["num_runs_combined"] == 2
     assert extra["software_version"] == "1.0.0"
     assert extra["boolean_flag"] is True

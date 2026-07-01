@@ -211,13 +211,13 @@ class TestVenusCCDPipeline:
 
         # Check extra metadata
         extra = dg["extra"]
-        assert len(extra["sample_paths"].values) == 5
-        assert len(extra["ob_paths"].values) == 3
-        assert len(extra["dark_paths"].values) == 2
+        assert len(json.loads(extra["sample_paths"])) == 5
+        assert len(json.loads(extra["ob_paths"])) == 3
+        assert len(json.loads(extra["dark_paths"])) == 2
         assert extra["gamma_filter_applied"]
 
         assert "processing_timestamp" in extra
-        np.testing.assert_equal(extra["roi_applied"].value, (5, 5, 25, 25))
+        np.testing.assert_equal(json.loads(extra["roi_applied"]), (5, 5, 25, 25))
         assert extra["version"] == __version__
 
     def test_venus_ccd_pipeline_dark_gamma_spike_pixels(self):

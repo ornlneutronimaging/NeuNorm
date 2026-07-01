@@ -3,6 +3,7 @@ TIFF writing utilities using scitiff to preserve scipp metadata and coordinates.
 """
 
 import collections.abc
+import json
 import os
 from pathlib import Path
 from typing import Optional, Union
@@ -18,6 +19,12 @@ def convert_metadata_to_scitiff_coords(metadata: dict) -> sc.DataGroup:
     This function takes a metadata dictionary and converts it into a scitiff DataGroup format,
     which can be embedded in TIFF tags when saving with scitiff. It handles various data types
     and ensures that the resulting DataGroup is compatible with scitiff's requirements.
+
+    Sequence values (e.g. lists of source paths, an ROI tuple) are stored as JSON strings
+    rather than object-dtype scipp scalars: scitiff's metadata schema only accepts scalar and
+    typed 1-D/2-D variables, so an object-dtype (``PyObject``) scalar fails serialization.
+    JSON encoding mirrors the HDF5 writer's provenance convention; read a value back with
+    ``json.loads(extra[key])``.
 
     Parameters
     ----------
@@ -35,10 +42,9 @@ def convert_metadata_to_scitiff_coords(metadata: dict) -> sc.DataGroup:
             extra[key] = value
         elif isinstance(value, collections.abc.Sequence):
             if value and isinstance(value[0], collections.abc.Sequence) and not isinstance(value[0], str):
-                # Handle list of lists (e.g. list of sample paths)
-                extra[key] = sc.scalar(value=[item for sublist in value for item in sublist])
-            else:
-                extra[key] = sc.scalar(value=value)
+                # Flatten a list of lists (e.g. per-run sample paths) before encoding.
+                value = [item for sublist in value for item in sublist]
+            extra[key] = json.dumps(list(value), default=str)
         else:
             raise ValueError(f"Unsupported metadata type for key '{key}': {type(value)}")
     return extra
@@ -87,7 +93,17 @@ def write_tiff_stack(
         raise PermissionError(f"No write permission for directory: {output_path.parent}")
 
     # build scitiff DataGroup with image and metadata
-    dg = sc.DataGroup(image=transmission.astype("float32"))
+    image = transmission.astype("float32")
+    # scitiff serializes the image's coords/masks but its schema only accepts scalar and
+    # typed 1-D/2-D variables. Drop object-dtype (PyObject) coords/masks — e.g. tuple-valued
+    # TIFF header tags (BitsPerSample, StripOffsets, ...) carried over from the input files by
+    # the loader — which scitiff cannot serialize. They are input-file provenance, not analysis
+    # data, and remain available in the HDF5 output.
+    for _name in [n for n, c in image.coords.items() if c.dtype == sc.DType.PyObject]:
+        del image.coords[_name]
+    for _name in [n for n, m in image.masks.items() if m.dtype == sc.DType.PyObject]:
+        del image.masks[_name]
+    dg = sc.DataGroup(image=image)
 
     # Add DAQ metadata if provided
     if daqmetadata:
