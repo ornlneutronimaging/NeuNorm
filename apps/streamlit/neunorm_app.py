@@ -12,8 +12,9 @@ An interactive "notebook" that wraps the end-to-end pipelines in
 
 This is a *thin* UI: every reduction step is delegated to the library. The app
 adds no physics of its own. Because neutron-imaging runs are thousands of TIFFs
-living on the cluster, input is specified as server-side glob patterns rather
-than browser uploads.
+living on the cluster, files are picked with a native OS multi-file dialog on
+the machine hosting the server (see :func:`file_input`) rather than uploaded
+through the browser.
 
 Run it with::
 
@@ -26,6 +27,9 @@ from __future__ import annotations
 
 import glob
 import io
+import multiprocessing
+import os
+import pprint
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -175,6 +179,226 @@ def resolve_globs(text: str) -> ResolvedInput:
     return out
 
 
+def output_basename(runs: list[list[str]]) -> Optional[str]:
+    """Derive an output base name from selected input runs.
+
+    ``runs`` is the ``list[list[str]]`` produced by :func:`file_input` (one inner
+    list per acquisition run). Returns the stem of the first selected file, or
+    ``None`` when nothing has been picked yet.
+    """
+    for run in runs or []:
+        for path in run:
+            return Path(path).stem
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Native file dialog (replaces free-text glob entry)
+# --------------------------------------------------------------------------- #
+def _file_dialog_worker(queue, title: str, initialdir: Optional[str]) -> None:
+    """Open a native multi-file picker; push the chosen paths onto ``queue``.
+
+    Runs in a child process so tkinter owns its own main thread (Streamlit runs
+    the script in a worker thread, where tkinter is unreliable). Any failure —
+    most commonly no display on the server — is returned as the exception.
+    """
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        kwargs = {"title": title}
+        if initialdir and Path(initialdir).is_dir():
+            kwargs["initialdir"] = initialdir
+        files = filedialog.askopenfilenames(**kwargs)
+        root.update()
+        root.destroy()
+        queue.put(list(files))
+    except Exception as exc:  # noqa: BLE001 — surface any GUI/display error to the caller
+        queue.put(exc)
+
+
+def pick_files(title: str = "Select files", initialdir: Optional[str] = None) -> list[str]:
+    """Open a native OS multi-file dialog and return the chosen paths (sorted).
+
+    ``initialdir`` sets the folder the dialog opens in (ignored if it does not
+    exist). The dialog appears on the machine hosting the Streamlit server;
+    raises ``RuntimeError`` when no display is available (headless / remote).
+    """
+    ctx = multiprocessing.get_context("fork")
+    queue = ctx.Queue()
+    proc = ctx.Process(target=_file_dialog_worker, args=(queue, title, initialdir), daemon=True)
+    proc.start()
+    proc.join()
+    result = queue.get() if not queue.empty() else []
+    if isinstance(result, Exception):
+        raise RuntimeError(f"File dialog unavailable ({result}). No display on the server?")
+    return sorted(result)
+
+
+def file_input(
+    label: str, state_key: str, *, nested: bool, help_text: str = "", initialdir: Optional[str] = None
+) -> ResolvedInput:
+    """Render a native-dialog file input and return the current selection.
+
+    Each **Browse** click opens a multi-file picker (starting in ``initialdir``);
+    the chosen files become one acquisition *run*. For nested pipelines, browse
+    repeatedly to add runs; for flat pipelines every run is combined. Selections
+    persist in ``st.session_state[state_key]`` as ``list[list[str]]``.
+    """
+    runs: list[list[str]] = st.session_state.setdefault(state_key, [])
+    st.markdown(f"**{label}**")
+    if help_text:
+        st.caption(help_text)
+
+    c_browse, c_clear = st.columns([3, 1])
+    if c_browse.button("📁 Browse files…", key=f"browse_{state_key}", use_container_width=True):
+        try:
+            picked = pick_files(f"Select {label}", initialdir=initialdir)
+        except RuntimeError as exc:
+            st.error(str(exc))
+            picked = []
+        if picked:
+            runs.append(picked)
+            st.session_state[state_key] = runs
+            st.rerun()
+    if runs and c_clear.button("Clear", key=f"clear_{state_key}", use_container_width=True):
+        st.session_state[state_key] = []
+        st.rerun()
+
+    resolved = ResolvedInput(runs=[list(run) for run in runs])
+    if resolved.n_files:
+        with st.expander(f"{resolved.n_files} file(s) · {len(resolved.runs)} run(s)", expanded=False):
+            for i, run in enumerate(resolved.runs, 1):
+                head = run[0]
+                extra = f"  … (+{len(run) - 1} more)" if len(run) > 1 else ""
+                st.caption(f"Run {i}: `{head}`{extra}" if nested else f"`{head}`{extra}")
+    return resolved
+
+
+# Folder the sample dialog opens in by default (the VENUS data root).
+DEFAULT_BROWSE_DIR = "/SNS/VENUS/"
+
+# --------------------------------------------------------------------------- #
+# Debug mode — set NEUNORM_DEBUG=1 to auto-fill a known sample/OB/output for
+# quick manual testing without clicking through the native file dialogs.
+# --------------------------------------------------------------------------- #
+DEBUG = bool(os.environ.get("NEUNORM_DEBUG"))
+DEBUG_SAMPLE = (
+    "/SNS/VENUS/IPTS-35825/images/ikonxl/raw/radiography/"
+    "20260617_3EG__180_000s_2_800AngsMin/20260617_Run_23728_3EG__180_000s_2_800AngsMin_0.tiff"
+)
+DEBUG_OB = (
+    "/SNS/VENUS/IPTS-35825/images/ikonxl/ob/"
+    "20260617_OB2__300_000s_2_800AngsMin/20260617_Run_23755_OB2__300_000s_2_800AngsMin_ob_0.tiff"
+)
+DEBUG_OUTPUT_DIR = "/SNS/VENUS/IPTS-35825/shared/processed_data/remove_me_jean"
+
+
+def apply_debug_defaults() -> None:
+    """When ``NEUNORM_DEBUG`` is set, pre-select the debug sample/OB files once.
+
+    Seeds ``st.session_state`` a single time per session so the selections can
+    still be cleared or changed in the UI afterwards. No-op when debug is off.
+    """
+    if not DEBUG or st.session_state.get("_debug_seeded"):
+        return
+    st.session_state["_debug_seeded"] = True
+    st.session_state["sample_files_input"] = [[DEBUG_SAMPLE]]
+    st.session_state["ob_files_input"] = [[DEBUG_OB]]
+
+
+def sibling_start_dir(sample_state_key: str = "sample_files_input") -> str:
+    """Where OB / dark dialogs should open: the parent of the first sample file.
+
+    Falls back to :data:`DEFAULT_BROWSE_DIR` when no sample has been picked yet.
+    """
+    runs = st.session_state.get(sample_state_key, [])
+    if runs and runs[0]:
+        return str(Path(runs[0][0]).parent)
+    return DEFAULT_BROWSE_DIR
+
+
+# --------------------------------------------------------------------------- #
+# Pipeline call assembly + reproducible script
+# --------------------------------------------------------------------------- #
+def build_pipeline_kwargs(
+    spec: "PipelineSpec",
+    *,
+    sample: ResolvedInput,
+    ob: ResolvedInput,
+    out_path: str,
+    roi: Optional[tuple] = None,
+    air_roi: Optional[tuple] = None,
+    dark: Optional[ResolvedInput] = None,
+    gamma_filter: bool = True,
+    rebin_by_tof: "bool | int" = False,
+    rebin_by_spatial: Optional[int] = None,
+    detector_shape: Optional[tuple] = None,
+    binning_cfg: Optional[BinningConfig] = None,
+) -> dict:
+    """Assemble the exact keyword arguments passed to ``spec.func``.
+
+    A single source of truth so the reproducible-script preview and the actual
+    execution use an identical call.
+    """
+    kwargs: dict = {"output_path": Path(out_path)}
+    kwargs[spec.sample_kw] = sample.flat if not spec.nested else sample.runs
+    kwargs[spec.ob_kw] = ob.flat if not spec.nested else ob.runs
+    if roi is not None:
+        kwargs["roi"] = roi
+    if not spec.tof:
+        kwargs["gamma_filter"] = gamma_filter
+    if spec.supports_dark and dark is not None and dark.n_files:
+        kwargs["dark_paths"] = dark.runs
+    if spec.supports_air_roi and air_roi is not None:
+        kwargs["air_roi"] = air_roi
+    if spec.supports_rebin:
+        kwargs["rebin_by_tof"] = rebin_by_tof
+        kwargs["rebin_by_spatial"] = rebin_by_spatial
+    if spec.supports_detector_shape:
+        kwargs["detector_shape"] = detector_shape
+    if spec.supports_binning:
+        kwargs["binning"] = binning_cfg
+    return kwargs
+
+
+def _script_literal(value) -> str:
+    """Render one kwarg value as valid, readable Python source."""
+    if isinstance(value, Path):
+        return f"Path({str(value)!r})"
+    if isinstance(value, BinningConfig):
+        args = ", ".join(f"{k}={val!r}" for k, val in value.model_dump().items())
+        return f"BinningConfig({args})"
+    if isinstance(value, list):
+        # Re-indent pprint's continuation lines under the "    key=" column.
+        return pprint.pformat(value, width=100).replace("\n", "\n    ")
+    return repr(value)
+
+
+def build_reduction_script(name: str, spec: "PipelineSpec", kwargs: dict) -> str:
+    """Return a standalone, runnable Python script reproducing this reduction."""
+    func = spec.func
+    lines = [
+        '"""NeuNorm reduction script — generated by the Streamlit app.',
+        "",
+        f"Pipeline: {name}  ({spec.facility} · {spec.detector})",
+        '"""',
+        "from pathlib import Path",
+        "",
+        f"from {func.__module__} import {func.__name__}",
+    ]
+    if any(isinstance(v, BinningConfig) for v in kwargs.values()):
+        lines.append("from neunorm.data_models.tof import BinningConfig")
+    lines += ["", f"transmission = {func.__name__}("]
+    for key, value in kwargs.items():
+        lines.append(f"    {key}={_script_literal(value)},")
+    lines += [")", "", f'print("Wrote", {str(kwargs["output_path"])!r})']
+    return "\n".join(lines)
+
+
 def parse_roi(text: str) -> Optional[tuple[int, int, int, int]]:
     """Parse ``"x0, y0, x1, y1"`` into an int tuple, or ``None`` if blank."""
     text = (text or "").strip()
@@ -305,10 +529,15 @@ def main() -> None:  # noqa: C901  (UI assembly is intentionally one linear flow
     st.title("🔬 NeuNorm — Neutron Imaging Normalization")
     st.caption(f"Interactive front-end for the `neunorm.pipelines` library · NeuNorm {__version__}")
 
+    apply_debug_defaults()
+
     # ---- Sidebar: pipeline + options -------------------------------------- #
     with st.sidebar:
+        if DEBUG:
+            st.warning("🐞 DEBUG mode — sample/OB/output pre-filled (NEUNORM_DEBUG).")
         st.header("Pipeline")
-        name = st.selectbox("Detector / facility", list(PIPELINES))
+        default_pipeline = list(PIPELINES).index("VENUS CCD/CMOS") if DEBUG else 0
+        name = st.selectbox("Detector / facility", list(PIPELINES), index=default_pipeline)
         spec = PIPELINES[name]
         st.info(f"**{spec.facility} · {spec.detector}**\n\n{spec.notes}")
 
@@ -350,30 +579,39 @@ def main() -> None:  # noqa: C901  (UI assembly is intentionally one linear flow
             binning_cfg = build_binning_form()
 
         st.header("Output")
-        out_fmt = st.selectbox("Format", ["hdf5", "tiff"], index=0)
-        default_out = f"neunorm_{spec.facility.lower()}_{spec.detector.split('/')[0].lower()}.{out_fmt}"
-        out_path = st.text_input("Output path", value=str(Path.cwd() / default_out))
+        out_fmt = st.selectbox("Format", ["hdf5", "tiff"], index=1)
+        # Derive the default name from the sample files picked on a previous
+        # rerun (the sample widget renders later, so read it from session_state).
+        base = output_basename(st.session_state.get("sample_files_input", []))
+        stem = base or f"neunorm_{spec.facility.lower()}_{spec.detector.split('/')[0].lower()}"
+        default_out = f"{stem}.{out_fmt}"
+        out_dir = DEBUG_OUTPUT_DIR if DEBUG else Path.home()
+        out_path = st.text_input("Output path", value=str(Path(out_dir) / default_out))
 
     # ---- Main: inputs ----------------------------------------------------- #
     st.subheader("Input files")
     if spec.nested:
-        st.caption("One **glob pattern per line** — each line is one acquisition run to combine.")
+        st.caption("**Browse** to pick each acquisition run's files — browse again to add more runs.")
     else:
-        st.caption("Glob pattern(s) for the event HDF5 files (all matches are combined).")
+        st.caption("**Browse** to pick the event HDF5 files (all selections are combined).")
 
+    # OB / dark dialogs open next to the chosen sample; the sample starts at the VENUS root.
+    sibling_dir = sibling_start_dir()
     col_s, col_o = st.columns(2)
-    sample_text = col_s.text_area("Sample files", height=120, placeholder="/path/to/sample/*.tiff")
-    ob_text = col_o.text_area("Open-beam (OB) files", height=120, placeholder="/path/to/ob/*.tiff")
+    with col_s:
+        sample = file_input("Sample files", "sample_files_input", nested=spec.nested, initialdir=DEFAULT_BROWSE_DIR)
+    with col_o:
+        ob = file_input("Open-beam (OB) files", "ob_files_input", nested=spec.nested, initialdir=sibling_dir)
 
-    dark_text = ""
+    dark = None
     if spec.supports_dark:
-        dark_text = st.text_area(
-            "Dark files (optional)", height=80, placeholder="/path/to/dark/*.tiff — blank to skip dark correction"
+        dark = file_input(
+            "Dark files (optional)",
+            "dark_files_input",
+            nested=spec.nested,
+            help_text="Leave empty to skip dark correction.",
+            initialdir=sibling_dir,
         )
-
-    sample = resolve_globs(sample_text)
-    ob = resolve_globs(ob_text)
-    dark = resolve_globs(dark_text) if dark_text.strip() else None
 
     cols = st.columns(3)
     cols[0].metric("Sample files", sample.n_files, f"{len(sample.runs)} run(s)")
@@ -381,38 +619,50 @@ def main() -> None:  # noqa: C901  (UI assembly is intentionally one linear flow
     if spec.supports_dark:
         cols[2].metric("Dark files", dark.n_files if dark else 0, f"{len(dark.runs) if dark else 0} run(s)")
 
-    for w in [*sample.warnings, *ob.warnings, *(dark.warnings if dark else [])]:
-        st.warning(w)
-
     run = st.button("▶ Run pipeline", type="primary", disabled=not (sample.n_files and ob.n_files))
 
-    # ---- Run -------------------------------------------------------------- #
-    if run:
+    # Assemble the exact pipeline call once — feeds both the script preview and the run.
+    kwargs = None
+    kwargs_error = None
+    if sample.n_files and ob.n_files:
         try:
             roi = parse_roi(roi_text)
             air_roi = parse_roi(air_roi_text) if spec.supports_air_roi else None
         except ValueError as exc:
-            st.error(f"ROI error: {exc}")
-            st.stop()
+            kwargs_error = f"ROI error: {exc}"
+        else:
+            kwargs = build_pipeline_kwargs(
+                spec,
+                sample=sample,
+                ob=ob,
+                out_path=out_path,
+                roi=roi,
+                air_roi=air_roi,
+                dark=dark,
+                gamma_filter=gamma_filter,
+                rebin_by_tof=rebin_by_tof,
+                rebin_by_spatial=rebin_by_spatial,
+                detector_shape=detector_shape,
+                binning_cfg=binning_cfg,
+            )
 
-        kwargs: dict = {"output_path": Path(out_path)}
-        kwargs[spec.sample_kw] = sample.flat if not spec.nested else sample.runs
-        kwargs[spec.ob_kw] = ob.flat if not spec.nested else ob.runs
-        if roi is not None:
-            kwargs["roi"] = roi
-        if not spec.tof:
-            kwargs["gamma_filter"] = gamma_filter
-        if spec.supports_dark and dark is not None:
-            kwargs["dark_paths"] = dark.runs
-        if spec.supports_air_roi and air_roi is not None:
-            kwargs["air_roi"] = air_roi
-        if spec.supports_rebin:
-            kwargs["rebin_by_tof"] = rebin_by_tof
-            kwargs["rebin_by_spatial"] = rebin_by_spatial
-        if spec.supports_detector_shape:
-            kwargs["detector_shape"] = detector_shape
-        if spec.supports_binning:
-            kwargs["binning"] = binning_cfg
+    # ---- Advanced: exact reproducible script ------------------------------ #
+    with st.expander("🧪 Advanced · reproducible script", expanded=False):
+        if kwargs_error:
+            st.warning(kwargs_error)
+        elif kwargs is not None:
+            script = build_reduction_script(name, spec, kwargs)
+            st.caption("The exact standalone script this app runs — copy or download to reproduce it outside the UI.")
+            st.code(script, language="python")
+            st.download_button("⬇ Download script", script, file_name="neunorm_reduction.py", mime="text/x-python")
+        else:
+            st.caption("Select sample and open-beam files to preview the script.")
+
+    # ---- Run -------------------------------------------------------------- #
+    if run:
+        if kwargs_error:
+            st.error(kwargs_error)
+            st.stop()
 
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         with st.status("Running NeuNorm pipeline…", expanded=True) as status:

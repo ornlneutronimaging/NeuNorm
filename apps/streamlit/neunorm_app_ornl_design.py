@@ -36,12 +36,20 @@ import streamlit as st
 
 # Reuse the tested pipeline logic + viewer from the base app (single source of truth).
 from neunorm_app import (
+    DEBUG,
+    DEBUG_OUTPUT_DIR,
+    DEFAULT_BROWSE_DIR,
     PIPELINES,
     BinningConfig,
+    apply_debug_defaults,
     build_binning_form,
+    build_pipeline_kwargs,
+    build_reduction_script,
+    file_input,
+    output_basename,
     parse_roi,
     render_results,
-    resolve_globs,
+    sibling_start_dir,
 )
 
 from neunorm import __version__
@@ -226,10 +234,15 @@ def main() -> None:  # noqa: C901  (UI assembly is intentionally one linear flow
     apply_plot_theme()
     ornl_header()
 
+    apply_debug_defaults()
+
     # ---- Sidebar: pipeline + options -------------------------------------- #
     with st.sidebar:
+        if DEBUG:
+            st.warning("🐞 DEBUG mode — sample/OB/output pre-filled (NEUNORM_DEBUG).")
         section("Pipeline")
-        name = st.selectbox("Detector / facility", list(PIPELINES))
+        default_pipeline = list(PIPELINES).index("VENUS CCD/CMOS") if DEBUG else 0
+        name = st.selectbox("Detector / facility", list(PIPELINES), index=default_pipeline)
         spec = PIPELINES[name]
         st.info(f"**{spec.facility} · {spec.detector}**\n\n{spec.notes}")
 
@@ -271,30 +284,39 @@ def main() -> None:  # noqa: C901  (UI assembly is intentionally one linear flow
             binning_cfg = build_binning_form()
 
         section("Output")
-        out_fmt = st.selectbox("Format", ["hdf5", "tiff"], index=0)
-        default_out = f"neunorm_{spec.facility.lower()}_{spec.detector.split('/')[0].lower()}.{out_fmt}"
-        out_path = st.text_input("Output path", value=str(Path.cwd() / default_out))
+        out_fmt = st.selectbox("Format", ["hdf5", "tiff"], index=1)
+        # Derive the default name from the sample files entered on a previous
+        # rerun (the sample widget renders later, so read it from session_state).
+        base = output_basename(st.session_state.get("sample_files_input", []))
+        stem = base or f"neunorm_{spec.facility.lower()}_{spec.detector.split('/')[0].lower()}"
+        default_out = f"{stem}.{out_fmt}"
+        out_dir = DEBUG_OUTPUT_DIR if DEBUG else Path.home()
+        out_path = st.text_input("Output path", value=str(Path(out_dir) / default_out))
 
     # ---- Main: inputs ----------------------------------------------------- #
     section("Input files")
     if spec.nested:
-        st.caption("One **glob pattern per line** — each line is one acquisition run to combine.")
+        st.caption("**Browse** to pick each acquisition run's files — browse again to add more runs.")
     else:
-        st.caption("Glob pattern(s) for the event HDF5 files (all matches are combined).")
+        st.caption("**Browse** to pick the event HDF5 files (all selections are combined).")
 
+    # OB / dark dialogs open next to the chosen sample; the sample starts at the VENUS root.
+    sibling_dir = sibling_start_dir()
     col_s, col_o = st.columns(2)
-    sample_text = col_s.text_area("Sample files", height=120, placeholder="/path/to/sample/*.tiff")
-    ob_text = col_o.text_area("Open-beam (OB) files", height=120, placeholder="/path/to/ob/*.tiff")
+    with col_s:
+        sample = file_input("Sample files", "sample_files_input", nested=spec.nested, initialdir=DEFAULT_BROWSE_DIR)
+    with col_o:
+        ob = file_input("Open-beam (OB) files", "ob_files_input", nested=spec.nested, initialdir=sibling_dir)
 
-    dark_text = ""
+    dark = None
     if spec.supports_dark:
-        dark_text = st.text_area(
-            "Dark files (optional)", height=80, placeholder="/path/to/dark/*.tiff — blank to skip dark correction"
+        dark = file_input(
+            "Dark files (optional)",
+            "dark_files_input",
+            nested=spec.nested,
+            help_text="Leave empty to skip dark correction.",
+            initialdir=sibling_dir,
         )
-
-    sample = resolve_globs(sample_text)
-    ob = resolve_globs(ob_text)
-    dark = resolve_globs(dark_text) if dark_text.strip() else None
 
     cols = st.columns(3)
     cols[0].metric("Sample files", sample.n_files, f"{len(sample.runs)} run(s)")
@@ -302,38 +324,50 @@ def main() -> None:  # noqa: C901  (UI assembly is intentionally one linear flow
     if spec.supports_dark:
         cols[2].metric("Dark files", dark.n_files if dark else 0, f"{len(dark.runs) if dark else 0} run(s)")
 
-    for w in [*sample.warnings, *ob.warnings, *(dark.warnings if dark else [])]:
-        st.warning(w)
-
     run = st.button("▶ Run Pipeline", type="primary", disabled=not (sample.n_files and ob.n_files))
 
-    # ---- Run -------------------------------------------------------------- #
-    if run:
+    # Assemble the exact pipeline call once — feeds both the script preview and the run.
+    kwargs = None
+    kwargs_error = None
+    if sample.n_files and ob.n_files:
         try:
             roi = parse_roi(roi_text)
             air_roi = parse_roi(air_roi_text) if spec.supports_air_roi else None
         except ValueError as exc:
-            st.error(f"ROI error: {exc}")
-            st.stop()
+            kwargs_error = f"ROI error: {exc}"
+        else:
+            kwargs = build_pipeline_kwargs(
+                spec,
+                sample=sample,
+                ob=ob,
+                out_path=out_path,
+                roi=roi,
+                air_roi=air_roi,
+                dark=dark,
+                gamma_filter=gamma_filter,
+                rebin_by_tof=rebin_by_tof,
+                rebin_by_spatial=rebin_by_spatial,
+                detector_shape=detector_shape,
+                binning_cfg=binning_cfg,
+            )
 
-        kwargs: dict = {"output_path": Path(out_path)}
-        kwargs[spec.sample_kw] = sample.flat if not spec.nested else sample.runs
-        kwargs[spec.ob_kw] = ob.flat if not spec.nested else ob.runs
-        if roi is not None:
-            kwargs["roi"] = roi
-        if not spec.tof:
-            kwargs["gamma_filter"] = gamma_filter
-        if spec.supports_dark and dark is not None:
-            kwargs["dark_paths"] = dark.runs
-        if spec.supports_air_roi and air_roi is not None:
-            kwargs["air_roi"] = air_roi
-        if spec.supports_rebin:
-            kwargs["rebin_by_tof"] = rebin_by_tof
-            kwargs["rebin_by_spatial"] = rebin_by_spatial
-        if spec.supports_detector_shape:
-            kwargs["detector_shape"] = detector_shape
-        if spec.supports_binning:
-            kwargs["binning"] = binning_cfg
+    # ---- Advanced: exact reproducible script ------------------------------ #
+    with st.expander("🧪 Advanced · reproducible script", expanded=False):
+        if kwargs_error:
+            st.warning(kwargs_error)
+        elif kwargs is not None:
+            script = build_reduction_script(name, spec, kwargs)
+            st.caption("The exact standalone script this app runs — copy or download to reproduce it outside the UI.")
+            st.code(script, language="python")
+            st.download_button("⬇ Download script", script, file_name="neunorm_reduction.py", mime="text/x-python")
+        else:
+            st.caption("Select sample and open-beam files to preview the script.")
+
+    # ---- Run -------------------------------------------------------------- #
+    if run:
+        if kwargs_error:
+            st.error(kwargs_error)
+            st.stop()
 
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         with st.status("Running NeuNorm pipeline…", expanded=True) as status:
