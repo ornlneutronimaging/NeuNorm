@@ -178,6 +178,7 @@ jupyter = { features = [
   "jupyter",
   "viz",
 ], solve-group = "jupyter" }
+streamlit = { features = ["streamlit"], solve-group = "streamlit" }
 
 [tool.pixi.feature.test.dependencies]
 pytest = ">=9.0.3"
@@ -229,6 +230,20 @@ ipympl = "*"
 jupyterlab = "*"
 ipympl = "*"
 ipywidgets = "*"
+
+[tool.pixi.feature.streamlit.dependencies]
+matplotlib = "*"       # result visualization (kept off the viz feature to avoid an ipywidgets/pydeck clash)
+fonttools = ">=4.60.2" # required by matplotlib, setting minimum to avoid vulnerabilities
+tornado = ">=6.5.6"    # required by streamlit/matplotlib; >=6.5.6 for CVE-2026-49854
+
+[tool.pixi.feature.streamlit.pypi-dependencies]
+# Installed from PyPI (not conda-forge): conda-forge's pydeck pins ipywidgets<8,
+# which conflicts with the base plopp dependency (ipywidgets>=8.1). The PyPI
+# wheel carries no such pin, so streamlit coexists with the rest of the stack.
+streamlit = ">=1.40"
+
+[tool.pixi.feature.streamlit.tasks]
+streamlit-app = { cmd = "streamlit run apps/streamlit/neunorm_app.py", description = "Launch the NeuNorm Streamlit app", env = { PYTHONUNBUFFERED = "1" } }
 
 [tool.pixi.tasks]
 # Documentation
