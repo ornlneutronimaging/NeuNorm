@@ -30,7 +30,7 @@ def as_roi_bounds_list(background_roi: BackgroundROILike) -> list[tuple[int, int
     if (
         isinstance(background_roi, (tuple, list))
         and len(background_roi) == 4
-        and all(isinstance(i, int) for i in background_roi)
+        and all(isinstance(i, (int, np.integer)) for i in background_roi)
     ):
         return [as_roi_bounds(background_roi)]
     if isinstance(background_roi, (tuple, list)):
@@ -44,6 +44,17 @@ def as_roi_bounds_list(background_roi: BackgroundROILike) -> list[tuple[int, int
     raise ValueError(
         f"background_roi must be an ROI, an (x0, y0, x1, y1) tuple, or a sequence of those; got {background_roi!r}"
     )
+
+
+def _unmasked_count(region: sc.DataArray) -> sc.Variable:
+    """Per-spectral count of unmasked pixels in a spatial ROI (reduces x, y only, mask-aware).
+
+    Sums a dimensionless field of ones carrying the region's masks, so masked pixels are excluded and
+    a per-image ``(spectral, x, y)`` mask yields a per-spectral count (a scalar for a 2D/absent mask).
+    """
+    counter = region.copy()
+    counter.data = sc.ones(sizes=region.data.sizes, dtype="int64", unit="one")
+    return sc.sum(counter, dim=["x", "y"]).data
 
 
 def _pooled_roi_coefficient(
@@ -65,7 +76,7 @@ def _pooled_roi_coefficient(
     if "x" not in data.dims or "y" not in data.dims:
         raise ValueError(f"{name} must have 'x' and 'y' dimensions for background_roi normalization")
     total = None
-    n_pixels = 0
+    n_unmasked = None
     for x0, y0, x1, y1 in rois_bounds:
         if x0 < 0 or y0 < 0 or x1 <= x0 or y1 <= y0:
             raise ValueError(f"Invalid background_roi ({x0}, {y0}, {x1}, {y1}): need 0 <= x0 < x1 and 0 <= y0 < y1")
@@ -75,17 +86,16 @@ def _pooled_roi_coefficient(
                 f"(x={data.sizes['x']}, y={data.sizes['y']})"
             )
         region = data["x", x0:x1]["y", y0:y1]
-        roi_sum = sc.sum(region, dim=["x", "y"]).data  # mask-aware; variance = sum of unmasked variances
+        roi_sum = sc.sum(region, dim=["x", "y"]).data  # per-spectral (mask-aware; var = sum of unmasked var)
         total = roi_sum if total is None else total + roi_sum
-        n_xy = region.sizes["x"] * region.sizes["y"]
-        excl = None
-        for mask in region.masks.values():
-            excl = mask if excl is None else (excl | mask)
-        n_pixels += n_xy - (int(sc.sum(excl).value) if excl is not None else 0)
+        # Unmasked pixel count, reduced over x,y ONLY (mask-aware) so a per-image (spectral, x, y)
+        # mask stays per-spectral — mirroring sc.mean. Sum a masked field of ones: the same masks
+        # exclude the same pixels from the count as from the counts sum above. (Collapsing all mask
+        # dims would under-count the denominator for a 3D mask and inflate the coefficient.)
+        roi_n = _unmasked_count(region)
+        n_unmasked = roi_n if n_unmasked is None else n_unmasked + roi_n
 
-    if n_pixels <= 0:
-        raise ValueError(f"background_roi {rois_bounds} {name}: no unmasked pixels in the pooled ROI(s)")
-    coeff = total / n_pixels
+    coeff = total / n_unmasked
     if not bool(sc.all(sc.isfinite(coeff)).value) or sc.min(coeff).value <= 0:
         raise ValueError(
             f"background_roi {name} pooled mean must be strictly positive and finite "
@@ -128,26 +138,29 @@ def _roi_dark_mean_covariance(
             m = mask if m is None else (m | mask)
         return m
 
-    n_s = 0
-    n_o = 0
+    n_s = None
+    n_o = None
     intersection_var_sum = None  # sum over all ROIs of sum_{A∩B} Var(D)
     for x0, y0, x1, y1 in rois_bounds:
         d_roi = dark["x", x0:x1]["y", y0:y1].copy()
-        ms = _excluded(sample_dc["x", x0:x1]["y", y0:y1])
-        mo = _excluded(ob_dc["x", x0:x1]["y", y0:y1])
-        n_xy = d_roi.sizes["x"] * d_roi.sizes["y"]
-        n_s += n_xy - (int(sc.sum(ms).value) if ms is not None else 0)
-        n_o += n_xy - (int(sc.sum(mo).value) if mo is not None else 0)
+        s_roi = sample_dc["x", x0:x1]["y", y0:y1]
+        o_roi = ob_dc["x", x0:x1]["y", y0:y1]
+        ms, mo = _excluded(s_roi), _excluded(o_roi)
+        # per-spectral unmasked counts (reduce masks over x,y only, mirroring _pooled_roi_coefficient
+        # so a per-image (spectral, x, y) mask does not collapse the denominator).
+        n_s_roi, n_o_roi = _unmasked_count(s_roi), _unmasked_count(o_roi)
+        n_s = n_s_roi if n_s is None else n_s + n_s_roi
+        n_o = n_o_roi if n_o is None else n_o + n_o_roi
         # sum Var(D) over A∩B: mask the dark with the union of both sides' masks; sc.sum is
         # mask-aware and propagates variance as the sum of unmasked variances.
         excl = ms if mo is None else (mo if ms is None else (ms | mo))
         if excl is not None:
             d_roi.masks["_bg_excl"] = excl
-        roi_var_sum = sc.variances(sc.sum(d_roi, dim=["x", "y"]).data)  # scalar, counts**2
+        roi_var_sum = sc.variances(sc.sum(d_roi, dim=["x", "y"]).data)  # counts**2 (scalar; dark is 2D)
         intersection_var_sum = roi_var_sum if intersection_var_sum is None else intersection_var_sum + roi_var_sum
 
-    denom = n_s * n_o
-    return intersection_var_sum / denom if denom > 0 else 0.0 * intersection_var_sum
+    # n_s, n_o > 0 is guaranteed upstream (_pooled_roi_coefficient raises on an all-masked ROI).
+    return intersection_var_sum / (n_s * n_o)
 
 
 def normalize_transmission(  # noqa: C901

@@ -657,7 +657,22 @@ class TestMarsCCDPipelineFITS:
             # uniform images -> the pooled flux proxy still cancels to T = 1
             np.testing.assert_allclose(t.values, 1.0, rtol=1e-5)
             with h5py.File(output_path, "r") as hf:
+                # a pooled (multi-ROI) list is stored as a JSON string — round-trippable AND safe on
+                # the flattening TIFF writer (unlike a raw nested list).
+                assert json.loads(hf["metadata/background_roi"].asstr()[()]) == [[0, 0, 8, 8], [10, 10, 18, 18]]
+
+    def test_mars_ccd_pipeline_single_background_roi_provenance_is_flat(self):
+        """A single background_roi keeps the pre-#172 flat int-array provenance (backward compatible)."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=(0, 0, 8, 8),
+            )
+            with h5py.File(output_path, "r") as hf:
                 ds = hf["metadata/background_roi"]
-                # a list of ROI bounds is nested provenance -> stored as a round-trippable JSON string
-                assert ds.attrs.get("encoding") == "json"
-                assert json.loads(ds.asstr()[()]) == [[0, 0, 8, 8], [10, 10, 18, 18]]
+                assert ds.attrs.get("encoding") != "json"  # native int array, not the JSON backstop
+                np.testing.assert_array_equal(ds[()], [0, 0, 8, 8])

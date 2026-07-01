@@ -2,6 +2,7 @@
 MARS TPX3 normalization pipeline.
 """
 
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence
@@ -146,7 +147,9 @@ def run_mars_tpx3_pipeline(  # noqa: C901
         metadata["roi_applied"] = roi
 
     if background_roi is not None:
-        metadata["background_roi"] = [list(b) for b in background_roi]
+        metadata["background_roi"] = (
+            list(background_roi[0]) if len(background_roi) == 1 else json.dumps([list(b) for b in background_roi])
+        )
 
     if output_path.suffix.lower() in (".hdf5", ".h5"):
         write_hdf5(

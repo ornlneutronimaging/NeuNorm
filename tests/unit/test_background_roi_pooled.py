@@ -91,3 +91,35 @@ def test_pooled_variance_free_and_with_variance():
     t_var = normalize_transmission(_da(s, with_var=True), _da(o, with_var=True), background_roi=rois)
     assert t_var.variances is not None and np.all(t_var.variances >= 0)
     np.testing.assert_allclose(t_var.values, t_free.values, rtol=1e-6)
+
+
+def test_pooled_coefficient_per_image_mask_does_not_collapse_denominator():
+    """A per-image (3D) mask must keep the pixel-count denominator per-frame (P0 regression guard).
+
+    With the old scalar denominator, an unmasked frame's pooled mean was inflated by
+    n_roi/(n_roi - n_masked); this asserts each frame is normalized by its own unmasked count.
+    """
+    v = 50.0
+    arr = np.full((3, 8, 8), v)  # (N_image, x, y), uniform
+    da = sc.DataArray(sc.array(dims=["N_image", "x", "y"], values=arr, unit="counts"))
+    mask = np.zeros((3, 8, 8), dtype=bool)
+    mask[0, 0, 0] = True  # mask ONE ROI pixel on frame 0 only -> a 3D (per-image) mask
+    da.masks["bad"] = sc.array(dims=["N_image", "x", "y"], values=mask)
+
+    out = apply_background_roi(da, ROI(x0=0, y0=0, width=1, height=1, inclusive=True))  # 2x2 ROI
+    # every frame's pooled mean is v (all *unmasked* ROI pixels are v), so the flattened output is 1
+    # on every frame — including the unmasked frames (which the collapsed-denominator bug inflated).
+    np.testing.assert_allclose(out.values, 1.0, rtol=1e-6)
+
+
+def test_apply_background_roi_propagates_first_order_variance():
+    """apply_background_roi adds the ROI-mean first-order term: Var = Var(d)/c^2 + out^2 * Var(c)/c^2."""
+    s = _make_nonuniform(50.0)  # [7,7]=50 (outside both ROI patches); ROI (0,0,2,2) patch = 100
+    out = apply_background_roi(_da(s, with_var=True), (0, 0, 2, 2))
+    assert out.variances is not None
+    pool = s[0:2, 0:2].mean()  # 100
+    var_pool = s[0:2, 0:2].sum() / 4**2  # Var(mean) = sum(unmasked Poisson var)/n^2 = 25
+    val = s[7, 7] / pool  # 0.5
+    np.testing.assert_allclose(out.values[7, 7], val, rtol=1e-6)
+    expected_var = s[7, 7] / pool**2 + val**2 * var_pool / pool**2
+    np.testing.assert_allclose(out.variances[7, 7], expected_var, rtol=1e-6)
