@@ -5,11 +5,14 @@ pooled counts over all ROIs / pooled pixel count, with INCLUSIVE extents. A NeuN
 must value-match this so it can delete its local copy.
 """
 
+import json
+from collections import deque
+
 import numpy as np
 import scipp as sc
 
 from neunorm.data_models.roi import ROI
-from neunorm.processing.normalizer import apply_background_roi, normalize_transmission
+from neunorm.processing.normalizer import apply_background_roi, as_roi_bounds_list, normalize_transmission
 
 
 def _da(arr, with_var=False):
@@ -45,6 +48,33 @@ def _incl_rois():
 
 def _incl_roi_objs():
     return [ROI(x0=x0, y0=y0, width=w, height=h, inclusive=True) for x0, y0, w, h in _incl_rois()]
+
+
+def test_as_roi_bounds_list_coerces_numpy_ints_to_plain_int():
+    """NumPy integer bounds become built-in int, so provenance JSON-encodes losslessly.
+
+    Without coercion, ``json.dumps`` either raises on np.int64 or (with ``default=str``) silently
+    stringifies the bounds, corrupting round-tripped provenance types.
+    """
+    rois = [(np.int64(0), np.int64(0), np.int64(8), np.int64(8)), (10, 10, 18, 18)]
+    bounds = as_roi_bounds_list(rois)
+    assert all(type(v) is int for b in bounds for v in b)
+    assert json.loads(json.dumps([list(b) for b in bounds])) == [[0, 0, 8, 8], [10, 10, 18, 18]]
+    # single bare-4 with numpy ints too
+    (single,) = as_roi_bounds_list((np.int64(1), np.int64(2), np.int64(3), np.int64(4)))
+    assert all(type(v) is int for v in single) and single == (1, 2, 3, 4)
+
+
+def test_as_roi_bounds_list_accepts_any_sequence():
+    """Any non-str Sequence works, matching the BackgroundROILike type hint (not just tuple/list)."""
+    assert as_roi_bounds_list(deque([(0, 0, 8, 8), (10, 10, 18, 18)])) == [(0, 0, 8, 8), (10, 10, 18, 18)]
+    assert as_roi_bounds_list(deque([0, 0, 8, 8])) == [(0, 0, 8, 8)]  # bare-4 Sequence is a single ROI
+    # strings are Sequences but never ROIs — still rejected with a clear error
+    try:
+        as_roi_bounds_list("0,0,8,8")
+        raise AssertionError("str must be rejected")
+    except ValueError:
+        pass
 
 
 def test_pooled_multi_roi_matches_ibeatles_formula():

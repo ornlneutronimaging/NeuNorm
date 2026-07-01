@@ -5,6 +5,7 @@ Implements the core neutron imaging equation: T = Sample / OpenBeam
 with proper uncertainty propagation and beam corrections.
 """
 
+import collections.abc
 from typing import Optional, Sequence, Union
 
 import numpy as np
@@ -18,32 +19,34 @@ from neunorm.processing.dark_corrector import subtract_dark
 BackgroundROILike = Union[ROILike, Sequence[ROILike]]
 
 
+def _as_plain_int_bounds(bounds: tuple) -> tuple[int, int, int, int]:
+    """Coerce NumPy integer bounds to built-in ``int`` (JSON provenance stays numeric)."""
+    return tuple(int(v) if isinstance(v, np.integer) else v for v in bounds)
+
+
 def as_roi_bounds_list(background_roi: BackgroundROILike) -> list[tuple[int, int, int, int]]:
     """Normalize a ``background_roi`` argument to a list of exclusive ``(x0, y0, x1, y1)`` bounds.
 
     Accepts a single ROI (an :class:`~neunorm.data_models.roi.ROI` or a bare 4-int ``(x0,y0,x1,y1)``
-    tuple/list) — backward compatible — or a **sequence** of those (pooled). A bare 4-int sequence is
-    treated as ONE ROI; a sequence whose elements are ROIs or sequences is a list of ROIs.
+    sequence) — backward compatible — or a **sequence** of those (pooled). A bare 4-int sequence is
+    treated as ONE ROI; a sequence whose elements are ROIs or sequences is a list of ROIs. NumPy
+    integer bounds are coerced to built-in ``int`` so provenance JSON-encodes losslessly.
     """
     if isinstance(background_roi, ROI):
         return [background_roi.as_bounds()]
-    if (
-        isinstance(background_roi, (tuple, list))
-        and len(background_roi) == 4
-        and all(isinstance(i, (int, np.integer)) for i in background_roi)
-    ):
-        return [as_roi_bounds(background_roi)]
-    if isinstance(background_roi, (tuple, list)):
-        if len(background_roi) == 0:
-            raise ValueError("background_roi list must contain at least one ROI")
-        # a bare sequence of ints is a SINGLE ROI (handled above when len == 4); an int element here
-        # means a malformed single ROI (wrong length), not a sequence of ROIs.
-        if any(isinstance(e, (int, np.integer)) for e in background_roi):
-            raise ValueError(f"background_roi must be a tuple of 4 integers (x0, y0, x1, y1); got {background_roi!r}")
-        return [as_roi_bounds(r) for r in background_roi]
-    raise ValueError(
-        f"background_roi must be an ROI, an (x0, y0, x1, y1) tuple, or a sequence of those; got {background_roi!r}"
-    )
+    if isinstance(background_roi, (str, bytes)) or not isinstance(background_roi, collections.abc.Sequence):
+        raise ValueError(
+            f"background_roi must be an ROI, an (x0, y0, x1, y1) tuple, or a sequence of those; got {background_roi!r}"
+        )
+    if len(background_roi) == 4 and all(isinstance(i, (int, np.integer)) for i in background_roi):
+        return [_as_plain_int_bounds(as_roi_bounds(tuple(background_roi)))]
+    if len(background_roi) == 0:
+        raise ValueError("background_roi list must contain at least one ROI")
+    # a bare sequence of ints is a SINGLE ROI (handled above when len == 4); an int element here
+    # means a malformed single ROI (wrong length), not a sequence of ROIs.
+    if any(isinstance(e, (int, np.integer)) for e in background_roi):
+        raise ValueError(f"background_roi must be a tuple of 4 integers (x0, y0, x1, y1); got {background_roi!r}")
+    return [_as_plain_int_bounds(as_roi_bounds(r)) for r in background_roi]
 
 
 def _unmasked_count(region: sc.DataArray) -> sc.Variable:

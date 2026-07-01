@@ -124,6 +124,23 @@ def test_write_tiff_stack_preserves_nested_path_provenance():
     assert json.loads(dg["extra"]["sample_paths"]) == nested
 
 
+def test_write_tiff_stack_numpy_int_metadata_stays_numeric():
+    """NumPy integer metadata (e.g. an ROI tuple of np.int64) round-trips as JSON numbers, not strings."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    values = np.arange(25, dtype=np.float64).reshape((5, 5))
+    transmission = sc.DataArray(data=sc.array(dims=["y", "x"], values=values, unit="counts", dtype="float64"))
+    metadata = {"roi_applied": tuple(np.int64(v) for v in (5, 5, 25, 25))}
+
+    with tempfile.NamedTemporaryFile(suffix=".tiff", delete=True) as f:
+        write_tiff_stack(f.name, transmission, metadata=metadata)
+        dg = load_scitiff(f.name)
+
+    decoded = json.loads(dg["extra"]["roi_applied"])
+    assert decoded == [5, 5, 25, 25]
+    assert all(isinstance(v, int) for v in decoded)  # numeric, not "5" strings
+
+
 def test_write_tiff_stack_3d():
     """Test writing a 3D transmission DataArray using scitiff."""
     from neunorm.exporters.tiff_writer import write_tiff_stack

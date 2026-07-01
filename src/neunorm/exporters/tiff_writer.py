@@ -8,9 +8,19 @@ import os
 from pathlib import Path
 from typing import Optional, Union
 
+import numpy as np
 import scipp as sc
 from scitiff import DAQMetadata
 from scitiff.io import save_scitiff
+
+
+def _json_default(value):
+    """JSON fallback for metadata leaves: keep NumPy scalars numeric; stringify the rest (e.g. Path)."""
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    return str(value)
 
 
 def convert_metadata_to_scitiff_coords(metadata: dict) -> sc.DataGroup:
@@ -43,7 +53,7 @@ def convert_metadata_to_scitiff_coords(metadata: dict) -> sc.DataGroup:
         elif isinstance(value, collections.abc.Sequence):
             # JSON-encode sequences as strings; preserve nested structure (e.g. per-run path
             # groups ``[[...], [...]]``) so TIFF provenance matches the HDF5 writer exactly.
-            extra[key] = json.dumps(value, default=str)
+            extra[key] = json.dumps(value, default=_json_default)
         else:
             raise ValueError(f"Unsupported metadata type for key '{key}': {type(value)}")
     return extra
