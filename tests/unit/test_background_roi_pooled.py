@@ -171,16 +171,75 @@ def test_background_roi_nonstrict_zero_count_roi_propagates_inf():
     with pytest.raises(ValueError, match="strictly positive"):
         apply_background_roi(da, (0, 0, 2, 2))
 
-    # non-strict: inf propagates (1.x), values outside the ROI are 1/0 = inf
+    # non-strict: 1.x placement exactly — in-ROI 0/0 = nan, outside 1/0 = inf
     out = apply_background_roi(da, (0, 0, 2, 2), strict=False)
-    assert np.isinf(out.values).any()
+    in_roi = np.zeros((2, 8, 8), dtype=bool)
+    in_roi[:, 0:2, 0:2] = True
+    assert np.isnan(out.values[in_roi]).all()
+    assert np.isinf(out.values[~in_roi]).all()
 
-    # matched-OB path: same opt-out on normalize_transmission
+    # matched-OB path: same opt-out on normalize_transmission, same placement
+    # (OB coefficient is 1, so T inherits the sample-side inf/nan layout)
     ob = sc.DataArray(sc.array(dims=["N_image", "x", "y"], values=np.ones((2, 8, 8)), unit="counts"))
     with pytest.raises(ValueError, match="strictly positive"):
         normalize_transmission(da, ob, background_roi=(0, 0, 2, 2))
     t = normalize_transmission(da, ob, background_roi=(0, 0, 2, 2), background_roi_strict=False)
-    assert not np.isfinite(t.values).all()
+    assert np.isnan(t.values[in_roi]).all()
+    assert np.isinf(t.values[~in_roi]).all()
+
+
+def test_background_roi_nonstrict_variance_nonfiniteness_is_confined():
+    """Non-strict with variances: the zero-mean frame goes non-finite, other frames stay intact."""
+    s = np.full((2, 8, 8), 4.0)
+    s[0, 0:2, 0:2] = 0.0  # frame 0 ROI mean -> 0; frame 1 ROI mean = 4
+    da = sc.DataArray(sc.array(dims=["N_image", "x", "y"], values=s, variances=np.ones((2, 8, 8)), unit="counts"))
+
+    out = apply_background_roi(da, (0, 0, 2, 2), strict=False)  # must not raise
+    # frame 1 is untouched by the degenerate frame: finite values AND variances, exact values
+    assert np.isfinite(out.values[1]).all() and np.isfinite(out.variances[1]).all()
+    np.testing.assert_allclose(out.values[1], 1.0, rtol=1e-12)  # uniform frame / its own mean
+    # frame 0 carries the non-finite result of the 1.x zero-mean division
+    assert not np.isfinite(out.values[0]).all()
+
+
+def test_normalize_with_dark_background_roi_strict_optout():
+    """normalize_with_dark threads background_roi_strict through BOTH coefficient sites.
+
+    Variance-bearing inputs so the k=co/cs shared-dark correction branch (the second
+    _background_roi_means call) executes. Zero dark-corrected ROI mean: strict raises,
+    non-strict propagates non-finite values without raising. Positive ROI mean: strict and
+    non-strict results are identical.
+    """
+    import pytest
+
+    from neunorm.processing.normalizer import normalize_with_dark
+
+    def _stack(vals):
+        vals = np.asarray(vals, dtype=float)
+        return sc.DataArray(sc.array(dims=["N_image", "x", "y"], values=vals, variances=vals + 1.0, unit="counts"))
+
+    def _frame(vals):
+        vals = np.asarray(vals, dtype=float)
+        return sc.DataArray(sc.array(dims=["x", "y"], values=vals, variances=vals + 1.0, unit="counts"))
+
+    dark = _frame(np.full((8, 8), 5.0))
+    ob = _stack(np.full((1, 8, 8), 100.0))
+    s = np.full((1, 8, 8), 80.0)
+    s[:, 0:2, 0:2] = 5.0  # dark-corrected sample ROI mean -> 0
+    sample = _stack(s)
+
+    with pytest.raises(ValueError, match="strictly positive"):
+        normalize_with_dark(sample, ob, dark, background_roi=(0, 0, 2, 2))
+    t = normalize_with_dark(sample, ob, dark, background_roi=(0, 0, 2, 2), background_roi_strict=False)
+    assert not np.isfinite(t.values).all()  # 1.x zero-mean division propagates
+
+    # positive ROI mean: the flag must not change anything (values OR variances)
+    s_ok = np.full((1, 8, 8), 80.0)
+    sample_ok = _stack(s_ok)
+    t_strict = normalize_with_dark(sample_ok, ob, dark, background_roi=(0, 0, 2, 2))
+    t_lax = normalize_with_dark(sample_ok, ob, dark, background_roi=(0, 0, 2, 2), background_roi_strict=False)
+    np.testing.assert_array_equal(t_strict.values, t_lax.values)
+    np.testing.assert_array_equal(t_strict.variances, t_lax.variances)
 
 
 def test_background_roi_nonstrict_still_raises_structural_errors():

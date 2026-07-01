@@ -179,7 +179,9 @@ def _roi_dark_mean_covariance(
             roi_var_sum = sc.variances(sc.sum(d_roi, dim=["x", "y"]).data)  # counts**2 (scalar)
         intersection_var_sum = roi_var_sum if intersection_var_sum is None else intersection_var_sum + roi_var_sum
 
-    # n_s, n_o > 0 is guaranteed upstream (_pooled_roi_coefficient raises on an all-masked ROI).
+    # n_s, n_o > 0 is guaranteed upstream under strict (_pooled_roi_coefficient raises on an
+    # all-masked ROI); with strict=False an all-masked ROI gives n=0 and the resulting
+    # non-finite covariance is zeroed by the isfinite guard on the over-count below.
     return intersection_var_sum / (n_s * n_o)
 
 
