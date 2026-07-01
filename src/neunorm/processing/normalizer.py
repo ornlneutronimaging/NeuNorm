@@ -18,7 +18,7 @@ from neunorm.processing.dark_corrector import subtract_dark
 BackgroundROILike = Union[ROILike, Sequence[ROILike]]
 
 
-def _as_roi_bounds_list(background_roi: BackgroundROILike) -> list[tuple[int, int, int, int]]:
+def as_roi_bounds_list(background_roi: BackgroundROILike) -> list[tuple[int, int, int, int]]:
     """Normalize a ``background_roi`` argument to a list of exclusive ``(x0, y0, x1, y1)`` bounds.
 
     Accepts a single ROI (an :class:`~neunorm.data_models.roi.ROI` or a bare 4-int ``(x0,y0,x1,y1)``
@@ -183,16 +183,18 @@ def normalize_transmission(  # noqa: C901
     pc_uncertainty : float, optional
         Relative proton charge uncertainty (default: 0.005 = 0.5%)
         From PLEIADES measurements
-    background_roi : ROI or tuple[int, int, int, int], optional
-        Sample-free background ROI — an :class:`~neunorm.data_models.roi.ROI` or a bare
-        ``(x0, y0, x1, y1)`` tuple with exclusive stops. When given, each image is normalized by its
-        mean counts in this ROI — a proton-charge proxy for when proton charge is unavailable (e.g.
-        MARS): ``T = (S/mean(S[B])) / (O/mean(O[B]))``.
-        Mutually exclusive with ``proton_charge_sample`` / ``proton_charge_ob``. Uncertainty is
-        propagated first-order (the in-ROI sample/ROI-mean correlation is not corrected). Raises
-        ``ValueError`` if the ROI mean is not strictly positive and finite in every image. Indices
-        are resolved against the passed arrays; if a pipeline crops with ``roi`` first, give
-        ``background_roi`` in the post-crop frame.
+    background_roi : ROI/tuple or a sequence of them, optional
+        Sample-free background region(s) — an :class:`~neunorm.data_models.roi.ROI` (or a bare
+        ``(x0, y0, x1, y1)`` tuple, exclusive stops), **or a sequence of those which are pooled**
+        (``sum(counts over all ROIs) / sum(pixels)``). When given, each image is normalized by its
+        pooled background mean — a proton-charge proxy for when proton charge is unavailable (e.g.
+        MARS): ``T = (S/mean(S[B])) / (O/mean(O[B]))``. For legacy inclusive extents (a width-``w`` ROI
+        spanning ``w+1`` pixels), use ``ROI(..., inclusive=True)``; see ``apply_background_roi`` for the
+        open-beam-less form. Mutually exclusive with ``proton_charge_sample`` / ``proton_charge_ob``.
+        Uncertainty is propagated first-order (the in-ROI sample/ROI-mean correlation is not
+        corrected). Raises ``ValueError`` if the pooled mean is not strictly positive and finite in
+        every image. Indices are resolved against the passed arrays; if a pipeline crops with ``roi``
+        first, give ``background_roi`` in the post-crop frame.
 
     Returns
     -------
@@ -221,7 +223,7 @@ def normalize_transmission(  # noqa: C901
     """
     logger.info("Normalizing transmission: T = Sample / OB")
 
-    roi_list = _as_roi_bounds_list(background_roi) if background_roi is not None else None
+    roi_list = as_roi_bounds_list(background_roi) if background_roi is not None else None
 
     # Background-ROI flux normalization: when no proton charge is available
     # (e.g. MARS), scale each image by its pooled mean counts in one or more sample-free ROIs so
@@ -381,7 +383,7 @@ def normalize_with_dark(
     sc.DataArray
         Transmission with correctly-propagated variance (no shared-dark double-counting).
     """
-    roi_list = _as_roi_bounds_list(background_roi) if background_roi is not None else None
+    roi_list = as_roi_bounds_list(background_roi) if background_roi is not None else None
 
     sample_dc = subtract_dark(sample, dark)
     ob_dc = subtract_dark(ob, dark)
@@ -488,7 +490,7 @@ def apply_background_roi(
     sc.DataArray
         ``data`` scaled so its pooled background-ROI mean is 1 per image.
     """
-    roi_list = _as_roi_bounds_list(background_roi)
+    roi_list = as_roi_bounds_list(background_roi)
     logger.info("Applying sample-only background-ROI flux flattening with ROI(s) {}", roi_list)
     coeff = _pooled_roi_coefficient(data, roi_list, "data")
     coeff_var = sc.variances(coeff) if coeff.variances is not None else None

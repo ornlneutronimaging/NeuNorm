@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`background_roi` now supports pooled multiple ROIs, inclusive extents, and an open-beam-less
+  mode.** `normalize_transmission(..., background_roi=)` — and the MARS CCD/TPX3 and VENUS CCD
+  pipelines — accept a **sequence** of ROIs, pooled as `sum(counts) / sum(pixels)` per image;
+  `ROI(..., inclusive=True)` opts into legacy inclusive extents (a width-`w` ROI spans `w+1`
+  pixels); and the new `neunorm.processing.normalizer.apply_background_roi(data, background_roi)`
+  applies the flux proxy to a sample stack with no open beam. A single ROI / bare tuple is
+  unchanged. This makes `background_roi` a superset of the downstream (iBeatles) pooled-inclusive
+  re-implementation so it can be removed.
+  ([#172](https://github.com/ornlneutronimaging/NeuNorm/issues/172),
+  [#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159))
+
 ## [2.2.0] - 2026-06-30
 
 ### Added
