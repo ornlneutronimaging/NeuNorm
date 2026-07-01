@@ -155,13 +155,14 @@ def _roi_dark_mean_covariance(
         n_o = n_o_roi if n_o is None else n_o + n_o_roi
         # sum Var(D) over A∩B (ROI pixels kept in BOTH sample and OB).
         excl = ms if mo is None else (mo if ms is None else (ms | mo))
-        if excl is not None and excl.ndim > d_roi.ndim:
-            # Per-image (spectral, x, y) mask: A∩B differs per image, so the covariance is
-            # per-spectral. Broadcast the 2D dark variance and sum it over the pixels kept per
-            # image — never attach a higher-dim mask to the 2D dark (that raises DimensionError).
+        if excl is not None and (set(excl.dims) - set(d_roi.dims)):
+            # Mask carries a dim the 2D dark ROI lacks (per-image (spectral, x, y), a purely
+            # spectral per-frame mask, etc.): A∩B differs along that dim, so the covariance is
+            # per-spectral. Broadcast the 2D dark variance and sum the kept Var(D) over the shared
+            # x, y — never attach a mask with an extra dim to the 2D dark (raises DimensionError).
             var_d = sc.variances(d_roi.data)  # (x, y), units dark**2
             keep = sc.where(excl, sc.scalar(0.0), sc.scalar(1.0))  # 1 where kept, broadcasts over x,y
-            roi_var_sum = sc.sum(var_d * keep, dim=["x", "y"])  # per-spectral, units dark**2
+            roi_var_sum = sc.sum(var_d * keep, dim=["x", "y"])  # per extra-dim bin, units dark**2
         else:
             # Spatial (2D) or no mask: mask the 2D dark ROI directly; sc.sum is mask-aware and
             # propagates variance as the sum of the unmasked variances.
