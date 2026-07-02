@@ -5,6 +5,22 @@ All notable changes to NeuNorm are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`background_roi` can now reproduce legacy 1.x zero-count-ROI semantics** (completes the
+  downstream-superset goal of
+  [#172](https://github.com/ornlneutronimaging/NeuNorm/issues/172) /
+  [#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159)): the pooled-mean
+  strictly-positive/finite guard can be opted out with
+  `apply_background_roi(..., strict=False)` or
+  `normalize_transmission(...)` / `normalize_with_dark(..., background_roi_strict=False)`,
+  letting a zero-count background ROI propagate `inf`/`nan` through the division exactly as
+  NeuNorm 1.x did (iBeatles pins this behavior). The default stays strict — a
+  non-positive/non-finite pooled mean raises `ValueError` — and structural errors (bad ROI
+  bounds, missing dims) always raise.
+
 ## [2.2.1] - 2026-07-01
 
 ### Added
