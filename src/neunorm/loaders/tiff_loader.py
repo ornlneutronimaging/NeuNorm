@@ -34,7 +34,10 @@ def load_tiff_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
 
         - dims: ['TOF', 'y', 'x'] if tof_edges provided, else ['N_image', 'y', 'x']
         - coords: y, x pixel indices, and optionally TOF.
-          Additionally, TIFF metadata is added as coordinates with dimension of the stack.
+          Additionally, TIFF metadata is added as coordinates. Each metadata
+          coordinate may be scalar (when its value is constant across the stack
+          and not float-convertible) or stack-dimensioned (when values are
+          float-convertible or differ across files).
     """
 
     if not paths:
@@ -46,7 +49,9 @@ def load_tiff_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
     try:
         for path in paths:
             with Image.open(path) as img:
-                data_list.append(np.asanyarray(img, dtype=np.float64))
+                # float32 is sufficient for neutron imaging (16-bit detectors) and
+                # halves the in-memory footprint of large stacks.
+                data_list.append(np.asanyarray(img, dtype=np.float32))
                 metadata_list.append(img.tag_v2)
     except Exception as e:
         logger.error("Error loading TIFF stack: {}", e)

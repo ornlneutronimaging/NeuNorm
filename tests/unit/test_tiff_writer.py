@@ -1,5 +1,6 @@
 """Unit tests for TIFF writer DataGroup construction and SciTiff integration call."""
 
+import json
 import tempfile
 
 import numpy as np
@@ -68,12 +69,76 @@ def test_write_tiff_stack_2d():
 
     # Check extra metadata
     extra = dg["extra"]
-    assert extra["input_files"].value == ["file1.fits", "file2.fits"]
+    assert json.loads(extra["input_files"]) == ["file1.fits", "file2.fits"]
     assert extra["processing_timestamp"] == "2024-06-01T12:00:00Z"
-    np.testing.assert_equal(extra["roi_applied"].value, (0, 0, 5, 5))
+    np.testing.assert_equal(json.loads(extra["roi_applied"]), (0, 0, 5, 5))
     assert extra["num_runs_combined"] == 2
     assert extra["software_version"] == "1.0.0"
     assert extra["boolean_flag"] is True
+
+
+def test_write_tiff_stack_drops_object_dtype_coords_and_masks():
+    """Object-dtype (PyObject) coords/masks are dropped for scitiff >= 26.6; typed coords survive.
+
+    scitiff 26.6 rejects object-dtype variables. ``write_tiff_stack`` must drop them (e.g.
+    tuple-valued TIFF header tags carried over from the input files) while preserving typed
+    coordinates and the image data.
+    """
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    values = np.arange(50, dtype=np.float64).reshape((2, 5, 5))
+    da = sc.DataArray(data=sc.array(dims=["t", "y", "x"], values=values, unit="counts", dtype="float64"))
+    da.coords["t"] = sc.arange("t", 2, unit="s", dtype="int64")  # typed coord: must survive
+    # tuple-valued TIFF header tag stored as a PyObject scalar coord: must be dropped
+    da.coords["BitsPerSample"] = sc.scalar((32,))
+    assert da.coords["BitsPerSample"].dtype == sc.DType.PyObject
+    # a PyObject mask: must be dropped (the write must not raise)
+    da.masks["obj_mask"] = sc.scalar([1, 2, 3])
+    assert da.masks["obj_mask"].dtype == sc.DType.PyObject
+
+    with tempfile.NamedTemporaryFile(suffix=".tiff", delete=True) as f:
+        write_tiff_stack(f.name, da)  # would raise if a PyObject variable reached scitiff
+        dg = load_scitiff(f.name)
+
+    image = dg["image"]
+    np.testing.assert_allclose(image.values, values.astype("float32"), rtol=1e-6)
+    assert "t" in image.coords  # typed coord preserved
+    np.testing.assert_array_equal(image.coords["t"].values, [0, 1])
+    assert "BitsPerSample" not in image.coords  # object-dtype coord dropped
+    assert "obj_mask" not in image.masks  # object-dtype mask dropped
+
+
+def test_write_tiff_stack_preserves_nested_path_provenance():
+    """Nested per-run path groups round-trip unflattened, matching the HDF5 writer's provenance."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    values = np.arange(25, dtype=np.float64).reshape((5, 5))
+    transmission = sc.DataArray(data=sc.array(dims=["y", "x"], values=values, unit="counts", dtype="float64"))
+    nested = [["r1a.tif", "r1b.tif"], ["r2a.tif", "r2b.tif", "r2c.tif"]]  # 2 runs, ragged
+
+    with tempfile.NamedTemporaryFile(suffix=".tiff", delete=True) as f:
+        write_tiff_stack(f.name, transmission, metadata={"sample_paths": nested})
+        dg = load_scitiff(f.name)
+
+    # decoded provenance keeps the exact nested structure (not flattened to one list)
+    assert json.loads(dg["extra"]["sample_paths"]) == nested
+
+
+def test_write_tiff_stack_numpy_int_metadata_stays_numeric():
+    """NumPy integer metadata (e.g. an ROI tuple of np.int64) round-trips as JSON numbers, not strings."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    values = np.arange(25, dtype=np.float64).reshape((5, 5))
+    transmission = sc.DataArray(data=sc.array(dims=["y", "x"], values=values, unit="counts", dtype="float64"))
+    metadata = {"roi_applied": tuple(np.int64(v) for v in (5, 5, 25, 25))}
+
+    with tempfile.NamedTemporaryFile(suffix=".tiff", delete=True) as f:
+        write_tiff_stack(f.name, transmission, metadata=metadata)
+        dg = load_scitiff(f.name)
+
+    decoded = json.loads(dg["extra"]["roi_applied"])
+    assert decoded == [5, 5, 25, 25]
+    assert all(isinstance(v, int) for v in decoded)  # numeric, not "5" strings
 
 
 def test_write_tiff_stack_3d():

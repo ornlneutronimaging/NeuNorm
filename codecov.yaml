@@ -1,0 +1,8 @@
+# Configuration file for codecov reporting code coverage
+
+coverage:
+  status:
+    project:
+      default:
+        # based on the last build, but allow a drop of up to this percent
+        threshold: 0.5%

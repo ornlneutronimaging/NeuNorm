@@ -87,8 +87,10 @@ def load_event_data(
         x = f["x"][:n_events].astype(np.int32)
         y = f["y"][:n_events].astype(np.int32)
 
-    # Convert TOF ticks to nanoseconds
-    tof_ns = tof_raw * int(tof_clock)
+    # Convert TOF ticks to nanoseconds. Multiply by the full (possibly fractional) clock
+    # period, then round to integer ns — int(tof_clock) would truncate a fractional clock
+    # (e.g. the ~1.5625 ns TPX3 fine clock to 1, a ~37% error).
+    tof_ns = np.round(tof_raw * tof_clock).astype(np.int64)
 
     logger.info(f"  TOF range: {tof_ns.min():,} - {tof_ns.max():,} ns")
     logger.info(f"  X range: [{x.min()}, {x.max()}]")
@@ -126,6 +128,9 @@ def load_event_nexus(  # noqa: C901
     detector_shape : tuple[int, int], optional
         Detector dimensions (x_bins, y_bins) for unrolling event_id to x, y.
         Default: (512, 512) for SNS VENUS detectors
+    event_id_offset : int, optional
+        Base offset subtracted from each event_id before unrolling to x, y
+        pixel coordinates (default: 0)
     max_events : int, optional
         Maximum number of events to load (for testing/memory limits)
         If None, loads all events
@@ -140,13 +145,12 @@ def load_event_nexus(  # noqa: C901
     FileNotFoundError
         If file doesn't exist
     KeyError
-        If NeXus structure or required fields not found
-    ValueError
-        If detector_bank specified but not found
+        If the NeXus structure, required fields, or the requested
+        detector_bank are not found
 
     Examples
     --------
-    >>> # Auto-detect detector bank
+    >>> # Use the default detector bank ('bank1')
     >>> events = load_event_nexus('VENUS_15159.nxs.h5')
 
     >>> # Specify detector bank

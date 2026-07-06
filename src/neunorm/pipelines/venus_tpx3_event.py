@@ -11,6 +11,7 @@ import scipp as sc
 from loguru import logger
 
 from neunorm import __version__
+from neunorm.data_models.roi import ROILike, as_roi_bounds
 from neunorm.data_models.tof import BinningConfig
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
@@ -26,6 +27,7 @@ from neunorm.tof.event_converter import convert_events_to_histogram
 from neunorm.tof.histogram_rebinner import rebin_tof
 from neunorm.tof.pixel_detector import detect_dead_pixels, detect_hot_pixels
 from neunorm.tof.statistics_analyzer import analyze_statistics
+from neunorm.utils.constants import VENUS_FLIGHT_PATH_M
 
 
 def run_venus_tpx3_event_pipeline(  # noqa: C901
@@ -33,13 +35,14 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     ob_paths: Sequence[str | Path],
     binning: BinningConfig,
     output_path: Path,
-    roi: Optional[tuple] = None,
-    air_roi: Optional[tuple] = None,
+    roi: Optional[ROILike] = None,
+    air_roi: Optional[ROILike] = None,
     rebin_by_tof: Optional[bool | int] = False,
     rebin_by_spatial: Optional[int | tuple[int, int]] = None,
     detector_shape: tuple[int, int] = (514, 514),
     event_id_offset: int = 1_000_000,
     bank_name: str = "bank100",
+    flight_path: sc.Variable = sc.scalar(VENUS_FLIGHT_PATH_M, unit="m"),
 ) -> sc.DataArray:
     """Execute VENUS TPX3 event normalization pipeline.
 
@@ -49,8 +52,8 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     - ROI clip (optional)
     - Dead pixel detection
     - Hot pixel detection
-    - Statistics analysis
-    - Coarsening strategy (spatial/TOF/augmentation)
+    - Statistics analysis (only when ``rebin_by_tof=True``)
+    - Coarsening strategy (spatial/TOF)
     - Event → histogram conversion (flexible binning)
     - Beam correction (p_charge)
     - Normalization (TOF-resolved)
@@ -70,15 +73,16 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     output_path : Path
         Path to save the output file (HDF5 or TIFF)
     roi : Optional[tuple]
-        Region of interest to apply (x_start, y_start, x_end, y_end)
+        Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
     air_roi : Optional[tuple]
-        Region of interest for air correction (x_start, y_start, x_end, y_end)
+        Region of interest for air correction — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
     rebin_by_tof : Optional[bool,int]
         Whether to apply TOF rebinning based on statistics analysis. If an integer is provided,
         it will be used as the rebinning factor instead of the recommended one.
-    rebin_by_spatial : Optional[int]
-        Whether to apply spatial rebinning. If an integer is provided, it will be used as the
-        rebinning factor. If None, no spatial rebinning is applied.
+    rebin_by_spatial : Optional[int | tuple[int, int]]
+        Whether to apply spatial rebinning. If an integer is provided, it is used as the
+        rebinning factor for both spatial axes. A ``(x, y)`` tuple selects per-axis rebinning
+        factors. If None, no spatial rebinning is applied.
     detector_shape : tuple[int, int]
         Shape of the TPX3 detector (default: (514, 514))
     event_id_offset : int
@@ -86,6 +90,10 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
         This accounts for any non-zero starting point in the event_ids.
     bank_name : str
         Name of the detector bank in the NeXus file to load (default: "bank100")
+    flight_path : sc.Variable
+        Source-to-detector flight path used for both energy/wavelength binning and the
+        TOF→energy/wavelength coordinate labeling. Defaults to ``VENUS_FLIGHT_PATH_M`` (25 m);
+        set it per detector/sample position (the VENUS L2 varies ~24.5–25.5 m).
 
     Notes
     -----
@@ -97,14 +105,21 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     sc.DataArray
         Final normalized transmission DataArray with metadata and masks
     """
+    # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
+    # tuples up front so cropping and provenance see a consistent form.
+    if roi is not None:
+        roi = as_roi_bounds(roi)
+    if air_roi is not None:
+        air_roi = as_roi_bounds(air_roi)
 
-    flight_path = sc.scalar(25.0, unit="m")  # Example flight path for energy/wavelength binning
     x_bins, y_bins = detector_shape
 
-    # Load data, metadata and convert to histogram
+    # Load metadata before histogramming so the detector time offset can be applied to
+    # energy/wavelength bin edges; a missing offset defaults to zero.
     samples = []
-
     for run in sample_paths:
+        metadata = load_metadata(run)
+        time_offset = metadata.get("detector_time_offset", sc.scalar(0.0, unit="us"))
         sample = convert_events_to_histogram(
             load_event_nexus(
                 run, detector_bank=bank_name, detector_shape=detector_shape, event_id_offset=event_id_offset
@@ -113,8 +128,8 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
             flight_path,
             x_bins,
             y_bins,
+            detector_time_offset=time_offset,
         )
-        metadata = load_metadata(run)
         for key, value in metadata.items():
             sample.coords[key] = value
             sample.coords.set_aligned(key, False)
@@ -122,6 +137,8 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
 
     obs = []
     for run in ob_paths:
+        metadata = load_metadata(run)
+        time_offset = metadata.get("detector_time_offset", sc.scalar(0.0, unit="us"))
         ob = convert_events_to_histogram(
             load_event_nexus(
                 run, detector_bank=bank_name, detector_shape=detector_shape, event_id_offset=event_id_offset
@@ -130,8 +147,8 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
             flight_path,
             x_bins,
             y_bins,
+            detector_time_offset=time_offset,
         )
-        metadata = load_metadata(run)
         for key, value in metadata.items():
             ob.coords[key] = value
             ob.coords.set_aligned(key, False)
@@ -198,13 +215,14 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     if air_roi is not None:
         transmission = apply_air_region_correction(transmission, air_roi)
 
-    # Add wavelength and energy coordinates converted from TOF using the detector distance
-    # and time offset from the metadata
+    # Add wavelength and energy coordinates converted from TOF using the same flight path as
+    # the binning step and the time offset from the metadata.
     if "detector_time_offset" in sample.coords:
-        distance = sc.scalar(25.0, unit="m")  # distance for VENUS
         time_offset = sample.coords["detector_time_offset"]
-        transmission.coords["wavelength"] = convert_tof_to_wavelength(transmission.coords["tof"], distance, time_offset)
-        transmission.coords["energy"] = convert_tof_to_energy(transmission.coords["tof"], distance, time_offset)
+        transmission.coords["wavelength"] = convert_tof_to_wavelength(
+            transmission.coords["tof"], flight_path, time_offset
+        )
+        transmission.coords["energy"] = convert_tof_to_energy(transmission.coords["tof"], flight_path, time_offset)
     else:
         logger.warning("Time offset not found in metadata. Cannot add wavelength and energy coordinates.")
 

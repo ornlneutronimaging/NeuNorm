@@ -1,0 +1,43 @@
+# This CITATION.cff describes how to cite the NeuNorm software.
+# The `doi:` below is the Zenodo concept DOI (resolves to the latest archived release).
+cff-version: 1.2.0
+message: "If you use this software, please cite both the software itself and the accompanying paper (Bilheux, 2018)."
+title: "NeuNorm: Neutron imaging normalization and time-of-flight data processing for ORNL facilities"
+type: software
+doi: 10.5281/zenodo.20753780
+authors:
+  - family-names: Whitfield
+    given-names: Ross
+    affiliation: "Oak Ridge National Laboratory"
+    orcid: "https://orcid.org/0000-0002-9852-1044"
+  - family-names: Bilheux
+    given-names: Jean
+    affiliation: "Oak Ridge National Laboratory"
+    orcid: "https://orcid.org/0000-0003-2172-6487"
+  - family-names: Zhang
+    given-names: Chen
+    affiliation: "Oak Ridge National Laboratory"
+    orcid: "https://orcid.org/0000-0001-8374-4467"
+repository-code: "https://github.com/ornlneutronimaging/NeuNorm"
+url: "https://neunorm.readthedocs.io"
+license: BSD-3-Clause
+keywords:
+  - neutron imaging
+  - normalization
+  - time-of-flight
+  - scipp
+  - MARS
+  - VENUS
+preferred-citation:
+  type: article
+  title: "NeuNorm: Neutron Imaging Normalization Library"
+  authors:
+    - family-names: Bilheux
+      given-names: Jean
+      affiliation: "Oak Ridge National Laboratory"
+  doi: 10.21105/joss.00815
+  journal: "Journal of Open Source Software"
+  year: 2018
+  volume: 3
+  issue: 29
+  start: 815

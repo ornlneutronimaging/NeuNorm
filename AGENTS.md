@@ -25,7 +25,7 @@ This is a **Pixi** project (`pyproject.toml` `[tool.pixi.*]` + `pixi.lock`).
   `update-lockfiles` workflow is pinned to the same pixi for this reason.
 
 Key tasks (`[tool.pixi.tasks]`): `test`, `build-docs`, `conda-build`,
-`pypi-build`, `audit-deps`, `clean*`.
+`pypi-build`, `clean*`.
 
 ## Layout
 

@@ -6,7 +6,7 @@ Phased development plan to complete NeuNorm v2.0, building on existing codebase 
 
 ## Current State Assessment
 
-### Already Implemented (`/NeuNorm/src/NeuNorm/`)
+### Already Implemented (`/NeuNorm/src/neunorm/`)
 | Module | Status | Description |
 |--------|--------|-------------|
 | `data_models/core.py` | Complete | EventData (Pydantic v2) |
@@ -250,9 +250,9 @@ NeuNorm/docs/
 ## Critical Files Reference
 
 **Patterns to follow**:
-- `NeuNorm/src/NeuNorm/loaders/event_loader.py` - Loader pattern
-- `NeuNorm/src/NeuNorm/processing/normalizer.py` - Processing module pattern
-- `NeuNorm/src/NeuNorm/tof/pixel_detector.py` - Detection algorithm pattern
+- `NeuNorm/src/neunorm/loaders/event_loader.py` - Loader pattern
+- `NeuNorm/src/neunorm/processing/normalizer.py` - Processing module pattern
+- `NeuNorm/src/neunorm/tof/pixel_detector.py` - Detection algorithm pattern
 
 **Legacy code for reference**:
 - `NeuNorm/archive/neunorm-1.x/NeuNorm/normalization.py` - TIFF loading, gamma filtering patterns

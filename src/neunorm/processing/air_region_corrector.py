@@ -5,12 +5,12 @@ Air region correction.
 import scipp as sc
 from loguru import logger
 
+from neunorm.data_models.roi import ROILike, as_roi_bounds
+
 
 def apply_air_region_correction(
     transmission: sc.DataArray,
-    air_roi: tuple[
-        int, int, int, int
-    ],  # (x0, y0, x1, y1) with x1, y1 as exclusive stop indices (Python slice semantics)
+    air_roi: ROILike,  # (x0, y0, x1, y1) tuple or an ROI; x1, y1 are exclusive stops
 ) -> sc.DataArray:
     """Scale transmission so air region has mean = 1.0.
 
@@ -35,10 +35,12 @@ def apply_air_region_correction(
     ----------
     transmission : sc.DataArray
         Normalized transmission (after OB correction)
-    air_roi : tuple[int, int, int, int]
-        Coordinates of the air region (x0, y0, x1, y1), where x1 and y1 are exclusive upper bound
+    air_roi : ROI or tuple[int, int, int, int]
+        Air region as an :class:`~neunorm.data_models.roi.ROI` or a bare ``(x0, y0, x1, y1)`` tuple,
+        where x1 and y1 are exclusive upper bounds.
 
     """
+    air_roi = as_roi_bounds(air_roi)
 
     logger.info(f"Applying air region correction with ROI: {air_roi}")
 

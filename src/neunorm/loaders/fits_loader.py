@@ -39,7 +39,11 @@ def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
 
         - dims: ['TOF', 'y', 'x'] if tof_edges provided, else ['N_image', 'y', 'x']
         - coords: y, x pixel indices, and optionally TOF.
-          Additionally, FITS header keys are added as coordinates with dimension of the stack.
+          Additionally, FITS header keys are added as (unaligned) coordinates.
+          The ``COMMENT`` and ``HISTORY`` keys are skipped. A key whose value is
+          constant across the stack is stored as a scalar coordinate; a key
+          whose value differs across files is stored as an array coordinate
+          along the stack dimension.
     """
 
     if not paths:
@@ -57,8 +61,10 @@ def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
                 hdul.info(output=info_buf)
                 logger.debug("FITS info for {}:\n{}", path, info_buf.getvalue().rstrip())
 
-                # Assume data is in primary HDU
-                arr = hdul[0].data.astype(np.float64)
+                # Assume data is in primary HDU. float32 is sufficient for neutron
+                # imaging (16-bit detectors) and halves the in-memory footprint of
+                # large stacks.
+                arr = hdul[0].data.astype(np.float32)
                 data_list.append(arr)
 
                 # Store header from first file

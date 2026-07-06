@@ -28,7 +28,9 @@ def combine_runs(  # noqa: C901
     runs : list[sc.DataArray]
         List of DataArrays representing individual runs.
     metadata_keys_to_sum : Sequence[str], optional
-        Sequence of metadata keys to sum across runs, by default ("acquisition_time", "p_charge")
+        Sequence of metadata keys to aggregate across runs, by default ("acquisition_time", "p_charge").
+        These coordinates are summed across runs unless ``normalize_by_runs=True``, in which case they
+        are averaged instead.
     metadata_check_match : Sequence[str], optional
         Sequence of metadata keys that must match across all runs for combination, by default ()
     normalize_by_runs : bool, optional
@@ -45,7 +47,9 @@ def combine_runs(  # noqa: C901
         raise ValueError("No runs provided for combination")
 
     if len(runs) == 1:
-        return runs[0]
+        # Return a copy so the combined result never aliases caller-owned data
+        # (the multi-run path below also builds a fresh array via .copy()).
+        return runs[0].copy()
 
     # Validate all runs have the same shape, dimensions and required metadata keys for matching
     base_shape = runs[0].shape

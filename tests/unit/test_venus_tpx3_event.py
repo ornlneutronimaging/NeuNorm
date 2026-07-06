@@ -1,3 +1,4 @@
+import json
 import tempfile
 from pathlib import Path
 
@@ -223,11 +224,11 @@ class TestVenusTPX3EventPipeline:
 
         # Check extra metadata
         extra = dg["extra"]
-        assert len(extra["sample_paths"].values) == 1
-        assert len(extra["ob_paths"].values) == 1
+        assert json.loads(extra["sample_paths"]) == [str(self.sample)]
+        assert json.loads(extra["ob_paths"]) == [str(self.ob)]
 
         assert "processing_timestamp" in extra
-        np.testing.assert_equal(extra["roi_applied"].value, (5, 5, 25, 25))
+        np.testing.assert_equal(json.loads(extra["roi_applied"]), (5, 5, 25, 25))
         assert extra["version"] == __version__
 
     def test_venus_tpx3_event_pipeline_dark_and_hot_pixels(self):

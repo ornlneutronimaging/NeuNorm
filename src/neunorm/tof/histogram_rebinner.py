@@ -87,9 +87,13 @@ def rebin_tof(  # noqa: C901
         If `time`, width is interpreted as the desired width of the new TOF bins in the same unit as the coordinates.
         If `wavelength`, width is interpreted as the desired width of the new TOF bins in Angstrom units,
         and converted to time using the provided source-to-detector distance and detector time offset.
-        If `manual`, width is required to be a 1-D sc.Variable representing the explicit TOF bin edges;
-        its values are interpreted as TOF coordinate values (time-of-flight) and must be in, or convertible to,
-        the unit of the TOF coordinates, and are treated as bin edges rather than bin indices or counts.
+        If `manual`, width is required to be a 1-D sc.Variable (at least two values) representing the
+        desired edges of the new TOF bins. Its interpretation depends on the variable's unit:
+        if dimensionless, the values are treated as integer bin indices into the existing TOF coordinate
+        (must be of integer dtype and within bounds) and the corresponding original edges are selected;
+        otherwise the values are interpreted as explicit TOF edges in, or convertible to, the unit of the
+        TOF coordinates (a wavelength unit is also accepted and converted using `l_source_to_detector` and
+        `detector_time_offset`), and are then snapped to the nearest original edges on the left.
     logarithmic : bool
         Whether to use logarithmic binning. Default is False.
     tof_dim : str

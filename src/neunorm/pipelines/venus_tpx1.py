@@ -11,6 +11,7 @@ import scipp as sc
 from loguru import logger
 
 from neunorm import __version__
+from neunorm.data_models.roi import ROILike, as_roi_bounds
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.loaders.metadata_loader import load_metadata
@@ -24,6 +25,7 @@ from neunorm.tof.coordinate_converter import convert_tof_to_energy, convert_tof_
 from neunorm.tof.histogram_rebinner import rebin_tof
 from neunorm.tof.pixel_detector import detect_dead_pixels
 from neunorm.tof.statistics_analyzer import analyze_statistics
+from neunorm.utils.constants import VENUS_FLIGHT_PATH_M
 
 
 def run_venus_tpx1_pipeline(  # noqa: C901
@@ -32,10 +34,11 @@ def run_venus_tpx1_pipeline(  # noqa: C901
     sample_tiff_paths: Sequence[Sequence[str | Path]],
     ob_tiff_paths: Sequence[Sequence[str | Path]],
     output_path: Path,
-    roi: Optional[tuple] = None,
-    air_roi: Optional[tuple] = None,
+    roi: Optional[ROILike] = None,
+    air_roi: Optional[ROILike] = None,
     rebin_by_tof: Optional[bool | int] = False,
     rebin_by_spatial: Optional[int | tuple[int, int]] = None,
+    flight_path: sc.Variable = sc.scalar(VENUS_FLIGHT_PATH_M, unit="m"),
 ) -> sc.DataArray:
     """Execute VENUS TPX1 normalization pipeline.
 
@@ -46,7 +49,7 @@ def run_venus_tpx1_pipeline(  # noqa: C901
     - Run combine
     - ROI clip (optional)
     - Dead pixel detection
-    - Statistics analysis + rebinning recommendation
+    - Statistics analysis + rebinning recommendation (only when ``rebin_by_tof=True``)
     - Rebinning (TOF and/or spatial, optional)
     - Beam correction (proton charge)
     - Normalization (TOF-resolved)
@@ -70,16 +73,20 @@ def run_venus_tpx1_pipeline(  # noqa: C901
     output_path : Path
         Path to save the output file (HDF5 or TIFF)
     roi : Optional[tuple]
-        Region of interest to apply (x_start, y_start, x_end, y_end)
+        Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
     air_roi : Optional[tuple]
-        Region of interest to use for air correction (x_start, y_start, x_end, y_end).
+        Region of interest for air correction — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
         If None, air correction is not applied.
     rebin_by_tof : Optional[Union[bool,int]]
         Whether to apply TOF rebinning based on statistics analysis. If an integer is provided,
         it will be used as the rebinning factor instead of the recommended one.
-    rebin_by_spatial : Optional[int]
-        Whether to apply spatial rebinning. If an integer is provided, it will be used as the
-        rebinning factor. If None, no spatial rebinning is applied.
+    rebin_by_spatial : Optional[int | tuple[int, int]]
+        Whether to apply spatial rebinning. If an integer is provided, it is used as the
+        rebinning factor for both spatial axes. A ``(x, y)`` tuple selects per-axis
+        rebinning factors (x and y). If None, no spatial rebinning is applied.
+    flight_path : sc.Variable
+        Source-to-detector flight path used for TOF→energy/wavelength coordinate labeling.
+        Defaults to ``VENUS_FLIGHT_PATH_M`` (25 m); set it per detector/sample position.
 
     Notes
     -----
@@ -91,6 +98,12 @@ def run_venus_tpx1_pipeline(  # noqa: C901
     sc.DataArray
         Final normalized transmission DataArray with metadata and masks
     """
+    # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
+    # tuples up front so cropping and provenance see a consistent form.
+    if roi is not None:
+        roi = as_roi_bounds(roi)
+    if air_roi is not None:
+        air_roi = as_roi_bounds(air_roi)
 
     # length of hdf5 paths and tiff paths should match for both sample and OB
     if len(sample_hdf5_paths) != len(sample_tiff_paths):
@@ -195,13 +208,14 @@ def run_venus_tpx1_pipeline(  # noqa: C901
     if air_roi is not None:
         transmission = apply_air_region_correction(transmission, air_roi)
 
-    # Add wavelength and energy coordinates converted from TOF using the detector distance
-    # and time offset from the metadata
+    # Add wavelength and energy coordinates converted from TOF using the configurable flight
+    # path and the time offset from the metadata.
     if "detector_time_offset" in sample.coords:
-        distance = sc.scalar(25.0, unit="m")  # distance for VENUS
         time_offset = sample.coords["detector_time_offset"]
-        transmission.coords["wavelength"] = convert_tof_to_wavelength(transmission.coords["tof"], distance, time_offset)
-        transmission.coords["energy"] = convert_tof_to_energy(transmission.coords["tof"], distance, time_offset)
+        transmission.coords["wavelength"] = convert_tof_to_wavelength(
+            transmission.coords["tof"], flight_path, time_offset
+        )
+        transmission.coords["energy"] = convert_tof_to_energy(transmission.coords["tof"], flight_path, time_offset)
     else:
         logger.warning("Time offset not found in metadata. Cannot add wavelength and energy coordinates.")
 

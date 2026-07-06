@@ -19,15 +19,19 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-14] # macos-14 = Apple Silicon (osx-arm64)
+    env:
+      # Scoped to this job so the upload step can gate on the secret's presence
+      # (secrets are withheld on fork PRs); avoids mapping it into other jobs.
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@v0.9.6
+        uses: prefix-dev/setup-pixi@a09b6247153796b190642a2b53fac4241043cf6f # v0.10.0
         with:
           pixi-version: v0.70.1
           manifest-path: pyproject.toml
@@ -36,18 +40,29 @@ jobs:
       - name: Run unit tests
         run: pixi run test
 
+      # Uploads coverage.xml (produced by --cov-report=xml) to Codecov. Skipped when
+      # CODECOV_TOKEN is absent (e.g. fork PRs, where secrets are withheld) so it does
+      # not emit warnings; fail_ci_if_error=false keeps CI green regardless. See #139.
+      - name: Upload coverage to codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        if: matrix.os == 'ubuntu-latest' && github.actor != 'dependabot[bot]' && env.CODECOV_TOKEN != ''
+        with:
+          token: ${{ env.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
   conda-build:
     name: Build conda package
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@v0.9.6
+        uses: prefix-dev/setup-pixi@a09b6247153796b190642a2b53fac4241043cf6f # v0.10.0
         with:
           pixi-version: v0.70.1
           manifest-path: pyproject.toml
@@ -60,7 +75,7 @@ jobs:
           cp *.conda /tmp/local-channel/linux-64
 
       - name: Verify conda package
-        uses: neutrons/conda-verify@main
+        uses: neutrons/conda-verify@e1b26a86406e34b371fd633f9993c390f662910d # main
         with:
           package-name: ${{ env.PKG_NAME }}
           module-name: ${{ env.MODULE_NAME }}
@@ -80,13 +95,13 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Setup Pixi
-        uses: prefix-dev/setup-pixi@v0.9.6
+        uses: prefix-dev/setup-pixi@a09b6247153796b190642a2b53fac4241043cf6f # v0.10.0
         with:
           pixi-version: v0.70.1
           manifest-path: pyproject.toml
@@ -120,13 +135,13 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@v0.9.6
+        uses: prefix-dev/setup-pixi@a09b6247153796b190642a2b53fac4241043cf6f # v0.10.0
         with:
           pixi-version: v0.70.1
           manifest-path: pyproject.toml
@@ -140,7 +155,7 @@ jobs:
       # publish your distributions here (need to setup on PyPI first)
       - name: Publish package distributions to PyPI
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
         with:
           # Tolerate re-runs of a release tag: files already on PyPI are skipped
           # instead of failing the whole job (PyPI uploads are immutable).

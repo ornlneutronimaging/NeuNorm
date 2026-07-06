@@ -5,10 +5,103 @@ All notable changes to NeuNorm are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.2.2] - 2026-07-02
+
+### Fixed
+
+- **`background_roi` can now reproduce legacy 1.x zero-count-ROI semantics** (completes the
+  downstream-superset goal of
+  [#172](https://github.com/ornlneutronimaging/NeuNorm/issues/172) /
+  [#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159)): the pooled-mean
+  strictly-positive/finite guard can be opted out with
+  `apply_background_roi(..., strict=False)` or
+  `normalize_transmission(...)` / `normalize_with_dark(..., background_roi_strict=False)`,
+  letting a zero-count background ROI propagate `inf`/`nan` through the division exactly as
+  NeuNorm 1.x did (iBeatles pins this behavior). The default stays strict — a
+  non-positive/non-finite pooled mean raises `ValueError` — and structural errors (bad ROI
+  bounds, missing dims) always raise.
+
+## [2.2.1] - 2026-07-01
+
+### Added
+
+- **`background_roi` now supports pooled multiple ROIs, inclusive extents, and an open-beam-less
+  mode.** `normalize_transmission(..., background_roi=)` — and the MARS CCD/TPX3 and VENUS CCD
+  pipelines — accept a **sequence** of ROIs, pooled as `sum(counts) / sum(pixels)` per image;
+  `ROI(..., inclusive=True)` opts into legacy inclusive extents (a width-`w` ROI spans `w+1`
+  pixels); and the new `neunorm.processing.normalizer.apply_background_roi(data, background_roi)`
+  applies the flux proxy to a sample stack with no open beam. A single ROI / bare tuple is
+  unchanged. This makes `background_roi` a superset of the downstream (iBeatles) pooled-inclusive
+  re-implementation so it can be removed.
+  ([#172](https://github.com/ornlneutronimaging/NeuNorm/issues/172),
+  [#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159))
+- **Python 3.14 support.** NeuNorm builds, installs, and passes its full test suite on
+  CPython 3.14; the development/CI pixi environments and `pixi.lock` move to 3.14
+  (`requires-python` stays `>=3.11`).
+
+### Fixed
+
+- **TIFF export is compatible with scitiff ≥ 26.6.** scitiff 26.6 tightened its metadata schema
+  to reject object-dtype (`PyObject`) scipp variables. `write_tiff_stack` now JSON-encodes
+  sequence metadata (mirroring the HDF5 writer's provenance convention — read it back with
+  `json.loads`) and drops object-dtype coords/masks (e.g. tuple-valued TIFF header tags carried
+  over from the input files) that scitiff cannot serialize. HDF5 output and the written image
+  data are unchanged.
+
+## [2.2.0] - 2026-06-30
+
+### Added
+
+- **Background-ROI flux normalization (proton-charge proxy).** `normalize_transmission` gains a
+  `background_roi=(x0, y0, x1, y1)` parameter that normalizes each image by its mean counts in a
+  sample-free ROI — an approximation to proton-charge normalization for when proton charge is
+  unavailable (e.g. MARS): `T = (S/mean(S[B])) / (O/mean(O[B]))`. Mutually exclusive with
+  `proton_charge_sample`/`_ob`; uncertainty is propagated first-order (with the shared-dark
+  covariance corrected on the `normalize_with_dark` path). Exposed on `run_mars_ccd_pipeline`,
+  `run_mars_tpx3_pipeline`, and `run_venus_ccd_pipeline` via `background_roi=`.
+  ([#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159))
+- **Named `ROI` type for region arguments.** A new `ROI` pydantic model (`neunorm.data_models.roi`) lets you specify any
+  region by name — `ROI(x0=10, y0=20, x1=30, y1=40)` or `ROI(x0=10, y0=20, width=20, height=20)` —
+  instead of remembering the order of a bare `(x0, y0, x1, y1)` tuple (requested by Jean Bilheux on
+  [#159](https://github.com/ornlneutronimaging/NeuNorm/issues/159)). Accepted everywhere an ROI tuple
+  is: `apply_roi` (`roi=`), `apply_air_region_correction` (`air_roi=`), `normalize_transmission`
+  (`background_roi=`), and every pipeline's `roi` / `air_roi` / `background_roi`. Stops are exclusive
+  (`width`/`height` resolve to `x1=x0+width`, `y1=y0+height`); bare tuples keep working unchanged.
+
+- **`EventData` is now indexable, plus an `assign_chip_ids` helper.** `events[mask]` (boolean
+  mask, index array, or slice) returns a new `EventData` with every per-event array filtered.
+  `neunorm.tof.pulse_reconstruction.assign_chip_ids(x, y, detector_shape)` derives a chip id (0–3)
+  from the pixel quadrant for a 2×2 quad Timepix3 detector, giving multi-chip
+  `reconstruct_pulse_ids` a data source (the loaders do not record the originating chip).
+  ([#163](https://github.com/ornlneutronimaging/NeuNorm/issues/163))
+
+### Fixed
+
+- **`load_event_data` no longer truncates a fractional TOF clock.** The raw-tick → nanosecond
+  conversion now multiplies by the full `tof_clock` and rounds to `int64` ns; previously
+  `int(tof_clock)` truncated a fractional clock (e.g. the ~1.5625 ns TPX3 fine clock to 1 ns).
+  ([#163](https://github.com/ornlneutronimaging/NeuNorm/issues/163))
+- **`normalize_transmission` rejects a one-sided proton-charge correction.** Supplying only one of
+  `proton_charge_sample` / `proton_charge_ob` produced a non-dimensionless transmission; it now
+  raises `ValueError` (both or neither). The pipelines always pass both, so behavior is unchanged.
+  ([#163](https://github.com/ornlneutronimaging/NeuNorm/issues/163))
+- **`combine_runs` no longer aliases caller data for a single run.** It returns a copy (matching
+  the multi-run path), so mutating the combined result cannot leak back into the caller's input.
+  ([#163](https://github.com/ornlneutronimaging/NeuNorm/issues/163))
+
+## [2.1.0] - 2026-06-18
 
 ### Changed
 
+- **CCD pipelines now compute in float32 end-to-end instead of float64.** The
+  TIFF/FITS loaders load image data as `float32`, so `run_mars_ccd_pipeline` and
+  `run_venus_ccd_pipeline` propagate, normalize, and return `float32` transmission
+  (values and variances), roughly halving the in-memory footprint of large image
+  stacks. float32 is sufficient for neutron imaging (16-bit detectors) and matches
+  the already-float32 event/TOF path. On-disk HDF5/TIFF output was already written
+  as float32, so **file dtypes are unchanged**; written values may differ from
+  before by up to ~1e-7 (now computed in float32 rather than rounded from float64).
+  ([#147](https://github.com/ornlneutronimaging/NeuNorm/issues/147))
 - **Dark current is now optional for the CCD pipelines.** `run_mars_ccd_pipeline`
   and `run_venus_ccd_pipeline` accept `dark_paths=None` (the new default) or an
   empty list to skip dark-current correction; the dark-frame variance then does
@@ -16,6 +109,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and fully backward compatible. Output provenance gains a `dark_correction_applied`
   flag, and `dark_paths` is recorded only when dark frames were supplied.
   ([#146](https://github.com/ornlneutronimaging/NeuNorm/issues/146))
+
+### Fixed
+
+- **HDF5 writer no longer loses ragged provenance (and no longer crashes on it).**
+  Nested per-run path metadata (`sample_paths`/`ob_paths`/`dark_paths`) is now stored
+  as a round-trippable JSON string tagged with an `encoding="json"` dataset attribute
+  — read it back with `json.loads(dataset.asstr()[()])`. Previously, runs with unequal
+  file counts produced a ragged nested list that aborted `write_hdf5` *after* the bulk
+  arrays were written (corrupt partial file); the interim guard avoided the crash by
+  silently **dropping** that provenance. Flat lists, scalars, and strings are
+  unchanged. ([#140](https://github.com/ornlneutronimaging/NeuNorm/issues/140))
+- **Event-pipeline energy/wavelength binning now applies the detector time offset and a
+  configurable flight path.** When `run_venus_tpx3_event_pipeline` histograms directly in
+  `bin_space='energy'`/`'wavelength'`, the energy/wavelength bin edges are now built in raw
+  detector-TOF space (applying `detector_time_offset`, the exact inverse of the coordinate
+  labeling), so events land in the correct bins instead of being shifted by the offset. The
+  flight path is now a single configurable `flight_path` parameter (default
+  `VENUS_FLIGHT_PATH_M`) used for both binning and labeling, replacing the hardcoded 25 m
+  literals. The public `get_energy_histogram` / `get_wavelength_histogram` helpers gained an
+  `offset` argument so they label consistently with offset-aware bins, and the
+  `run_venus_tpx1_pipeline` / `run_venus_tpx3_histogram_pipeline` pipelines also take a
+  configurable `flight_path`. The default bin-in-TOF path is unaffected.
+  ([#141](https://github.com/ornlneutronimaging/NeuNorm/issues/141))
+- **Shared dark-frame variance is no longer double-counted in CCD transmission
+  uncertainty.** With the same averaged dark subtracted from both sample and open beam,
+  `T = (S−D)/(O−D)` was propagated as if numerator and denominator were independent, so
+  `Var(D)` entered twice. A new `normalize_with_dark` computes the dark correction and
+  normalization together and removes the spurious shared-dark covariance term, so the
+  reported uncertainty is slightly smaller (the **transmission values are unchanged**). The
+  CCD pipelines use it on the with-dark path; the no-dark path is unchanged.
+  ([#142](https://github.com/ornlneutronimaging/NeuNorm/issues/142))
 
 ## [2.0.0] - 2026-06-09
 
@@ -88,4 +212,8 @@ documentation are archived under
 [`archive/neunorm-1.x/`](archive/neunorm-1.x/); released 1.x versions remain
 available on PyPI and the `conda-forge` channel (`pip install "NeuNorm<2"`).
 
+[2.2.2]: https://github.com/ornlneutronimaging/NeuNorm/releases/tag/v2.2.2
+[2.2.1]: https://github.com/ornlneutronimaging/NeuNorm/releases/tag/v2.2.1
+[2.2.0]: https://github.com/ornlneutronimaging/NeuNorm/releases/tag/v2.2.0
+[2.1.0]: https://github.com/ornlneutronimaging/NeuNorm/releases/tag/v2.1.0
 [2.0.0]: https://github.com/ornlneutronimaging/NeuNorm/releases/tag/v2.0.0

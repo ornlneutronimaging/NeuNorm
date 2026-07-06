@@ -11,12 +11,17 @@ import scipp as sc
 from loguru import logger
 
 from neunorm import __version__
+from neunorm.data_models.roi import ROILike, as_roi_bounds
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
 from neunorm.loaders.stack_loader import load_stack
-from neunorm.processing.dark_corrector import subtract_dark
-from neunorm.processing.normalizer import normalize_transmission
+from neunorm.processing.normalizer import (
+    BackgroundROILike,
+    as_roi_bounds_list,
+    normalize_transmission,
+    normalize_with_dark,
+)
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.run_combiner import combine_runs
@@ -28,8 +33,9 @@ def run_mars_ccd_pipeline(  # noqa: C901
     ob_paths: Sequence[Sequence[str | Path]],
     dark_paths: Optional[Sequence[Sequence[str | Path]]] = None,
     output_path: Optional[Path] = None,
-    roi: Optional[tuple] = None,
+    roi: Optional[ROILike] = None,
     gamma_filter: bool = True,
+    background_roi: Optional[BackgroundROILike] = None,
 ) -> sc.DataArray:
     """Execute MARS CCD/CMOS normalization pipeline.
 
@@ -63,9 +69,15 @@ def run_mars_ccd_pipeline(  # noqa: C901
         raises ``ValueError`` (the default exists only so ``dark_paths`` can keep
         its positional slot).
     roi : Optional[tuple]
-        Region of interest to apply (x_start, y_start, x_end, y_end)
+        Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
     gamma_filter : bool
         Whether to apply gamma filtering to the sample data (default: True)
+    background_roi : ROI/tuple or a sequence of them
+        Sample-free background region(s) — one ROI or a pooled sequence of ROIs (see
+        ``normalize_transmission``) — for flux-proxy normalization when proton charge is
+        unavailable. Mutually exclusive with proton-charge correction. If
+        ``roi`` is also given the detector is cropped first, so ``background_roi`` indices are
+        resolved in the post-crop frame.
 
     Notes
     -----
@@ -77,6 +89,12 @@ def run_mars_ccd_pipeline(  # noqa: C901
     sc.DataArray
         Final normalized transmission DataArray with metadata and masks
     """
+    # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
+    # tuples up front so cropping and provenance see a consistent form.
+    if roi is not None:
+        roi = as_roi_bounds(roi)
+    if background_roi is not None:
+        background_roi = as_roi_bounds_list(background_roi)
 
     if output_path is None:
         raise ValueError("output_path is required")
@@ -118,7 +136,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
         normalize_by_runs=True,
     )
 
-    # Dark current is optional (issue #146): only load/combine it when dark paths are provided.
+    # Dark current is optional: only load/combine it when dark paths are provided.
     dark = None
     if dark_paths:
         dark_runs = [load_stack(paths) for paths in dark_paths]
@@ -151,17 +169,28 @@ def run_mars_ccd_pipeline(  # noqa: C901
     if gamma_filter:
         sample = apply_gamma_filter(sample)
 
-    # Dark correction (optional)
-    if dark is not None:
-        sample_dark_corrected = subtract_dark(sample, dark)
-        ob_dark_corrected = subtract_dark(ob, dark)
+    # Dark correction (optional) + normalization. With a shared dark frame, normalize_with_dark
+    # subtracts the dark and normalizes in one step so the dark variance is not double-counted
+    # in the transmission uncertainty. Without dark, normalize directly.
+    if background_roi is not None:
+        # Flux-proxy normalization from a sample-free ROI, in place of proton charge.
+        # With a shared dark, route through normalize_with_dark so the shared-dark variance
+        # double-count is corrected (k = co/cs); without dark, normalize directly.
+        if dark is not None:
+            transmission = normalize_with_dark(sample, ob, dark, background_roi=background_roi)
+        else:
+            transmission = normalize_transmission(sample, ob, background_roi=background_roi)
+    elif dark is not None:
+        transmission = normalize_with_dark(sample, ob, dark)
     else:
         logger.info("No dark current provided; skipping dark correction")
-        sample_dark_corrected = sample
-        ob_dark_corrected = ob
+        transmission = normalize_transmission(sample, ob)
 
-    # Normalization
-    transmission = normalize_transmission(sample_dark_corrected, ob_dark_corrected)
+    # Guarantee a float32 normalized data product, regardless of any
+    # intermediate dtype promotion. .astype converts values and variances. MARS has
+    # no proton-charge division, so this is already float32; the cast keeps the two
+    # CCD pipelines symmetric and is robust to future changes.
+    transmission = transmission.astype("float32")
 
     # Write output
     metadata = {
@@ -179,6 +208,11 @@ def run_mars_ccd_pipeline(  # noqa: C901
 
     if roi:
         metadata["roi_applied"] = roi
+
+    if background_roi is not None:
+        metadata["background_roi"] = (
+            list(background_roi[0]) if len(background_roi) == 1 else [list(b) for b in background_roi]
+        )
 
     if output_path.suffix.lower() in (".hdf5", ".h5"):
         write_hdf5(output_path, transmission, dead_pixel_mask="dead_pixels", metadata=metadata)

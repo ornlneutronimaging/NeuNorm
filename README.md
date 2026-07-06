@@ -1,8 +1,9 @@
 # NeuNorm 2.0 - Modern Neutron Imaging Normalization
 
 [![PyPI version](https://badge.fury.io/py/NeuNorm.svg)](https://badge.fury.io/py/NeuNorm)
+[![codecov](https://codecov.io/gh/ornlneutronimaging/NeuNorm/branch/next/graph/badge.svg)](https://codecov.io/gh/ornlneutronimaging/NeuNorm)
 [![Documentation Status](https://readthedocs.org/projects/neunorm/badge/?version=latest)](http://neunorm.readthedocs.io/en/latest/?badge=latest)
-[![DOI](https://zenodo.org/badge/97755175.svg)](https://zenodo.org/badge/latestdoi/97755175)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20753780.svg)](https://doi.org/10.5281/zenodo.20753780)
 [![DOI](http://joss.theoj.org/papers/10.21105/joss.00815/status.svg)](https://doi.org/10.21105/joss.00815)
 
 NeuNorm normalizes neutron imaging data and processes time-of-flight (TOF) data
@@ -123,9 +124,9 @@ Where:
 
 | Detector Type | Dark Correction | Beam Correction | Hot Pixels |
 |---------------|-----------------|-----------------|------------|
-| CCD/CMOS | Required | Time or p_charge | Not needed |
+| CCD/CMOS | Optional | Time or p_charge | Not needed |
 | TPX1 (histogram) | Not needed | p_charge or shutter | Not needed |
-| TPX3 (event/histogram) | Not needed | p_charge | Required |
+| TPX3 (event/histogram) | Not needed | p_charge (VENUS); none (MARS) | Required |
 
 ### Uncertainty Propagation
 
@@ -174,7 +175,7 @@ This enables **hyperspectral imaging** with wavelength-resolved transmission T(Î
 
 - **Data Models**: Pydantic v2 for validation
 - **Array Processing**: scipp with automatic variance propagation
-- **TIFF I/O**: scitiff (scipp ecosystem)
+- **TIFF I/O**: Pillow (input), scitiff (output)
 - **Performance**: Numba JIT for hot paths (optional, via the `performance` extra)
 - **Testing**: pytest with coverage
 

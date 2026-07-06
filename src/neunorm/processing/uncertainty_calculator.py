@@ -98,8 +98,8 @@ def add_systematic_variance(data: sc.DataArray, relative_uncertainty: float) -> 
 
     Examples
     --------
-    >>> data = sc.DataArray(data=sc.array(dims=['x'], values=[100, 200], unit='counts'))
-    >>> data.variances = np.array([100, 200])  # Poisson
+    >>> data = sc.DataArray(data=sc.array(dims=['x'], values=[100.0, 200.0], unit='counts'))
+    >>> data.variances = np.array([100.0, 200.0])  # Poisson (float data required for variances)
     >>> # Add 0.5% systematic (e.g., proton charge)
     >>> data_sys = add_systematic_variance(data, 0.005)
     >>> # var_total = 100 + (0.005*100)² = 100.25
@@ -143,8 +143,8 @@ def get_uncertainty(data: sc.DataArray) -> sc.DataArray:
 
     Examples
     --------
-    >>> data = sc.DataArray(data=sc.array(dims=['x'], values=[100], unit='counts'))
-    >>> data.variances = np.array([100])
+    >>> data = sc.DataArray(data=sc.array(dims=['x'], values=[100.0], unit='counts'))
+    >>> data.variances = np.array([100.0])  # float data required for variances
     >>> uncertainty = get_uncertainty(data)
     >>> print(uncertainty.values)  # [10.0]
     """
@@ -175,8 +175,8 @@ def get_relative_uncertainty(data: sc.DataArray) -> sc.DataArray:
 
     Examples
     --------
-    >>> data = sc.DataArray(data=sc.array(dims=['x'], values=[100, 400], unit='counts'))
-    >>> data.variances = np.array([100, 400])  # Poisson
+    >>> data = sc.DataArray(data=sc.array(dims=['x'], values=[100.0, 400.0], unit='counts'))
+    >>> data.variances = np.array([100.0, 400.0])  # Poisson (float data required for variances)
     >>> rel_unc = get_relative_uncertainty(data)
     >>> # For Poisson: σ/N = √N/N = 1/√N
     >>> print(rel_unc.values)  # [0.1, 0.05]

@@ -1,3 +1,4 @@
+import json
 import tempfile
 from pathlib import Path
 
@@ -203,13 +204,13 @@ class TestVenusTPX1Pipeline:
 
         # Check extra metadata
         extra = dg["extra"]
-        assert len(extra["sample_tiff_paths"].values) == 5
-        assert len(extra["ob_tiff_paths"].values) == 5
-        assert len(extra["sample_hdf5_paths"].values) == 1
-        assert len(extra["ob_hdf5_paths"].values) == 1
+        assert json.loads(extra["sample_tiff_paths"]) == [[str(p) for p in self.sample_tiff_paths]]
+        assert json.loads(extra["ob_tiff_paths"]) == [[str(p) for p in self.ob_tiff_paths]]
+        assert json.loads(extra["sample_hdf5_paths"]) == [str(self.sample_nexus_path)]
+        assert json.loads(extra["ob_hdf5_paths"]) == [str(self.ob_nexus_path)]
 
         assert "processing_timestamp" in extra
-        np.testing.assert_equal(extra["roi_applied"].value, (5, 5, 25, 25))
+        np.testing.assert_equal(json.loads(extra["roi_applied"]), (5, 5, 25, 25))
         assert extra["version"] == __version__
 
     def test_venus_tpx1_pipeline_spatial_rebin(self):

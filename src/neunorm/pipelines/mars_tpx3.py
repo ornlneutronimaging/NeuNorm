@@ -11,11 +11,12 @@ import scipp as sc
 from loguru import logger
 
 from neunorm import __version__
+from neunorm.data_models.roi import ROILike, as_roi_bounds
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
 from neunorm.loaders.event_loader import load_event_nexus
-from neunorm.processing.normalizer import normalize_transmission
+from neunorm.processing.normalizer import BackgroundROILike, as_roi_bounds_list, normalize_transmission
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.run_combiner import combine_runs
@@ -27,9 +28,10 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     sample_paths: Sequence[Sequence[str | Path]],
     ob_paths: Sequence[Sequence[str | Path]],
     output_path: Path,
-    roi: Optional[tuple] = None,
+    roi: Optional[ROILike] = None,
     gamma_filter: bool = True,
     detector_shape: tuple[int, int] = (514, 514),
+    background_roi: Optional[BackgroundROILike] = None,
 ) -> sc.DataArray:
     """Execute MARS TPX3 normalization pipeline.
 
@@ -55,11 +57,17 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     output_path : Path
         Path to save the output file (HDF5 or TIFF)
     roi : Optional[tuple]
-        Region of interest to apply (x_start, y_start, x_end, y_end)
+        Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
     gamma_filter : bool
         Whether to apply gamma filtering to the sample data (default: True)
     detector_shape : tuple[int, int]
         Shape of the TPX3 detector (default: (514, 514))
+    background_roi : ROI/tuple or a sequence of them
+        Sample-free background region(s) — one ROI or a pooled sequence of ROIs (see
+        ``normalize_transmission``) — for flux-proxy normalization when proton charge is
+        unavailable. Mutually exclusive with proton-charge correction. If
+        ``roi`` is also given the detector is cropped first, so ``background_roi`` indices are
+        resolved in the post-crop frame.
 
     Notes
     -----
@@ -71,6 +79,12 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     sc.DataArray
         Final normalized transmission DataArray with metadata and masks
     """
+    # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
+    # tuples up front so cropping and provenance see a consistent form.
+    if roi is not None:
+        roi = as_roi_bounds(roi)
+    if background_roi is not None:
+        background_roi = as_roi_bounds_list(background_roi)
 
     # Load data and convert to histogram
     samples = [
@@ -116,8 +130,8 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     if gamma_filter:
         sample = apply_gamma_filter(sample)
 
-    # Normalization
-    transmission = normalize_transmission(sample, ob)
+    # Normalization (background_roi flux proxy when provided)
+    transmission = normalize_transmission(sample, ob, background_roi=background_roi)
 
     # Write output
     metadata = {
@@ -130,6 +144,11 @@ def run_mars_tpx3_pipeline(  # noqa: C901
 
     if roi:
         metadata["roi_applied"] = roi
+
+    if background_roi is not None:
+        metadata["background_roi"] = (
+            list(background_roi[0]) if len(background_roi) == 1 else [list(b) for b in background_roi]
+        )
 
     if output_path.suffix.lower() in (".hdf5", ".h5"):
         write_hdf5(

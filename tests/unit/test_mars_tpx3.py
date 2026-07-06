@@ -1,3 +1,4 @@
+import json
 import tempfile
 from pathlib import Path
 
@@ -132,11 +133,11 @@ class TestMarsTPX3Pipeline:
                 np.testing.assert_equal(hf["masks/dead"], np.zeros((32, 32), dtype=bool))
                 assert "masks/hot" in hf
                 np.testing.assert_equal(hf["masks/hot"], np.zeros((32, 32), dtype=bool))
-                # Check metadata
+                # Check metadata (nested per-run paths stored as round-trippable JSON)
                 assert "metadata/sample_paths" in hf
-                np.testing.assert_equal(hf["metadata/sample_paths"].asstr()[:], [[str(p) for p in self.sample_paths]])
+                assert json.loads(hf["metadata/sample_paths"].asstr()[()]) == [[str(p) for p in self.sample_paths]]
                 assert "metadata/ob_paths" in hf
-                np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[:], [[str(p) for p in self.ob_paths]])
+                assert json.loads(hf["metadata/ob_paths"].asstr()[()]) == [[str(p) for p in self.ob_paths]]
                 assert "metadata/gamma_filter_applied" in hf
                 np.testing.assert_equal(hf["metadata/gamma_filter_applied"][()], True)
                 assert "metadata/processing_timestamp" in hf
@@ -193,12 +194,12 @@ class TestMarsTPX3Pipeline:
 
         # Check extra metadata
         extra = dg["extra"]
-        assert len(extra["sample_paths"].values) == 5
-        assert len(extra["ob_paths"].values) == 3
+        assert json.loads(extra["sample_paths"]) == [[str(p) for p in self.sample_paths]]
+        assert json.loads(extra["ob_paths"]) == [[str(p) for p in self.ob_paths]]
         assert extra["gamma_filter_applied"]
 
         assert "processing_timestamp" in extra
-        np.testing.assert_equal(extra["roi_applied"].value, (5, 5, 25, 25))
+        np.testing.assert_equal(json.loads(extra["roi_applied"]), (5, 5, 25, 25))
         assert extra["version"] == __version__
 
     def test_mars_tpx3_pipeline_dark_and_hot_pixels(self):
@@ -268,3 +269,27 @@ class TestMarsTPX3Pipeline:
 
         # The variances should be less than the variance from a single run due to combining multiple runs
         np.testing.assert_allclose(transmission.variances, 0.004, atol=0.001)
+
+    def test_mars_tpx3_pipeline_background_roi(self):
+        """background_roi flux normalization runs end-to-end on TPX3 and changes the result."""
+        with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+            output_path = Path(f.name)
+            t_default = run_mars_tpx3_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                detector_shape=(32, 32),
+                gamma_filter=False,
+            )
+            t_bg = run_mars_tpx3_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                detector_shape=(32, 32),
+                gamma_filter=False,
+                background_roi=(0, 0, 8, 8),
+            )
+        assert str(t_bg.unit) == "dimensionless"
+        # spatially-uniform images -> background-ROI normalization cancels to T = 1 everywhere
+        np.testing.assert_allclose(t_bg.values, 1.0, rtol=1e-5)
+        assert not np.allclose(t_bg.values, t_default.values)

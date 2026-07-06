@@ -1,3 +1,4 @@
+import json
 import tempfile
 from pathlib import Path
 
@@ -119,7 +120,7 @@ class TestMarsCCDPipeline:
                 # check that transmission values are correct based on the formula
                 # T = (S - AVERAGE(D)) / (AVERAGE(OB) - AVERAGE(D))
                 for i in range(5):
-                    np.testing.assert_allclose(hf["transmission"][i], (81 + i - 5) / (100 - 5))
+                    np.testing.assert_allclose(hf["transmission"][i], (81 + i - 5) / (100 - 5), rtol=1e-5)
                 assert hf["transmission"].attrs["units"] == "dimensionless"
                 assert hf["transmission"].dtype == np.float32
                 # Check uncertainty data exists and is reasonable
@@ -134,13 +135,13 @@ class TestMarsCCDPipeline:
                 # Check masks
                 assert "masks/dead" in hf
                 np.testing.assert_equal(hf["masks/dead"], np.zeros((32, 32), dtype=bool))
-                # Check metadata
+                # Check metadata (nested per-run paths stored as round-trippable JSON)
                 assert "metadata/sample_paths" in hf
-                np.testing.assert_equal(hf["metadata/sample_paths"].asstr()[:], [[str(p) for p in self.sample_paths]])
+                assert json.loads(hf["metadata/sample_paths"].asstr()[()]) == [[str(p) for p in self.sample_paths]]
                 assert "metadata/ob_paths" in hf
-                np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[:], [[str(p) for p in self.ob_paths]])
+                assert json.loads(hf["metadata/ob_paths"].asstr()[()]) == [[str(p) for p in self.ob_paths]]
                 assert "metadata/dark_paths" in hf
-                np.testing.assert_equal(hf["metadata/dark_paths"].asstr()[:], [[str(p) for p in self.dark_paths]])
+                assert json.loads(hf["metadata/dark_paths"].asstr()[()]) == [[str(p) for p in self.dark_paths]]
                 assert "metadata/dark_correction_applied" in hf
                 np.testing.assert_equal(hf["metadata/dark_correction_applied"][()], True)
                 assert "metadata/gamma_filter_applied" in hf
@@ -190,7 +191,7 @@ class TestMarsCCDPipeline:
         # check that transmission values are correct based on the formula
         # T = (S - AVERAGE(D)) / (AVERAGE(OB) - AVERAGE(D))
         for i in range(5):
-            np.testing.assert_allclose(image.values[i], (81 + i - 5) / (100 - 5))
+            np.testing.assert_allclose(image.values[i], (81 + i - 5) / (100 - 5), rtol=1e-5)
         # Check uncertainty data exists and is reasonable
         np.testing.assert_allclose(image.variances, 0.011, rtol=0.15)
         assert "scitiff-mask" in image.masks
@@ -206,13 +207,13 @@ class TestMarsCCDPipeline:
 
         # Check extra metadata
         extra = dg["extra"]
-        assert len(extra["sample_paths"].values) == 5
-        assert len(extra["ob_paths"].values) == 3
-        assert len(extra["dark_paths"].values) == 2
+        assert json.loads(extra["sample_paths"]) == [[str(p) for p in self.sample_paths]]
+        assert json.loads(extra["ob_paths"]) == [[str(p) for p in self.ob_paths]]
+        assert json.loads(extra["dark_paths"]) == [[str(p) for p in self.dark_paths]]
         assert extra["gamma_filter_applied"]
 
         assert "processing_timestamp" in extra
-        np.testing.assert_equal(extra["roi_applied"].value, (5, 5, 25, 25))
+        np.testing.assert_equal(json.loads(extra["roi_applied"]), (5, 5, 25, 25))
         assert extra["version"] == __version__
 
     def test_mars_ccd_pipeline_dark_gamma_spike_pixels(self):
@@ -239,7 +240,7 @@ class TestMarsCCDPipeline:
             expected_value = np.full((20, 20), (81 + i - 5) / (100 - 5))
             expected_value[22 - 5, 8 - 5] = 0  # dead pixel should be zero after dark subtraction and normalization
             # gamma spike should be replaced with the same values from that image
-            np.testing.assert_allclose(transmission.values[i], expected_value)
+            np.testing.assert_allclose(transmission.values[i], expected_value, rtol=1e-5)
 
         # check that the variances are higher for the gamma spike pixel and near zero for the dead pixel
         approximate_variances = np.full((5, 20, 20), 0.011)
@@ -281,7 +282,7 @@ class TestMarsCCDPipeline:
         # by the number of runs, so it should not change the final transmission values, just reduce the variance.
         for i in range(5):
             expected_value = np.full((20, 20), ((81 + i) - 5) / (100 - 5))
-            np.testing.assert_allclose(transmission.values[i], expected_value)
+            np.testing.assert_allclose(transmission.values[i], expected_value, rtol=1e-5)
 
         # check that the variances exist and are reasonable
         np.testing.assert_allclose(transmission.variances, 0.004, atol=0.002)
@@ -317,7 +318,7 @@ class TestMarsCCDPipeline:
         )  # should be unchanged since it's the same for both runs
 
     def test_mars_ccd_pipeline_no_dark(self):
-        """Dark current is optional (issue #146): omitting dark_paths skips dark correction.
+        """Dark current is optional: omitting dark_paths skips dark correction.
 
         Without dark subtraction the transmission is T = S / OB = (81 + i) / 100
         for these fixtures (vs (81 + i - 5) / (100 - 5) with dark). MARS does not
@@ -339,7 +340,7 @@ class TestMarsCCDPipeline:
                 assert hf["transmission"].shape == (5, 32, 32)
                 # No dark subtraction: T = S / OB = (81 + i) / 100
                 for i in range(5):
-                    np.testing.assert_allclose(hf["transmission"][i], (81 + i) / 100)
+                    np.testing.assert_allclose(hf["transmission"][i], (81 + i) / 100, rtol=1e-5)
                 # Uncertainty is present, positive and finite
                 assert "uncertainty" in hf
                 assert np.all(np.isfinite(hf["uncertainty"][:]))
@@ -350,7 +351,7 @@ class TestMarsCCDPipeline:
                 assert "metadata/dark_paths" not in hf
 
     def test_mars_ccd_pipeline_empty_dark_paths(self):
-        """An empty dark_paths list is treated the same as omitting dark (issue #146)."""
+        """An empty dark_paths list is treated the same as omitting dark."""
         with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
             transmission = run_mars_ccd_pipeline(
                 sample_paths=[self.sample_paths],
@@ -360,7 +361,7 @@ class TestMarsCCDPipeline:
             )
         assert transmission.shape == (5, 32, 32)
         for i in range(5):
-            np.testing.assert_allclose(transmission.values[i], (81 + i) / 100)
+            np.testing.assert_allclose(transmission.values[i], (81 + i) / 100, rtol=1e-5)
 
     def test_mars_ccd_pipeline_requires_output_path(self):
         """output_path is required even though it carries a default for signature compatibility."""
@@ -371,7 +372,7 @@ class TestMarsCCDPipeline:
             )
 
     def test_mars_ccd_pipeline_no_dark_uncertainty(self):
-        """No-dark UQ equals the dark-free propagation, with no dark-frame variance term (issue #146).
+        """No-dark UQ equals the dark-free propagation, with no dark-frame variance term.
 
         Two independent checks:
         1. The pipeline's no-dark output (values AND variances) matches a direct
@@ -414,6 +415,10 @@ class TestMarsCCDPipeline:
         )
         ob = prepare_reference(ob, dim="N_image")
         expected = normalize_transmission(sample, ob)
+        # The pipeline produces float32 normalized data end-to-end. MARS
+        # has no proton-charge division, so loaders being float32 keeps the whole path
+        # float32 and this structural check stays bit-tight against the pipeline output.
+        assert no_dark.dtype == sc.DType.float32
         np.testing.assert_allclose(no_dark.values, expected.values)
         np.testing.assert_allclose(no_dark.variances, expected.variances)
 
@@ -435,6 +440,7 @@ class TestMarsCCDPipeline:
                 output_path=Path(f.name),
                 gamma_filter=False,
             )
+        assert with_dark.dtype == sc.DType.float32
         assert np.all(no_dark.variances < with_dark.variances)
 
 
@@ -507,7 +513,7 @@ class TestMarsCCDPipelineFITS:
                 # check that transmission values are correct based on the formula
                 # T = (S - AVERAGE(D)) / (AVERAGE(OB) - AVERAGE(D))
                 for i in range(5):
-                    np.testing.assert_allclose(hf["transmission"][i], (81 + i - 5) / (100 - 5))
+                    np.testing.assert_allclose(hf["transmission"][i], (81 + i - 5) / (100 - 5), rtol=1e-5)
                 assert hf["transmission"].attrs["units"] == "dimensionless"
                 assert hf["transmission"].dtype == np.float32
                 # Check uncertainty data exists and is reasonable
@@ -522,13 +528,13 @@ class TestMarsCCDPipelineFITS:
                 # Check masks
                 assert "masks/dead" in hf
                 np.testing.assert_equal(hf["masks/dead"], np.zeros((32, 32), dtype=bool))
-                # Check metadata
+                # Check metadata (nested per-run paths stored as round-trippable JSON)
                 assert "metadata/sample_paths" in hf
-                np.testing.assert_equal(hf["metadata/sample_paths"].asstr()[()], [[str(p) for p in self.sample_paths]])
+                assert json.loads(hf["metadata/sample_paths"].asstr()[()]) == [[str(p) for p in self.sample_paths]]
                 assert "metadata/ob_paths" in hf
-                np.testing.assert_equal(hf["metadata/ob_paths"].asstr()[()], [[str(p) for p in self.ob_paths]])
+                assert json.loads(hf["metadata/ob_paths"].asstr()[()]) == [[str(p) for p in self.ob_paths]]
                 assert "metadata/dark_paths" in hf
-                np.testing.assert_equal(hf["metadata/dark_paths"].asstr()[()], [[str(p) for p in self.dark_paths]])
+                assert json.loads(hf["metadata/dark_paths"].asstr()[()]) == [[str(p) for p in self.dark_paths]]
                 assert "metadata/gamma_filter_applied" in hf
                 np.testing.assert_equal(hf["metadata/gamma_filter_applied"][()], True)
                 assert "metadata/processing_timestamp" in hf
@@ -542,3 +548,133 @@ class TestMarsCCDPipelineFITS:
                 np.testing.assert_equal(hf["EXPOSURETIME"][()], 30)
                 assert "MODEL" in hf
                 np.testing.assert_equal(hf["MODEL"].asstr()[()], "DW936_BV")
+
+    def test_mars_ccd_pipeline_background_roi(self):
+        """background_roi flux normalization runs end-to-end and changes the result."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            t_default = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths], ob_paths=[self.ob_paths], output_path=output_path, gamma_filter=False
+            )
+            t_bg = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=(0, 0, 8, 8),
+            )
+        assert str(t_bg.unit) == "dimensionless"
+        assert t_bg.shape == (5, 32, 32)
+        assert t_bg.dtype == np.float32
+        # spatially-uniform images -> background-ROI normalization cancels to T = 1 everywhere
+        np.testing.assert_allclose(t_bg.values, 1.0, rtol=1e-5)
+        # and it differs from the plain S/OB normalization
+        assert not np.allclose(t_bg.values, t_default.values)
+
+    def test_mars_ccd_pipeline_background_roi_with_dark(self):
+        """background_roi + a dark frame routes through normalize_with_dark."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            t = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                dark_paths=[self.dark_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=(0, 0, 8, 8),
+            )
+        assert str(t.unit) == "dimensionless"
+        assert t.shape == (5, 32, 32)
+        # uniform images -> background-ROI normalization cancels to T = 1 even after dark subtraction
+        np.testing.assert_allclose(t.values, 1.0, rtol=1e-5)
+
+    def test_mars_ccd_pipeline_background_roi_accepts_roi_object(self):
+        """A background_roi ROI yields the same transmission as the equivalent tuple."""
+        from neunorm.data_models.roi import ROI
+
+        with (
+            tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f1,
+            tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f2,
+        ):
+            t_tuple = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=Path(f1.name),
+                gamma_filter=False,
+                background_roi=(0, 0, 8, 8),
+            )
+            # width/height form, resolved to the same (0, 0, 8, 8) bounds
+            t_roi = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=Path(f2.name),
+                gamma_filter=False,
+                background_roi=ROI(x0=0, y0=0, width=8, height=8),
+            )
+        np.testing.assert_array_equal(t_tuple.values, t_roi.values)
+
+    def test_mars_ccd_pipeline_crop_roi_accepts_roi_object(self):
+        """A crop roi=ROI(...) crops correctly AND is coerced to a tuple in the written provenance.
+
+        Guards the pipeline-level coercion specifically: ``apply_roi`` coerces internally (so the
+        shape is right regardless), and the HDF5 writer would NOT crash on a raw ROI — it would
+        str()-coerce it via the JSON backstop (``encoding="json"``). So we round-trip
+        ``roi_applied`` and assert it is the native int array (the coerced tuple), which fails if a
+        raw ROI ever reaches provenance.
+        """
+        from neunorm.data_models.roi import ROI
+
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            t = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                roi=ROI(x0=5, y0=5, x1=25, y1=25),
+            )
+            assert t.shape == (5, 20, 20)
+            with h5py.File(output_path, "r") as hf:
+                ds = hf["metadata/roi_applied"]
+                # stored as a native int array (the coerced tuple), NOT the JSON str(ROI) fallback
+                assert ds.attrs.get("encoding") != "json"
+                np.testing.assert_array_equal(ds[()], [5, 5, 25, 25])
+
+    def test_mars_ccd_pipeline_pooled_background_rois(self):
+        """background_roi accepts a pooled SEQUENCE of ROIs end-to-end (#172); provenance stores the list."""
+        from neunorm.data_models.roi import ROI
+
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            t = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=[ROI(x0=0, y0=0, width=8, height=8), ROI(x0=10, y0=10, width=8, height=8)],
+            )
+            assert t.shape == (5, 32, 32)
+            # uniform images -> the pooled flux proxy still cancels to T = 1
+            np.testing.assert_allclose(t.values, 1.0, rtol=1e-5)
+            with h5py.File(output_path, "r") as hf:
+                # a pooled (multi-ROI) list is stored as a nested list; write_hdf5 JSON-encodes it
+                # WITH the encoding="json" marker (matching the writer's provenance convention).
+                ds = hf["metadata/background_roi"]
+                assert ds.attrs.get("encoding") == "json"
+                assert json.loads(ds.asstr()[()]) == [[0, 0, 8, 8], [10, 10, 18, 18]]
+
+    def test_mars_ccd_pipeline_single_background_roi_provenance_is_flat(self):
+        """A single background_roi keeps the pre-#172 flat int-array provenance (backward compatible)."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=(0, 0, 8, 8),
+            )
+            with h5py.File(output_path, "r") as hf:
+                ds = hf["metadata/background_roi"]
+                assert ds.attrs.get("encoding") != "json"  # native int array, not the JSON backstop
+                np.testing.assert_array_equal(ds[()], [0, 0, 8, 8])
