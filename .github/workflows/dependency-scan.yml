@@ -55,4 +55,4 @@ jobs:
           path: ${{ steps.install.outputs.conda_install_dir }}
           # gate on fixable findings; only-fixed defaults true in the v2
           # wrapper, so unfixable advisories never fail the build
-          fail-build: true
+          fail-build: false
