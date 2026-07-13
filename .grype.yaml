@@ -32,3 +32,13 @@ ignore:
   - vulnerability: CVE-2026-12003
     package:
       name: python
+  # high; fixed in 3.15.0, no stable 3.14 conda-forge backport yet
+  - vulnerability: CVE-2026-15308 # high
+    package:
+      name: python
+  # pydantic 2.13.4 is the newest conda-forge build; the fix is in 2.14.2,
+  # not yet packaged on conda-forge. Remove once conda-forge ships >= 2.14.2
+  # (the lockfile-update workflow will pick it up).
+  - vulnerability: CVE-2026-58203 # medium
+    package:
+      name: pydantic
