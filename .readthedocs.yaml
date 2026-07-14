@@ -1,17 +1,28 @@
+---
 version: 2
 
+# Build docs through pixi so the docs env resolves the same locked, tested
+# dependencies as CI (pixi.lock), instead of a bare `pip install .[docs]`.
+# Read the Docs-official pixi route:
+# https://docs.readthedocs.com/platform/stable/build-customization.html
 build:
   os: ubuntu-24.04
   tools:
-    python: "3.12"
+    # Bootstrap interpreter only; pixi provides the real docs environment.
+    python: "latest"
+  jobs:
+    create_environment:
+      - asdf plugin add pixi
+      - asdf install pixi latest
+      - asdf global pixi latest
+    install:
+      # --frozen: use pixi.lock exactly (fail loudly on drift).
+      - pixi install --frozen -e docs
+    build:
+      html:
+        # -W keeps warnings-as-errors (old sphinx.fail_on_warning, which is
+        # ignored under build.jobs.build.html); --keep-going collects them all.
+        - pixi run -e docs sphinx-build -T -b html -W --keep-going docs $READTHEDOCS_OUTPUT/html  # yamllint disable-line rule:line-length
 
 sphinx:
   configuration: docs/conf.py
-  fail_on_warning: true
-
-python:
-  install:
-    - method: pip
-      path: .
-      extra_requirements:
-        - docs
