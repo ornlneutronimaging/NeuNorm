@@ -173,6 +173,10 @@ default = { features = [
   "test",
   "viz",
 ], solve-group = "default" }
+# Slim environment used by the Read the Docs pixi build (`pixi install -e docs`).
+# Shares the "default" solve-group so scitiff/pydantic/scipp resolve identically
+# to the tested default env instead of floating via pip.
+docs = { features = ["docs"], solve-group = "default" }
 jupyter = { features = [
   "developer",
   "jupyter",
