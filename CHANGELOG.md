@@ -5,6 +5,32 @@ All notable changes to NeuNorm are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.3] - 2026-07-14
+
+Maintenance release — CI, documentation-build, and dependency updates only. There are
+**no `neunorm` library or API changes** since 2.2.2; the PyPI and conda artifacts are
+functionally identical to 2.2.2.
+
+### Fixed
+
+- **Read the Docs builds reliably again.** The documentation now builds through pixi
+  (`pixi install -e docs` + `pixi run -e docs sphinx-build`, the Read the Docs-official
+  route) so it resolves the same locked, tested dependencies as CI instead of a bare
+  `pip install .[docs]`, which floated `scitiff`/`pydantic` to an untested combination and
+  broke autodoc at import.
+  ([#184](https://github.com/ornlneutronimaging/NeuNorm/pull/184))
+
+### Changed
+
+- CI and security hardening: GitHub Actions pinned to full commit SHAs with version
+  comments, `setup-pixi` bumped, Grype switched to a non-blocking SARIF upload, lockfile
+  update PRs authored via a GitHub App token, and accepted upstream CVEs recorded in
+  `.grype.yaml`.
+  ([#178](https://github.com/ornlneutronimaging/NeuNorm/pull/178),
+  [#179](https://github.com/ornlneutronimaging/NeuNorm/pull/179),
+  [#181](https://github.com/ornlneutronimaging/NeuNorm/pull/181),
+  [#183](https://github.com/ornlneutronimaging/NeuNorm/pull/183))
+
 ## [2.2.2] - 2026-07-02
 
 ### Fixed
