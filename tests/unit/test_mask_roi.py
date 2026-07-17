@@ -238,3 +238,179 @@ class TestLegacyHelpersHardened:
             as_roi_bounds_list(m)  # not a Sequence -> legacy rejection path
         with pytest.raises(ValueError, match="MaskROI"):
             as_roi_bounds_list([m])  # element path -> hardened as_roi_bounds
+
+
+def _stack(seed=42, base=100, n=3, ny=6, nx=8, unit="counts"):
+    rng = np.random.default_rng(seed)
+    v = rng.poisson(base, size=(n, ny, nx)).astype("float64")
+    return sc.DataArray(sc.array(dims=["N_image", "y", "x"], values=v, variances=v.copy(), unit=unit))
+
+
+def _cross_selection(ny=6, nx=8):
+    """Plus-shaped selection that provably differs from its bounding box (corners excluded)."""
+    sel = np.zeros((ny, nx), dtype=bool)
+    sel[2, 3:6] = True
+    sel[1:4, 4] = True
+    return sel
+
+
+class TestPooledCoefficientMask:
+    """The core #180 contract: a rectangle expressed as a MaskROI matches the sliced rect path."""
+
+    def _rect_and_mask(self, ny=6, nx=8):
+        sel = np.zeros((ny, nx), dtype=bool)
+        sel[1:3, 2:5] = True
+        return (2, 1, 5, 3), MaskROI(selection=sel)
+
+    def test_normalize_transmission_rect_as_mask_matches(self):
+        from neunorm.processing.normalizer import normalize_transmission
+
+        s, o = _stack(1), _stack(2, base=200)
+        rect, mask = self._rect_and_mask()
+        t_rect = normalize_transmission(s, o, background_roi=rect)
+        t_mask = normalize_transmission(s, o, background_roi=mask)
+        np.testing.assert_allclose(t_mask.values, t_rect.values, rtol=1e-12)
+        np.testing.assert_allclose(t_mask.variances, t_rect.variances, rtol=1e-12)
+
+    def test_rect_as_mask_matches_with_dead_pixel_masks(self):
+        from neunorm.processing.normalizer import normalize_transmission
+
+        s, o = _stack(3), _stack(4, base=200)
+        dead = np.zeros((6, 8), dtype=bool)
+        dead[1, 2] = dead[2, 4] = True
+        for da in (s, o):
+            da.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=dead)
+        rect, mask = self._rect_and_mask()
+        t_rect = normalize_transmission(s, o, background_roi=rect)
+        t_mask = normalize_transmission(s, o, background_roi=mask)
+        np.testing.assert_allclose(t_mask.values, t_rect.values, rtol=1e-12)
+        np.testing.assert_allclose(t_mask.variances, t_rect.variances, rtol=1e-12)
+
+    def test_normalize_with_dark_rect_as_mask_matches(self):
+        from neunorm.processing.normalizer import normalize_with_dark
+
+        s, o = _stack(5), _stack(6, base=200)
+        d = _stack(7, base=5)["N_image", 0].copy()
+        rect, mask = self._rect_and_mask()
+        t_rect = normalize_with_dark(s, o, d, background_roi=rect)
+        t_mask = normalize_with_dark(s, o, d, background_roi=mask)
+        np.testing.assert_allclose(t_mask.values, t_rect.values, rtol=1e-12)
+        np.testing.assert_allclose(t_mask.variances, t_rect.variances, rtol=1e-12)
+
+    def test_apply_background_roi_mixed_pooling_matches_two_rects(self):
+        from neunorm.processing.normalizer import apply_background_roi
+
+        s = _stack(8)
+        rect2 = (0, 4, 2, 6)
+        sel2 = np.zeros((6, 8), dtype=bool)
+        sel2[4:6, 0:2] = True
+        a_rects = apply_background_roi(s, [(2, 1, 5, 3), rect2])
+        a_mixed = apply_background_roi(s, [(2, 1, 5, 3), MaskROI(selection=sel2)])
+        np.testing.assert_allclose(a_mixed.values, a_rects.values, rtol=1e-12)
+        np.testing.assert_allclose(a_mixed.variances, a_rects.variances, rtol=1e-12)
+
+    def test_non_rectangular_selection_differs_from_bbox_and_matches_manual(self):
+        from neunorm.processing.normalizer import apply_background_roi
+
+        s = _stack(9)
+        sel = _cross_selection()
+        m = MaskROI(selection=sel)
+        out = apply_background_roi(s, m)
+        bbox_out = apply_background_roi(s, m.bounding_box())
+        assert not np.allclose(out.values, bbox_out.values)  # corners excluded -> different mean
+        # manual pooled mean over the selected pixels, per image
+        coeff = s.values[:, sel].sum(axis=1) / sel.sum()
+        expected = s.values / coeff[:, None, None]
+        np.testing.assert_allclose(out.values, expected, rtol=1e-12)
+
+    def test_mask_selection_pixels_all_dead_strict_raises_nonstrict_propagates(self):
+        from neunorm.processing.normalizer import apply_background_roi
+
+        s = _stack(10)
+        sel = _cross_selection()
+        s.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=sel.copy())  # kill exactly the selection
+        with pytest.raises(ValueError, match="strictly positive"):
+            apply_background_roi(s, MaskROI(selection=sel))
+        out = apply_background_roi(s, MaskROI(selection=sel), strict=False)
+        assert not np.isfinite(out.values).any()  # 0/0 propagates, legacy rect parity
+
+    def test_nan_outside_selection_does_not_leak(self):
+        """Pixels outside the selection may hold NaN/inf without affecting the coefficient."""
+        from neunorm.processing.normalizer import apply_background_roi
+
+        s = _stack(11)
+        sel = _cross_selection()
+        ref = apply_background_roi(s, MaskROI(selection=sel)).copy()
+        vals = s.values.copy()
+        vals[:, 0, 0] = np.nan  # outside the selection AND outside its bbox
+        vals[:, 1, 5] = np.inf  # inside the bbox, outside the selection
+        s2 = sc.DataArray(
+            sc.array(dims=["N_image", "y", "x"], values=vals, variances=s.variances.copy(), unit="counts")
+        )
+        out = apply_background_roi(s2, MaskROI(selection=sel))
+        finite = np.isfinite(out.values)
+        np.testing.assert_allclose(out.values[finite], ref.values[finite], rtol=1e-12)
+        # the coefficient itself was unaffected: all selected pixels stay finite
+        assert np.isfinite(out.values[:, sel]).all()
+
+    def test_shape_mismatch_raises_valueerror(self):
+        from neunorm.processing.normalizer import normalize_transmission
+
+        s, o = _stack(12), _stack(13, base=200)
+        with pytest.raises(ValueError, match="does not match"):
+            normalize_transmission(s, o, background_roi=MaskROI(selection=np.ones((4, 4), dtype=bool)))
+
+    def test_user_mask_named_region_sel_not_clobbered(self):
+        from neunorm.processing.normalizer import apply_background_roi
+
+        s = _stack(14)
+        # a user mask that would collide with the internal name: masks one selected pixel
+        user = np.zeros((6, 8), dtype=bool)
+        user[2, 4] = True
+        s.masks["_region_sel"] = sc.array(dims=["y", "x"], values=user)
+        sel = _cross_selection()
+        out = apply_background_roi(s, MaskROI(selection=sel))
+        # expected: pooled mean over selected & ~user (the user mask must stay in force)
+        keep = sel & ~user
+        coeff = s.values[:, keep].sum(axis=1) / keep.sum()
+        np.testing.assert_allclose(out.values, s.values / coeff[:, None, None], rtol=1e-12)
+
+
+class TestSharedDarkCovarianceMask:
+    def test_covariance_matches_hand_computed_oracle(self):
+        """Cov = sum Var(D) over (sel & unmasked_s & unmasked_o) / (n_s * n_o), per design."""
+        from neunorm.processing.dark_corrector import subtract_dark
+        from neunorm.processing.normalizer import _roi_dark_mean_covariance
+
+        s, o = _stack(15), _stack(16, base=200)
+        d = _stack(17, base=5)["N_image", 0].copy()
+        dead_s = np.zeros((6, 8), dtype=bool)
+        dead_s[2, 4] = True
+        s.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=dead_s)
+        sel = _cross_selection()
+        s_dc, o_dc = subtract_dark(s, d), subtract_dark(o, d)
+        cov = _roi_dark_mean_covariance(s_dc, o_dc, d, [MaskROI(selection=sel)])
+        keep_s = sel & ~dead_s
+        keep_o = sel
+        n_s, n_o = keep_s.sum(), keep_o.sum()
+        expected = d.variances[keep_s & keep_o].sum() / (n_s * n_o)
+        np.testing.assert_allclose(float(sc.values(cov).min().value), expected, rtol=1e-12)
+        np.testing.assert_allclose(float(sc.values(cov).max().value), expected, rtol=1e-12)
+
+    def test_covariance_rect_as_mask_matches_rect(self):
+        from neunorm.processing.dark_corrector import subtract_dark
+        from neunorm.processing.normalizer import _roi_dark_mean_covariance
+
+        s, o = _stack(18), _stack(19, base=200)
+        d = _stack(20, base=5)["N_image", 0].copy()
+        s_dc, o_dc = subtract_dark(s, d), subtract_dark(o, d)
+        sel = np.zeros((6, 8), dtype=bool)
+        sel[1:3, 2:5] = True
+        cov_rect = _roi_dark_mean_covariance(s_dc, o_dc, d, [(2, 1, 5, 3)])
+        cov_mask = _roi_dark_mean_covariance(s_dc, o_dc, d, [MaskROI(selection=sel)])
+        # The rect path returns a constant per-spectral vector, the mask fast path a scalar — both
+        # broadcast identically downstream (normalize_with_dark equivalence pins that end to end);
+        # compare the broadcast values.
+        rect_vals = np.atleast_1d(sc.values(cov_rect).values)
+        mask_vals = np.broadcast_to(np.atleast_1d(sc.values(cov_mask).values), rect_vals.shape)
+        np.testing.assert_allclose(mask_vals, rect_vals, rtol=1e-12)
