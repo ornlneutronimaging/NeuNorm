@@ -414,3 +414,163 @@ class TestSharedDarkCovarianceMask:
         rect_vals = np.atleast_1d(sc.values(cov_rect).values)
         mask_vals = np.broadcast_to(np.atleast_1d(sc.values(cov_mask).values), rect_vals.shape)
         np.testing.assert_allclose(mask_vals, rect_vals, rtol=1e-12)
+
+
+class TestAirRegionUnified:
+    def test_rect_parity_with_old_sequential_math_unmasked(self):
+        """On unmasked data the pooled mean equals the old sc.mean-based path to allclose."""
+        from neunorm.processing.air_region_corrector import apply_air_region_correction
+
+        t = _stack(21, base=50, unit="dimensionless")
+        rect = (2, 1, 5, 3)
+        out = apply_air_region_correction(t, rect)
+        # old math, computed manually: T / mean(T[air]); var = corrected^2*(Var(T)/T^2 + Var(m)/m^2)
+        x0, y0, x1, y1 = rect
+        air = t.values[:, y0:y1, x0:x1]
+        mean_air = air.mean(axis=(1, 2))
+        var_mean = t.variances[:, y0:y1, x0:x1].sum(axis=(1, 2)) / air[0].size ** 2
+        expected = t.values / mean_air[:, None, None]
+        exp_var = expected**2 * (t.variances / t.values**2 + (var_mean / mean_air**2)[:, None, None])
+        np.testing.assert_allclose(out.values, expected, rtol=1e-12)
+        np.testing.assert_allclose(out.variances, exp_var, rtol=1e-12)
+
+    def test_t_zero_pixel_variance_now_finite(self):
+        """Old formula gave 0*inf = NaN variance at T==0 pixels; pooled path stays finite."""
+        from neunorm.processing.air_region_corrector import apply_air_region_correction
+
+        t = _stack(22, base=50, unit="dimensionless")
+        vals = t.values.copy()
+        vals[:, 0, 0] = 0.0  # outside the air region
+        t2 = sc.DataArray(
+            sc.array(dims=["N_image", "y", "x"], values=vals, variances=t.variances.copy(), unit="dimensionless")
+        )
+        out = apply_air_region_correction(t2, (2, 1, 5, 3))
+        assert np.isfinite(out.variances[:, 0, 0]).all()
+
+    def test_mask_region_true_region_mean_under_dead_pixels(self):
+        """With a dead pixel in the air region the pooled mean is the true region mean."""
+        from neunorm.processing.air_region_corrector import apply_air_region_correction
+
+        t = _stack(23, base=50, unit="dimensionless")
+        dead = np.zeros((6, 8), dtype=bool)
+        dead[2, 4] = True
+        t.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=dead)
+        sel = _cross_selection()
+        out = apply_air_region_correction(t, MaskROI(selection=sel))
+        keep = sel & ~dead
+        coeff = t.values[:, keep].sum(axis=1) / keep.sum()
+        np.testing.assert_allclose(out.values, t.values / coeff[:, None, None], rtol=1e-12)
+
+    def test_fully_masked_row_no_longer_nans_the_region(self):
+        """A fully-dead row inside the air rect used to NaN the sequential mean-of-row-means."""
+        from neunorm.processing.air_region_corrector import apply_air_region_correction
+
+        t = _stack(24, base=50, unit="dimensionless")
+        dead = np.zeros((6, 8), dtype=bool)
+        dead[1, 2:5] = True  # kills the entire first row of the (2,1,5,3) rect
+        t.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=dead)
+        out = apply_air_region_correction(t, (2, 1, 5, 3))
+        assert np.isfinite(out.values).all()
+
+    def test_nonpositive_air_mean_raises_with_air_roi_message(self):
+        from neunorm.processing.air_region_corrector import apply_air_region_correction
+
+        t = _stack(25, base=50, unit="dimensionless")
+        vals = t.values.copy()
+        vals[:, 1:3, 2:5] = 0.0
+        t2 = sc.DataArray(
+            sc.array(dims=["N_image", "y", "x"], values=vals, variances=t.variances.copy(), unit="dimensionless")
+        )
+        with pytest.raises(ValueError, match="air_roi.*strictly positive"):
+            apply_air_region_correction(t2, (2, 1, 5, 3))
+
+    def test_pooled_multiple_air_regions(self):
+        from neunorm.processing.air_region_corrector import apply_air_region_correction
+
+        t = _stack(26, base=50, unit="dimensionless")
+        out = apply_air_region_correction(t, [(2, 1, 5, 3), (0, 4, 2, 6)])
+        sel = np.zeros((6, 8), dtype=bool)
+        sel[1:3, 2:5] = True
+        sel[4:6, 0:2] = True
+        coeff = t.values[:, sel].sum(axis=1) / sel.sum()
+        np.testing.assert_allclose(out.values, t.values / coeff[:, None, None], rtol=1e-12)
+
+
+class TestApplyRoiMask:
+    def test_rect_crop_unchanged(self):
+        from neunorm.processing.roi_clipper import apply_roi
+
+        s = _stack(27)
+        out = apply_roi(s, (2, 1, 5, 3))
+        assert out.sizes["x"] == 3 and out.sizes["y"] == 2
+        assert len(out.masks) == 0
+
+    def test_mask_crop_bbox_plus_outside_roi(self):
+        from neunorm.processing.roi_clipper import apply_roi
+
+        s = _stack(28)
+        sel = _cross_selection()
+        m = MaskROI(selection=sel)
+        out = apply_roi(s, m)
+        x0, y0, x1, y1 = m.bounding_box()
+        assert out.sizes["x"] == x1 - x0 and out.sizes["y"] == y1 - y0
+        assert "outside_roi" in out.masks
+        np.testing.assert_array_equal(out.masks["outside_roi"].values, ~sel[y0:y1, x0:x1])
+        np.testing.assert_allclose(out.values, s.values[:, y0:y1, x0:x1], rtol=0)
+
+    def test_mask_crop_shape_mismatch_raises(self):
+        from neunorm.processing.roi_clipper import apply_roi
+
+        with pytest.raises(ValueError, match="does not match"):
+            apply_roi(_stack(29), MaskROI(selection=np.ones((3, 3), dtype=bool)))
+
+    def test_repeat_mask_crop_ors_exclusions(self):
+        from neunorm.processing.roi_clipper import apply_roi
+
+        s = _stack(30)
+        sel1 = _cross_selection()
+        out1 = apply_roi(s, MaskROI(selection=sel1))
+        # second mask in the CROPPED frame: keep only the center row of the bbox
+        sel2 = np.zeros((out1.sizes["y"], out1.sizes["x"]), dtype=bool)
+        sel2[1, :] = True
+        out2 = apply_roi(out1, MaskROI(selection=sel2))
+        # exclusion = outside(sel1 bbox slice, re-cropped) OR outside(sel2 within its bbox)
+        assert "outside_roi" in out2.masks
+        # every pixel kept by out2 must have been kept by BOTH selections
+        kept = ~out2.masks["outside_roi"].values
+        x0, y0, x1, y1 = MaskROI(selection=sel1).bounding_box()
+        sel1_crop = sel1[y0:y1, x0:x1]
+        bx0, by0, bx1, by1 = MaskROI(selection=sel2).bounding_box()
+        assert (kept <= (sel1_crop[by0:by1, bx0:bx1] & sel2[by0:by1, bx0:bx1])).all()
+
+    def test_downstream_stats_exclude_outside_pixels(self):
+        """After a mask crop, a rect background_roi is automatically mask-aware."""
+        from neunorm.processing.normalizer import apply_background_roi
+        from neunorm.processing.roi_clipper import apply_roi
+
+        s = _stack(31)
+        sel = _cross_selection()
+        cropped = apply_roi(s, MaskROI(selection=sel))
+        out = apply_background_roi(cropped, (0, 0, cropped.sizes["x"], cropped.sizes["y"]))
+        x0, y0, x1, y1 = MaskROI(selection=sel).bounding_box()
+        sel_crop = sel[y0:y1, x0:x1]
+        pooled = s.values[:, y0:y1, x0:x1][:, sel_crop].sum(axis=1) / sel_crop.sum()
+        np.testing.assert_allclose(out.values, s.values[:, y0:y1, x0:x1] / pooled[:, None, None], rtol=1e-12)
+
+
+class TestHdf5OutsideRoi:
+    def test_outside_roi_mask_persisted(self, tmp_path):
+        import h5py
+
+        from neunorm.exporters.hdf5_writer import write_hdf5
+        from neunorm.processing.roi_clipper import apply_roi
+
+        s = _stack(32)
+        sel = _cross_selection()
+        cropped = apply_roi(s, MaskROI(selection=sel))
+        path = tmp_path / "out.h5"
+        write_hdf5(path, cropped)
+        with h5py.File(path, "r") as f:
+            assert "masks/outside_roi" in f
+            x0, y0, x1, y1 = MaskROI(selection=sel).bounding_box()
+            np.testing.assert_array_equal(f["masks/outside_roi"][()], ~sel[y0:y1, x0:x1])

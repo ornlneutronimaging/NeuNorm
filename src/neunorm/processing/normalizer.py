@@ -90,7 +90,9 @@ def _unique_mask_name(existing, base: str = "_region_sel") -> str:
     return name
 
 
-def _mask_region_view(data: sc.DataArray, region: MaskROI, name: str) -> sc.DataArray:
+def _mask_region_view(
+    data: sc.DataArray, region: MaskROI, name: str, region_arg: str = "background_roi"
+) -> sc.DataArray:
     """Bounding-box view of ``data`` with the region's inverse selection attached as a scipp mask.
 
     The bbox slice keeps temporaries proportional to the region, not the frame; the shallow copy
@@ -99,7 +101,7 @@ def _mask_region_view(data: sc.DataArray, region: MaskROI, name: str) -> sc.Data
     mask-aware reductions used for rectangles yield sum/count over ``selected & unmasked`` pixels.
     """
     if "x" not in data.dims or "y" not in data.dims:
-        raise ValueError(f"{name} must have 'x' and 'y' dimensions for background_roi normalization")
+        raise ValueError(f"{name} must have 'x' and 'y' dimensions for {region_arg} normalization")
     ny, nx = region.shape
     if ny != data.sizes["y"] or nx != data.sizes["x"]:
         raise ValueError(
@@ -117,6 +119,7 @@ def _pooled_roi_coefficient(
     rois_bounds: list,
     name: str,
     strict: bool = True,
+    region_arg: str = "background_roi",
 ) -> sc.Variable:
     """Per-image **pooled** background coefficient over one or more regions (rectangles or masks).
 
@@ -138,12 +141,12 @@ def _pooled_roi_coefficient(
     propagates inf/nan.)
     """
     if "x" not in data.dims or "y" not in data.dims:
-        raise ValueError(f"{name} must have 'x' and 'y' dimensions for background_roi normalization")
+        raise ValueError(f"{name} must have 'x' and 'y' dimensions for {region_arg} normalization")
     total = None
     n_unmasked = None
     for region_spec in rois_bounds:
         if isinstance(region_spec, MaskROI):
-            region = _mask_region_view(data, region_spec, name)
+            region = _mask_region_view(data, region_spec, name, region_arg=region_arg)
             roi_sum = sc.sum(region, dim=["x", "y"]).data  # selected & unmasked (mask-aware)
             roi_n = _masked_ones_count(region)
             total = roi_sum if total is None else total + roi_sum
@@ -151,11 +154,10 @@ def _pooled_roi_coefficient(
             continue
         x0, y0, x1, y1 = region_spec
         if x0 < 0 or y0 < 0 or x1 <= x0 or y1 <= y0:
-            raise ValueError(f"Invalid background_roi ({x0}, {y0}, {x1}, {y1}): need 0 <= x0 < x1 and 0 <= y0 < y1")
+            raise ValueError(f"Invalid {region_arg} ({x0}, {y0}, {x1}, {y1}): need 0 <= x0 < x1 and 0 <= y0 < y1")
         if x1 > data.sizes["x"] or y1 > data.sizes["y"]:
             raise ValueError(
-                f"background_roi ({x0}, {y0}, {x1}, {y1}) exceeds {name} size "
-                f"(x={data.sizes['x']}, y={data.sizes['y']})"
+                f"{region_arg} ({x0}, {y0}, {x1}, {y1}) exceeds {name} size (x={data.sizes['x']}, y={data.sizes['y']})"
             )
         region = data["x", x0:x1]["y", y0:y1]
         roi_sum = sc.sum(region, dim=["x", "y"]).data  # per-spectral (mask-aware; var = sum of unmasked var)
@@ -170,7 +172,7 @@ def _pooled_roi_coefficient(
     coeff = total / n_unmasked
     if strict and (not bool(sc.all(sc.isfinite(coeff)).value) or sc.min(coeff).value <= 0):
         raise ValueError(
-            f"background_roi {name} pooled mean must be strictly positive and finite "
+            f"{region_arg} {name} pooled mean must be strictly positive and finite "
             f"(min={sc.min(coeff).value}); the ROI(s) must contain positive counts in every image"
         )
     return coeff

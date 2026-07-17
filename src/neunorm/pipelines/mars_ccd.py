@@ -11,14 +11,20 @@ import scipp as sc
 from loguru import logger
 
 from neunorm import __version__
-from neunorm.data_models.roi import ROILike, as_roi_bounds
+from neunorm.data_models.roi import (
+    MaskROI,
+    RegionLike,
+    as_region_list,
+    as_region_provenance,
+    as_roi_bounds,
+    region_provenance,
+)
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
 from neunorm.loaders.stack_loader import load_stack
 from neunorm.processing.normalizer import (
     BackgroundROILike,
-    as_roi_bounds_list,
     normalize_transmission,
     normalize_with_dark,
 )
@@ -33,7 +39,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
     ob_paths: Sequence[Sequence[str | Path]],
     dark_paths: Optional[Sequence[Sequence[str | Path]]] = None,
     output_path: Optional[Path] = None,
-    roi: Optional[ROILike] = None,
+    roi: Optional[RegionLike] = None,
     gamma_filter: bool = True,
     background_roi: Optional[BackgroundROILike] = None,
 ) -> sc.DataArray:
@@ -92,9 +98,9 @@ def run_mars_ccd_pipeline(  # noqa: C901
     # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
     # tuples up front so cropping and provenance see a consistent form.
     if roi is not None:
-        roi = as_roi_bounds(roi)
+        roi = roi if isinstance(roi, MaskROI) else as_roi_bounds(roi)
     if background_roi is not None:
-        background_roi = as_roi_bounds_list(background_roi)
+        background_roi = as_region_list(background_roi, arg_name="background_roi")
 
     if output_path is None:
         raise ValueError("output_path is required")
@@ -207,12 +213,10 @@ def run_mars_ccd_pipeline(  # noqa: C901
         metadata["dark_paths"] = [[str(p) for p in run] for run in dark_paths]
 
     if roi:
-        metadata["roi_applied"] = roi
+        metadata["roi_applied"] = region_provenance(roi)
 
     if background_roi is not None:
-        metadata["background_roi"] = (
-            list(background_roi[0]) if len(background_roi) == 1 else [list(b) for b in background_roi]
-        )
+        metadata["background_roi"] = as_region_provenance(background_roi)
 
     if output_path.suffix.lower() in (".hdf5", ".h5"):
         write_hdf5(output_path, transmission, dead_pixel_mask="dead_pixels", metadata=metadata)

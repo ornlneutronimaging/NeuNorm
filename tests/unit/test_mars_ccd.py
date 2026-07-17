@@ -678,3 +678,100 @@ class TestMarsCCDPipelineFITS:
                 ds = hf["metadata/background_roi"]
                 assert ds.attrs.get("encoding") != "json"  # native int array, not the JSON backstop
                 np.testing.assert_array_equal(ds[()], [0, 0, 8, 8])
+
+    def test_mars_ccd_pipeline_mask_background_roi_hdf5_end_to_end(self):
+        """A MaskROI background region runs end-to-end; provenance stores the JSON mask summary (#180)."""
+        from neunorm.data_models.roi import MaskROI
+
+        sel = np.zeros((32, 32), dtype=bool)
+        sel[2:6, 3:9] = True
+        sel[20:25, 20:23] = True  # non-contiguous, non-rectangular union
+        mask = MaskROI(selection=sel)
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            t = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=mask,
+            )
+            # uniform images -> the pooled flux proxy still cancels to T = 1
+            np.testing.assert_allclose(t.values, 1.0, rtol=1e-5)
+            with h5py.File(output_path, "r") as hf:
+                ds = hf["metadata/background_roi"]
+                assert ds.attrs.get("encoding") == "json"
+                stored = json.loads(ds.asstr()[()])
+                assert stored == [{"mask": mask.provenance_summary()}]
+
+    def test_mars_ccd_pipeline_mask_background_roi_pooled_with_rect(self):
+        """Rect + mask pooled in one background_roi list end-to-end; provenance mixes forms."""
+        from neunorm.data_models.roi import ROI, MaskROI
+
+        sel = np.zeros((32, 32), dtype=bool)
+        sel[20:25, 20:23] = True
+        mask = MaskROI(selection=sel)
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            t = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=[ROI(x0=0, y0=0, width=8, height=8), mask],
+            )
+            np.testing.assert_allclose(t.values, 1.0, rtol=1e-5)
+            with h5py.File(output_path, "r") as hf:
+                ds = hf["metadata/background_roi"]
+                assert ds.attrs.get("encoding") == "json"
+                assert json.loads(ds.asstr()[()]) == [[0, 0, 8, 8], {"mask": mask.provenance_summary()}]
+
+    def test_mars_ccd_pipeline_mask_background_roi_tiff_output(self):
+        """The mask provenance survives the TIFF writer (dict-in-list, never a bare dict)."""
+        from scitiff.io import load_scitiff
+
+        from neunorm.data_models.roi import MaskROI
+
+        sel = np.zeros((32, 32), dtype=bool)
+        sel[2:6, 3:9] = True
+        mask = MaskROI(selection=sel)
+        with tempfile.NamedTemporaryFile(suffix=".tiff", delete=True) as f:
+            output_path = Path(f.name)
+            t = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                background_roi=mask,
+            )
+            np.testing.assert_allclose(t.values, 1.0, rtol=1e-5)
+            dg = load_scitiff(output_path)
+            raw = dg["extra"]["background_roi"]
+            stored = json.loads(raw.value if hasattr(raw, "value") else raw)
+            assert stored == [{"mask": mask.provenance_summary()}]
+
+    def test_mars_ccd_pipeline_mask_roi_crop_end_to_end(self):
+        """roi=MaskROI crops to the bbox, persists outside_roi to HDF5, and records JSON provenance."""
+        from neunorm.data_models.roi import MaskROI
+
+        sel = np.zeros((32, 32), dtype=bool)
+        rr, cc = np.ogrid[:32, :32]
+        sel[(rr - 16) ** 2 + (cc - 16) ** 2 <= 64] = True  # disk of radius 8
+        mask = MaskROI(selection=sel)
+        x0, y0, x1, y1 = mask.bounding_box()
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            t = run_mars_ccd_pipeline(
+                sample_paths=[self.sample_paths],
+                ob_paths=[self.ob_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                roi=mask,
+            )
+            assert t.shape == (5, y1 - y0, x1 - x0)
+            assert "outside_roi" in t.masks
+            with h5py.File(output_path, "r") as hf:
+                np.testing.assert_array_equal(hf["masks/outside_roi"][()], ~sel[y0:y1, x0:x1])
+                ds = hf["metadata/roi_applied"]
+                stored = json.loads(ds.asstr()[()])
+                assert stored == {"mask": mask.provenance_summary()}

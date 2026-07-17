@@ -311,6 +311,9 @@ def as_region_list(regions: RegionsLike, arg_name: str = "region") -> list[Union
         )
     if len(regions) == 4 and all(isinstance(i, (int, np.integer)) for i in regions):
         return [_plain_int_bounds(as_roi_bounds(tuple(regions)))]
+    if len(regions) == 4 and all(isinstance(i, (int, float, np.integer, np.floating)) for i in regions):
+        # a 4-number sequence with non-integer entries is a malformed rectangle, not a region list
+        raise ValueError(f"{arg_name} must be a tuple of 4 integers (x0, y0, x1, y1); got {regions!r}")
     if len(regions) == 0:
         raise ValueError(f"{arg_name} list must contain at least one ROI")
     # a bare sequence of ints is a SINGLE rectangle (handled above when len == 4); an int element
@@ -318,3 +321,31 @@ def as_region_list(regions: RegionsLike, arg_name: str = "region") -> list[Union
     if any(isinstance(e, (int, np.integer)) for e in regions):
         raise ValueError(f"{arg_name} must be a tuple of 4 integers (x0, y0, x1, y1); got {regions!r}")
     return [r if isinstance(r, MaskROI) else _plain_int_bounds(as_roi_bounds(r)) for r in regions]
+
+
+def region_provenance(region: Union[tuple, MaskROI]):
+    """JSON-writer-safe provenance for ONE normalized region.
+
+    A rectangle passes through unchanged (the pinned flat ``(x0, y0, x1, y1)`` form); a
+    :class:`MaskROI` becomes a **JSON string** ``'{"mask": {...summary...}}'`` — never a bare dict,
+    which the TIFF metadata writer rejects at export time.
+    """
+    import json
+
+    if isinstance(region, MaskROI):
+        return json.dumps({"mask": region.provenance_summary()})
+    return region
+
+
+def as_region_provenance(regions: list):
+    """JSON-writer-safe provenance for a normalized region list (from :func:`as_region_list`).
+
+    A single rectangle stays a flat ``[x0, y0, x1, y1]`` int list (the pinned HDF5 native form);
+    anything else becomes a list whose entries are ``[x0, y0, x1, y1]`` lists or
+    ``{"mask": {shape, n_selected, source, sha256}}`` dicts — a **list** of dicts JSON-encodes
+    losslessly in both the HDF5 and TIFF writers (a bare top-level dict would not).
+    """
+    entries = [({"mask": r.provenance_summary()} if isinstance(r, MaskROI) else list(r)) for r in regions]
+    if len(entries) == 1 and not isinstance(regions[0], MaskROI):
+        return entries[0]
+    return entries

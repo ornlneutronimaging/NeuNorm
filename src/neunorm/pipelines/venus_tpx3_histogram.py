@@ -11,7 +11,12 @@ import scipp as sc
 from loguru import logger
 
 from neunorm import __version__
-from neunorm.data_models.roi import ROILike, as_roi_bounds
+from neunorm.data_models.roi import (
+    MaskROI,
+    RegionLike,
+    as_roi_bounds,
+    region_provenance,
+)
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.loaders.metadata_loader import load_metadata
@@ -34,8 +39,8 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
     sample_tiff_paths: Sequence[Sequence[str | Path]],
     ob_tiff_paths: Sequence[Sequence[str | Path]],
     output_path: Path,
-    roi: Optional[ROILike] = None,
-    air_roi: Optional[ROILike] = None,
+    roi: Optional[RegionLike] = None,
+    air_roi: Optional[RegionLike] = None,
     rebin_by_tof: Optional[bool | int] = False,
     rebin_by_spatial: Optional[int | tuple[int, int]] = None,
     flight_path: sc.Variable = sc.scalar(VENUS_FLIGHT_PATH_M, unit="m"),
@@ -102,9 +107,9 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
     # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
     # tuples up front so cropping and provenance see a consistent form.
     if roi is not None:
-        roi = as_roi_bounds(roi)
+        roi = roi if isinstance(roi, MaskROI) else as_roi_bounds(roi)
     if air_roi is not None:
-        air_roi = as_roi_bounds(air_roi)
+        air_roi = air_roi if isinstance(air_roi, MaskROI) else as_roi_bounds(air_roi)
 
     # length of hdf5 paths and tiff paths should match for both sample and OB
     if len(sample_hdf5_paths) != len(sample_tiff_paths):
@@ -253,7 +258,7 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
     }
 
     if roi:
-        metadata["roi_applied"] = roi
+        metadata["roi_applied"] = region_provenance(roi)
 
     if output_path.suffix.lower() in (".hdf5", ".h5"):
         write_hdf5(
