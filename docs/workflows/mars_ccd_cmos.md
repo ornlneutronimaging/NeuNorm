@@ -112,7 +112,24 @@ flowchart TD
 | Sample images | TIFF/FITS stack | Yes | Raw neutron transmission images |
 | Open Beam (OB) | TIFF/FITS stack | Yes | Reference without sample |
 | Dark Current | TIFF/FITS stack | No | Electronic noise baseline (beam off). Optional — omit `dark_paths` (or pass `[]`) to skip dark correction. |
-| ROI | (x0, y0, x1, y1) | No | Region of interest to crop |
+| ROI | (x0, y0, x1, y1) or `MaskROI` | No | Region of interest to crop. A `MaskROI` crops to the selection's bounding box and masks the outside pixels (`outside_roi`). |
+
+**Arbitrary-shape regions.** Every ROI parameter (`roi`, `background_roi`, and the VENUS
+pipelines' `air_roi`) also accepts a `MaskROI` — a pixel **selection** mask the same size as the
+image, where 1 marks a pixel *inside* the region (note: the opposite polarity of scipp's
+exclusion masks). Draw the region in e.g. ImageJ, save it as TIFF/PNG, and load it directly;
+rectangles and masks can be pooled together for `background_roi`:
+
+```python
+from neunorm.data_models import MaskROI
+from neunorm.data_models.roi import ROI
+
+region = MaskROI.from_file("background_mask.tif")   # nonzero pixels = in the region
+transmission = run_mars_ccd_pipeline(
+    sample_paths=[...], ob_paths=[...], output_path="out.h5",
+    background_roi=[region, ROI(x0=0, y0=0, width=64, height=64)],  # pooled together
+)
+```
 
 **Metadata** (from files or user):
 - Acquisition time per image

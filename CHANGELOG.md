@@ -5,6 +5,39 @@ All notable changes to NeuNorm are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Arbitrary-shape (mask-based) ROI regions** — `MaskROI`
+  ([#180](https://github.com/ornlneutronimaging/NeuNorm/issues/180)). A pixel **selection** mask
+  (same `(y, x)` size as the image; 1/nonzero = pixel *in* the region — the opposite polarity of
+  scipp's exclusion masks) accepted **anywhere a rectangular ROI is accepted**:
+  `normalize_transmission(background_roi=)` / `normalize_with_dark` / `apply_background_roi`
+  (poolable with rectangles in one list, including the shared-dark ROI-mean covariance
+  correction), `apply_air_region_correction`, `apply_roi`, and the pipeline
+  `roi=`/`air_roi=`/`background_roi=` parameters. Construct from a numpy/scipp array
+  (`MaskROI(selection=...)`), an image file drawn in e.g. ImageJ
+  (`MaskROI.from_file("mask.tif")`, nonzero selects), or a mask already on a DataArray
+  (`MaskROI.from_dataarray_mask(da, name, invert=...)`). A `MaskROI` **crop** keeps the
+  selection's bounding box and attaches the outside pixels as an `outside_roi` exclusion mask,
+  which `write_hdf5` persists (`/masks/outside_roi`) and the TIFF `scitiff-mask` merge folds in;
+  region statistics stay mask-aware (dead/hot pixels excluded exactly as for rectangles).
+  Output-file provenance records a JSON summary (shape, selected-pixel count, source, sha256).
+  Rectangle-only inputs are bit-identical to 2.2.x.
+
+### Fixed
+
+- **Air-region correction now uses the true (pooled) region mean.** The previous implementation
+  averaged with `sc.mean` over a dim list, which reduces sequentially (a mean of row-means): with
+  dead/hot-masked pixels in the air region it weighted rows unequally (a slightly wrong estimator
+  and uncertainty), and a fully-masked row made the whole correction NaN. The air mean is now the
+  mask-aware pooled mean shared with `background_roi` (`sum(T)/count(unmasked)`); values change
+  only for masked air regions. The propagated variance at `T == 0` pixels is now finite (the old
+  formula produced `0 * inf = NaN`), a non-positive/non-finite air mean now raises `ValueError`
+  instead of silently corrupting the scale, and errors name `air_roi`. Multiple pooled air
+  regions are supported.
+
 ## [2.2.3] - 2026-07-14
 
 Maintenance release — CI, documentation-build, and dependency updates only. There are
