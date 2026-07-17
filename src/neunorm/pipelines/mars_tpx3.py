@@ -68,12 +68,12 @@ def run_mars_tpx3_pipeline(  # noqa: C901
         Whether to apply gamma filtering to the sample data (default: True)
     detector_shape : tuple[int, int]
         Shape of the TPX3 detector (default: (514, 514))
-    background_roi : ROI/tuple or a sequence of them
-        Sample-free background region(s) — one ROI or a pooled sequence of ROIs (see
-        ``normalize_transmission``) — for flux-proxy normalization when proton charge is
-        unavailable. Mutually exclusive with proton-charge correction. If
-        ``roi`` is also given the detector is cropped first, so ``background_roi`` indices are
-        resolved in the post-crop frame.
+    background_roi : ROI, MaskROI, tuple, or a sequence of them
+        Sample-free background region(s) — one region or a pooled sequence (rectangles and/or
+        arbitrary-shape ``MaskROI`` selections; see ``normalize_transmission``) — for flux-proxy
+        normalization when proton charge is unavailable. Mutually exclusive with proton-charge
+        correction. If ``roi`` is also given the detector is cropped first, so ``background_roi``
+        indices are resolved in the post-crop frame.
 
     Notes
     -----

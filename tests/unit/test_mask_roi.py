@@ -123,6 +123,19 @@ class TestMaskROIPydantic:
         assert json.loads(json.dumps(s)) == s
         assert s["shape"] == [6, 8] and s["n_selected"] == 6 and s["source"] == "array"
 
+    def test_non_dict_mapping_input_is_canonicalized(self):
+        """Pydantic accepts any Mapping (e.g. UserDict), not just dict — it must canonicalize too."""
+        from collections import UserDict
+
+        sel = _block_selection().astype(np.int16) * 2  # non-bool; would miscount if not canonicalized
+        m = MaskROI.model_validate(UserDict(selection=sel))
+        assert m.selection.dtype == np.bool_  # coerced to bool
+        assert not m.selection.flags.writeable  # owned read-only buffer
+        assert m.n_selected == 6  # counts True pixels, not the summed int16 values
+        # an empty selection supplied via a Mapping must still be rejected at construction
+        with pytest.raises(Exception):
+            MaskROI.model_validate(UserDict(selection=np.zeros((6, 8), dtype=bool)))
+
 
 class TestMaskROIFromFile:
     @pytest.mark.parametrize("suffix", [".png", ".tiff"])
@@ -587,3 +600,40 @@ class TestPooledOverlapDedup:
         v1 = np.atleast_1d(sc.values(cov1).values)
         v2 = np.broadcast_to(np.atleast_1d(sc.values(cov2).values), v1.shape)
         np.testing.assert_allclose(v2, v1, rtol=1e-12)
+
+    def test_disjoint_and_single_do_not_take_union_path(self, monkeypatch):
+        """Pin the fast-path guard directly (a union-oracle match alone can't catch 'always union')."""
+        import neunorm.processing.normalizer as nz
+
+        def _boom(*_a, **_k):
+            raise AssertionError("union recompute taken for a non-overlapping pool")
+
+        monkeypatch.setattr(nz, "_pooled_union_selection", _boom)
+        nz._pooled_roi_coefficient(self._frame(), [(1, 1, 4, 4)], "data", strict=True)  # single
+        nz._pooled_roi_coefficient(self._frame(), [(0, 0, 2, 2), (5, 4, 8, 6)], "data", strict=True)  # disjoint
+        monkeypatch.undo()
+        # and the guard positively fires only on real overlap
+        assert nz._pooled_regions_overlap([(0, 0, 5, 4), (3, 2, 8, 6)], 6, 8) is True
+        assert nz._pooled_regions_overlap([(0, 0, 2, 2), (5, 4, 8, 6)], 6, 8) is False
+
+    def test_covariance_partial_overlap_matches_union_oracle(self):
+        """Partial (non-duplicate) overlap: covariance counts each shared dark pixel once (union)."""
+        from neunorm.processing.dark_corrector import subtract_dark
+        from neunorm.processing.normalizer import _roi_dark_mean_covariance
+
+        s, o = _stack(50), _stack(51, base=200)
+        d = _stack(52, base=5)["N_image", 0].copy()
+        dead = np.zeros((6, 8), dtype=bool)
+        dead[2, 3] = True  # a dead sample pixel inside the overlap
+        s.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=dead)
+        s_dc, o_dc = subtract_dark(s, d), subtract_dark(o, d)
+        rois = [(0, 0, 5, 4), (3, 2, 8, 6)]  # partial overlap on x 3-4, y 2-3
+        cov = _roi_dark_mean_covariance(s_dc, o_dc, d, rois)
+        union = np.zeros((6, 8), dtype=bool)
+        for x0, y0, x1, y1 in rois:
+            union[y0:y1, x0:x1] = True
+        keep_s, keep_o = union & ~dead, union  # A (sample), B (ob)
+        n_s, n_o = keep_s.sum(), keep_o.sum()
+        expected = d.variances[keep_s & keep_o].sum() / (n_s * n_o)
+        got = np.atleast_1d(sc.values(cov).values)
+        np.testing.assert_allclose(got, expected, rtol=1e-12)

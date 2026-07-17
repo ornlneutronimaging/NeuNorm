@@ -80,8 +80,9 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
         Path to save the output file (HDF5 or TIFF)
     roi : Optional[tuple]
         Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
-    air_roi : Optional[tuple]
-        Region of interest for air correction — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
+    air_roi : ROI, MaskROI, or tuple, optional
+        Region of interest for air correction — an ``ROI``, a bare ``(x0, y0, x1, y1)`` tuple, or an
+        arbitrary-shape ``MaskROI`` selection. If None, air correction is not applied.
     rebin_by_tof : Optional[bool,int]
         Whether to apply TOF rebinning based on statistics analysis. If an integer is provided,
         it will be used as the rebinning factor instead of the recommended one.

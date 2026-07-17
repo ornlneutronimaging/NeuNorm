@@ -137,8 +137,12 @@ class MaskROI(BaseModel):
     @classmethod
     def _canonicalize(cls, data):
         """Coerce any accepted input to a read-only C-contiguous bool array in (y, x) order."""
-        if not isinstance(data, dict):
+        if not isinstance(data, collections.abc.Mapping):
             return data
+        # Pydantic accepts any Mapping (e.g. UserDict), not just dict; copy into a mutable dict so
+        # the canonicalization below (bool dtype, non-empty check, owned writable buffer) is
+        # enforced for every Mapping input, not only literal dicts.
+        data = dict(data)
         sel = data.get("selection")
         dims = tuple(data.get("dims", ("y", "x")))
         if isinstance(sel, sc.Variable):

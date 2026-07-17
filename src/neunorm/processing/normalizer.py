@@ -157,8 +157,10 @@ def _pooled_roi_coefficient(
     from both the summed counts and the pixel count (spatial ``(x, y)`` masks assumed). Rectangle
     entries are exclusive-stop ``(x0, y0, x1, y1)`` bounds and keep the sliced fast path
     bit-for-bit; ``MaskROI`` entries contribute their selected pixels through the same mask-aware
-    reductions (regions overlapping in a pooled list double-count, for masks exactly as for
-    rectangles). Returns a variance-bearing scipp Variable (the variance of the pooled mean).
+    reductions. Regions that **overlap** in a pooled list are reduced over their **union** (each
+    selected, unmasked pixel counted once) so the pooled mean and its variance are correct; a
+    non-overlapping (or single-region) list keeps the per-region accumulation bit-for-bit. Returns a
+    variance-bearing scipp Variable (the variance of the pooled mean).
 
     Raises ``ValueError`` on an invalid/out-of-bounds rectangle, a selection shape not matching the
     data, or missing ``x``/``y`` dims. With ``strict`` (default) it also rejects a
@@ -222,7 +224,7 @@ def _pooled_roi_coefficient(
 def _background_roi_means(
     sample: sc.DataArray,
     ob: sc.DataArray,
-    rois_bounds: list[tuple[int, int, int, int]],
+    rois_bounds: list[Union[tuple[int, int, int, int], MaskROI]],
     strict: bool = True,
 ) -> tuple[sc.Variable, sc.Variable]:
     """Per-image pooled background means (cs, co) for sample and OB over the same ROI list."""
@@ -235,7 +237,7 @@ def _roi_dark_mean_covariance(
     sample_dc: sc.DataArray,
     ob_dc: sc.DataArray,
     dark: sc.DataArray,
-    rois_bounds: list[tuple[int, int, int, int]],
+    rois_bounds: list[Union[tuple[int, int, int, int], MaskROI]],
 ) -> sc.Variable:
     """Covariance of the two **pooled** background-ROI means induced by the shared dark frame.
 
@@ -655,8 +657,9 @@ def apply_background_roi(
 
     Returns ``data / pooled_mean(data over background_roi)`` — the **sample-only** form of the
     background-ROI flux proxy, for when there is no open beam to normalize against. ``background_roi``
-    is a single ROI or a sequence of ROIs (pooled as ``sum(counts) / sum(pixels)``); see
-    ``normalize_transmission(..., background_roi=)`` for the with-open-beam transmission form.
+    is a single region or a sequence of them — rectangles and/or arbitrary-shape ``MaskROI``
+    selections — pooled as ``sum(counts) / sum(pixels)`` (overlapping regions are de-duplicated to
+    their union); see ``normalize_transmission(..., background_roi=)`` for the with-open-beam form.
 
     First-order uncertainty from the pooled ROI mean is propagated
     (``Var += corrected**2 * Var(coeff) / coeff**2``); the in-ROI pixel/ROI-mean correlation is not
@@ -667,8 +670,9 @@ def apply_background_roi(
     ----------
     data : sc.DataArray
         Image stack with ``x``/``y`` dims (e.g. ``(spectral, x, y)``), optionally carrying variance.
-    background_roi : ROI/tuple or a sequence of them
-        Sample-free background region(s), pooled.
+    background_roi : ROI, MaskROI, tuple, or a sequence of them
+        Sample-free background region(s), pooled — rectangles and/or arbitrary-shape ``MaskROI``
+        selections, mixable in one list.
     strict : bool, optional
         With the default ``True``, a non-positive/non-finite pooled mean raises ``ValueError``.
         ``False`` skips only that guard and lets zeros propagate through the division (inf/nan

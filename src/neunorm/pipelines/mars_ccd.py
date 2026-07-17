@@ -77,12 +77,12 @@ def run_mars_ccd_pipeline(  # noqa: C901
         Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
     gamma_filter : bool
         Whether to apply gamma filtering to the sample data (default: True)
-    background_roi : ROI/tuple or a sequence of them
-        Sample-free background region(s) — one ROI or a pooled sequence of ROIs (see
-        ``normalize_transmission``) — for flux-proxy normalization when proton charge is
-        unavailable. Mutually exclusive with proton-charge correction. If
-        ``roi`` is also given the detector is cropped first, so ``background_roi`` indices are
-        resolved in the post-crop frame.
+    background_roi : ROI, MaskROI, tuple, or a sequence of them
+        Sample-free background region(s) — one region or a pooled sequence (rectangles and/or
+        arbitrary-shape ``MaskROI`` selections; see ``normalize_transmission``) — for flux-proxy
+        normalization when proton charge is unavailable. Mutually exclusive with proton-charge
+        correction. If ``roi`` is also given the detector is cropped first, so ``background_roi``
+        indices are resolved in the post-crop frame.
 
     Notes
     -----

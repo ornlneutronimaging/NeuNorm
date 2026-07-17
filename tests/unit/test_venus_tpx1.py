@@ -353,6 +353,24 @@ class TestVenusTPX1Pipeline:
         np.testing.assert_allclose(transmission.values, 1)
         np.testing.assert_allclose(transmission.variances, 0.0227, rtol=0.1)
 
+    def test_venus_tpx1_pipeline_air_roi_provenance_recorded(self):
+        """A TPX pipeline records air_roi in HDF5 output-file provenance (#180 F7)."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                air_roi=(0, 0, 10, 10),
+            )
+            with h5py.File(output_path, "r") as hf:
+                assert "metadata/air_roi" in hf
+                ds = hf["metadata/air_roi"]
+                assert ds.attrs.get("encoding") != "json"  # native int array, not the JSON backstop
+                np.testing.assert_array_equal(ds[()], [0, 0, 10, 10])
+
     def test_venus_tpx1_pipeline_invalid_paths(self):
         """Check error when the length of tiff and hdf5 paths do not match."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:

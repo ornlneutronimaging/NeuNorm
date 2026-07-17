@@ -346,6 +346,24 @@ class TestVenusCCDPipeline:
                 assert "metadata/air_roi" in hf
                 assert json.loads(hf["metadata/air_roi"].asstr()[()]) == {"mask": mask.provenance_summary()}
 
+        # TIFF output: the MaskROI air_roi provenance must survive the scitiff metadata writer as a
+        # JSON-safe scalar (a bare top-level dict would crash it).
+        from scitiff.io import load_scitiff
+
+        with tempfile.NamedTemporaryFile(suffix=".tiff", delete=True) as f:
+            output_path = Path(f.name)
+            run_venus_ccd_pipeline(
+                sample_paths=[self.sample_paths_air],
+                ob_paths=[self.ob_paths[1:2]],
+                dark_paths=[self.dark_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                air_roi=mask,
+            )
+            dg = load_scitiff(output_path)
+            raw = dg["extra"]["air_roi"]
+            assert json.loads(raw.value if hasattr(raw, "value") else raw) == {"mask": mask.provenance_summary()}
+
     def test_venus_ccd_pipeline_air_roi(self):
         """Test that air_roi is handled correctly."""
 
