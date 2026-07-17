@@ -114,6 +114,34 @@ def _mask_region_view(
     return work
 
 
+def _pooled_union_selection(rois_bounds, ny: int, nx: int) -> np.ndarray:
+    """Boolean ``(ny, nx)`` union of every pooled region (rectangles and masks) — each pixel once.
+
+    Collapses an overlapping pooled list to one equivalent selection so shared pixels are counted
+    once. Bounds/shapes are assumed already validated (by ``_pooled_roi_coefficient``).
+    """
+    union = np.zeros((ny, nx), dtype=bool)
+    for region_spec in rois_bounds:
+        if isinstance(region_spec, MaskROI):
+            union |= region_spec.selection
+        else:
+            x0, y0, x1, y1 = region_spec
+            union[y0:y1, x0:x1] = True
+    return union
+
+
+def _pooled_regions_overlap(rois_bounds, ny: int, nx: int) -> bool:
+    """True if any pixel is selected by more than one region in a pooled list (validated bounds)."""
+    coverage = np.zeros((ny, nx), dtype=np.int32)
+    for region_spec in rois_bounds:
+        if isinstance(region_spec, MaskROI):
+            coverage += region_spec.selection
+        else:
+            x0, y0, x1, y1 = region_spec
+            coverage[y0:y1, x0:x1] += 1
+    return bool((coverage > 1).any())
+
+
 def _pooled_roi_coefficient(
     data: sc.DataArray,
     rois_bounds: list,
@@ -169,6 +197,19 @@ def _pooled_roi_coefficient(
         roi_n = _unmasked_count(region)
         n_unmasked = roi_n if n_unmasked is None else n_unmasked + roi_n
 
+    # Overlapping pooled regions double-count shared pixels in the accumulation above — inflating
+    # the pooled mean and, because each shared pixel's variance is then added more than once as if
+    # from independent samples, understating its variance. When the regions actually overlap,
+    # recompute over their UNION (each selected & unmasked pixel exactly once); a non-overlapping
+    # list keeps the per-region accumulation above bit-for-bit. Bounds/shapes are already validated.
+    if len(rois_bounds) > 1:
+        ny, nx = data.sizes["y"], data.sizes["x"]
+        if _pooled_regions_overlap(rois_bounds, ny, nx):
+            union_region = MaskROI(selection=_pooled_union_selection(rois_bounds, ny, nx))
+            region = _mask_region_view(data, union_region, name, region_arg=region_arg)
+            total = sc.sum(region, dim=["x", "y"]).data
+            n_unmasked = _masked_ones_count(region)
+
     coeff = total / n_unmasked
     if strict and (not bool(sc.all(sc.isfinite(coeff)).value) or sc.min(coeff).value <= 0):
         raise ValueError(
@@ -214,6 +255,15 @@ def _roi_dark_mean_covariance(
         for mask in da.masks.values():
             m = mask if m is None else (m | mask)
         return m
+
+    # Collapse an overlapping pooled list to its single union region so a dark pixel shared by
+    # several ROIs is counted once — otherwise the shared-dark covariance (and the n_s / n_o
+    # denominators) double-count it. A non-overlapping list is unchanged. Bounds are already
+    # validated by the _background_roi_means call that precedes this one.
+    if len(rois_bounds) > 1:
+        ny, nx = sample_dc.sizes["y"], sample_dc.sizes["x"]
+        if _pooled_regions_overlap(rois_bounds, ny, nx):
+            rois_bounds = [MaskROI(selection=_pooled_union_selection(rois_bounds, ny, nx))]
 
     n_s = None
     n_o = None

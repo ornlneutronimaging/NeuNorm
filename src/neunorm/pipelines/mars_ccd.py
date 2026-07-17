@@ -12,8 +12,7 @@ from loguru import logger
 
 from neunorm import __version__
 from neunorm.data_models.roi import (
-    MaskROI,
-    RegionLike,
+    ROILike,
     as_region_list,
     as_region_provenance,
     as_roi_bounds,
@@ -39,7 +38,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
     ob_paths: Sequence[Sequence[str | Path]],
     dark_paths: Optional[Sequence[Sequence[str | Path]]] = None,
     output_path: Optional[Path] = None,
-    roi: Optional[RegionLike] = None,
+    roi: Optional[ROILike] = None,
     gamma_filter: bool = True,
     background_roi: Optional[BackgroundROILike] = None,
 ) -> sc.DataArray:
@@ -98,7 +97,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
     # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
     # tuples up front so cropping and provenance see a consistent form.
     if roi is not None:
-        roi = roi if isinstance(roi, MaskROI) else as_roi_bounds(roi)
+        roi = as_roi_bounds(roi)
     if background_roi is not None:
         background_roi = as_region_list(background_roi, arg_name="background_roi")
 

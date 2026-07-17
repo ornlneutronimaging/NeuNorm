@@ -87,7 +87,6 @@ def write_hdf5(  # noqa: C901
     transmission: sc.DataArray,
     dead_pixel_mask: str = "dead",
     hot_pixel_mask: str = "hot",
-    roi_mask: str = "outside_roi",
     metadata: Optional[dict] = None,
 ) -> None:
     """Write processed data to HDF5 with full provenance.
@@ -102,9 +101,8 @@ def write_hdf5(  # noqa: C901
 
         /transmission     # (θ, [TOF,] y, x) float32
         /uncertainty      # (θ, [TOF,] y, x) float32 (only if variances are present)
-        /masks/dead        # (y, x) bool (only if the named dead-pixel mask exists)
-        /masks/hot         # (y, x) bool (only if the named hot-pixel mask exists)
-        /masks/outside_roi # (y, x) bool (only after a MaskROI crop: True = outside the region)
+        /masks/dead       # (y, x) bool (only if the named dead-pixel mask exists)
+        /masks/hot        # (y, x) bool (only if the named hot-pixel mask exists)
         /tof              # (N+1,) float64 (only if the data carries a "tof" coordinate)
         /metadata/        # processing provenance (only when metadata is supplied)
 
@@ -134,10 +132,6 @@ def write_hdf5(  # noqa: C901
         Name of the dead pixel mask in transmission.masks (default: "dead")
     hot_pixel_mask : str
         Name of the hot pixel mask in transmission.masks (default: "hot")
-    roi_mask : str
-        Name of the outside-region exclusion mask left by a ``MaskROI`` crop (default:
-        "outside_roi"). ``/transmission`` keeps the raw (unmasked) values under it — consumers
-        should treat pixels flagged in ``/masks/outside_roi`` as outside the analysis region.
     metadata : Optional[dict]
         Dictionary of metadata to store in the file (default: None)
     """
@@ -172,8 +166,6 @@ def write_hdf5(  # noqa: C901
             f.create_dataset("masks/dead", data=transmission.masks[dead_pixel_mask].values)
         if hot_pixel_mask in transmission.masks:
             f.create_dataset("masks/hot", data=transmission.masks[hot_pixel_mask].values)
-        if roi_mask in transmission.masks:
-            f.create_dataset("masks/outside_roi", data=transmission.masks[roi_mask].values)
 
         # Write metadata. Provenance is best-effort: a single un-writable key — a bad value
         # (ragged/unserializable) or a malformed/colliding name — must never abort the write or

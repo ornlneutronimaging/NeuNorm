@@ -94,11 +94,12 @@ class MaskROI(BaseModel):
         region. Use :meth:`from_dataarray_mask` (with its required ``invert`` flag) to convert
         between the two conventions explicitly.
 
-    A ``MaskROI`` is accepted anywhere a rectangular :class:`ROI` is accepted (``background_roi``,
-    air-region correction, cropping, and the pipeline ``roi``/``background_roi`` parameters), and
-    may be pooled together with rectangles in one region list. Selected pixels that are masked in
-    the data (dead/hot pixels) are excluded from region statistics exactly as they are for
-    rectangular ROIs.
+    A ``MaskROI`` is accepted by the **region-statistics** operations that take a rectangular
+    :class:`ROI` (``background_roi``, air-region correction, and the pipeline
+    ``air_roi``/``background_roi`` parameters), and may be pooled together with rectangles in one
+    region list. Selected pixels that are masked in the data (dead/hot pixels) are excluded from
+    region statistics exactly as they are for rectangular ROIs. Cropping (``apply_roi`` / the
+    pipeline ``roi=``) stays rectangle-only — an arbitrary shape has no rectangular crop.
 
     The selection is canonicalized at construction to a C-contiguous, read-only boolean array in
     ``(y, x)`` row-major order (the same layout as loaded TIFF/FITS frames), regardless of the

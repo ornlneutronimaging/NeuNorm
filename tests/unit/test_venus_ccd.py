@@ -307,6 +307,45 @@ class TestVenusCCDPipeline:
             transmission.coords["ManufacturerStr"].values, "ANDOR"
         )  # should be unchanged since it's the same for both runs
 
+    def test_venus_ccd_pipeline_air_roi_provenance_recorded(self):
+        """air_roi is recorded in output-file provenance — rect as native ints, mask as JSON (#180 F7)."""
+        from neunorm.data_models.roi import MaskROI
+
+        # rectangular air_roi -> flat native int array (same convention as roi_applied)
+        with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+            output_path = Path(f.name)
+            run_venus_ccd_pipeline(
+                sample_paths=[self.sample_paths_air],
+                ob_paths=[self.ob_paths[1:2]],
+                dark_paths=[self.dark_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                air_roi=(6, 6, 11, 11),
+            )
+            with h5py.File(output_path, "r") as hf:
+                assert "metadata/air_roi" in hf
+                ds = hf["metadata/air_roi"]
+                assert ds.attrs.get("encoding") != "json"  # native int array, not the JSON backstop
+                np.testing.assert_array_equal(ds[()], [6, 6, 11, 11])
+
+        # MaskROI air_roi -> JSON mask summary (never a bare dict the TIFF writer would reject)
+        sel = np.zeros((32, 32), dtype=bool)
+        sel[6:11, 6:11] = True
+        mask = MaskROI(selection=sel)
+        with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+            output_path = Path(f.name)
+            run_venus_ccd_pipeline(
+                sample_paths=[self.sample_paths_air],
+                ob_paths=[self.ob_paths[1:2]],
+                dark_paths=[self.dark_paths],
+                output_path=output_path,
+                gamma_filter=False,
+                air_roi=mask,
+            )
+            with h5py.File(output_path, "r") as hf:
+                assert "metadata/air_roi" in hf
+                assert json.loads(hf["metadata/air_roi"].asstr()[()]) == {"mask": mask.provenance_summary()}
+
     def test_venus_ccd_pipeline_air_roi(self):
         """Test that air_roi is handled correctly."""
 

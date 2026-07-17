@@ -750,28 +750,18 @@ class TestMarsCCDPipelineFITS:
             stored = json.loads(raw.value if hasattr(raw, "value") else raw)
             assert stored == [{"mask": mask.provenance_summary()}]
 
-    def test_mars_ccd_pipeline_mask_roi_crop_end_to_end(self):
-        """roi=MaskROI crops to the bbox, persists outside_roi to HDF5, and records JSON provenance."""
+    def test_mars_ccd_pipeline_crop_roi_rejects_maskroi(self):
+        """Crop stays rectangle-only: a MaskROI for roi= is rejected (masks are for background_roi=)."""
         from neunorm.data_models.roi import MaskROI
 
         sel = np.zeros((32, 32), dtype=bool)
-        rr, cc = np.ogrid[:32, :32]
-        sel[(rr - 16) ** 2 + (cc - 16) ** 2 <= 64] = True  # disk of radius 8
-        mask = MaskROI(selection=sel)
-        x0, y0, x1, y1 = mask.bounding_box()
+        sel[2:6, 3:9] = True
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
-            output_path = Path(f.name)
-            t = run_mars_ccd_pipeline(
-                sample_paths=[self.sample_paths],
-                ob_paths=[self.ob_paths],
-                output_path=output_path,
-                gamma_filter=False,
-                roi=mask,
-            )
-            assert t.shape == (5, y1 - y0, x1 - x0)
-            assert "outside_roi" in t.masks
-            with h5py.File(output_path, "r") as hf:
-                np.testing.assert_array_equal(hf["masks/outside_roi"][()], ~sel[y0:y1, x0:x1])
-                ds = hf["metadata/roi_applied"]
-                stored = json.loads(ds.asstr()[()])
-                assert stored == {"mask": mask.provenance_summary()}
+            with pytest.raises((TypeError, ValueError), match="[Mm]ask"):
+                run_mars_ccd_pipeline(
+                    sample_paths=[self.sample_paths],
+                    ob_paths=[self.ob_paths],
+                    output_path=Path(f.name),
+                    gamma_filter=False,
+                    roi=MaskROI(selection=sel),
+                )

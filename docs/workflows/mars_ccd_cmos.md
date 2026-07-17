@@ -112,13 +112,14 @@ flowchart TD
 | Sample images | TIFF/FITS stack | Yes | Raw neutron transmission images |
 | Open Beam (OB) | TIFF/FITS stack | Yes | Reference without sample |
 | Dark Current | TIFF/FITS stack | No | Electronic noise baseline (beam off). Optional — omit `dark_paths` (or pass `[]`) to skip dark correction. |
-| ROI | (x0, y0, x1, y1) or `MaskROI` | No | Region of interest to crop. A `MaskROI` crops to the selection's bounding box and masks the outside pixels (`outside_roi`). |
+| ROI | (x0, y0, x1, y1) or `ROI` | No | Rectangular region of interest to **crop**. Cropping is rectangle-only; to restrict *statistics* to an arbitrary shape use a `MaskROI` with `background_roi=`/`air_roi=` instead. |
 
-**Arbitrary-shape regions.** Every ROI parameter (`roi`, `background_roi`, and the VENUS
-pipelines' `air_roi`) also accepts a `MaskROI` — a pixel **selection** mask the same size as the
+**Arbitrary-shape regions.** The region-statistics parameters (`background_roi` and the VENUS
+pipelines' `air_roi`) accept a `MaskROI` — a pixel **selection** mask the same size as the
 image, where 1 marks a pixel *inside* the region (note: the opposite polarity of scipp's
 exclusion masks). Draw the region in e.g. ImageJ, save it as TIFF/PNG, and load it directly;
-rectangles and masks can be pooled together for `background_roi`:
+rectangles and masks can be pooled together for `background_roi`. Cropping (`roi=`) stays
+rectangle-only — an arbitrary shape has no rectangular crop:
 
 ```python
 from neunorm.data_models import MaskROI

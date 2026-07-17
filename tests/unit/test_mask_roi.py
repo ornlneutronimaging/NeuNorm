@@ -496,7 +496,7 @@ class TestAirRegionUnified:
         np.testing.assert_allclose(out.values, t.values / coeff[:, None, None], rtol=1e-12)
 
 
-class TestApplyRoiMask:
+class TestApplyRoiCrop:
     def test_rect_crop_unchanged(self):
         from neunorm.processing.roi_clipper import apply_roi
 
@@ -505,72 +505,85 @@ class TestApplyRoiMask:
         assert out.sizes["x"] == 3 and out.sizes["y"] == 2
         assert len(out.masks) == 0
 
-    def test_mask_crop_bbox_plus_outside_roi(self):
+    def test_crop_rejects_maskroi(self):
+        """Crop is rectangle-only; a MaskROI must be routed to the region-statistics APIs (#180)."""
         from neunorm.processing.roi_clipper import apply_roi
 
-        s = _stack(28)
-        sel = _cross_selection()
-        m = MaskROI(selection=sel)
-        out = apply_roi(s, m)
-        x0, y0, x1, y1 = m.bounding_box()
-        assert out.sizes["x"] == x1 - x0 and out.sizes["y"] == y1 - y0
-        assert "outside_roi" in out.masks
-        np.testing.assert_array_equal(out.masks["outside_roi"].values, ~sel[y0:y1, x0:x1])
-        np.testing.assert_allclose(out.values, s.values[:, y0:y1, x0:x1], rtol=0)
-
-    def test_mask_crop_shape_mismatch_raises(self):
-        from neunorm.processing.roi_clipper import apply_roi
-
-        with pytest.raises(ValueError, match="does not match"):
-            apply_roi(_stack(29), MaskROI(selection=np.ones((3, 3), dtype=bool)))
-
-    def test_repeat_mask_crop_ors_exclusions(self):
-        from neunorm.processing.roi_clipper import apply_roi
-
-        s = _stack(30)
-        sel1 = _cross_selection()
-        out1 = apply_roi(s, MaskROI(selection=sel1))
-        # second mask in the CROPPED frame: keep only the center row of the bbox
-        sel2 = np.zeros((out1.sizes["y"], out1.sizes["x"]), dtype=bool)
-        sel2[1, :] = True
-        out2 = apply_roi(out1, MaskROI(selection=sel2))
-        # exclusion = outside(sel1 bbox slice, re-cropped) OR outside(sel2 within its bbox)
-        assert "outside_roi" in out2.masks
-        # every pixel kept by out2 must have been kept by BOTH selections
-        kept = ~out2.masks["outside_roi"].values
-        x0, y0, x1, y1 = MaskROI(selection=sel1).bounding_box()
-        sel1_crop = sel1[y0:y1, x0:x1]
-        bx0, by0, bx1, by1 = MaskROI(selection=sel2).bounding_box()
-        assert (kept <= (sel1_crop[by0:by1, bx0:bx1] & sel2[by0:by1, bx0:bx1])).all()
-
-    def test_downstream_stats_exclude_outside_pixels(self):
-        """After a mask crop, a rect background_roi is automatically mask-aware."""
-        from neunorm.processing.normalizer import apply_background_roi
-        from neunorm.processing.roi_clipper import apply_roi
-
-        s = _stack(31)
-        sel = _cross_selection()
-        cropped = apply_roi(s, MaskROI(selection=sel))
-        out = apply_background_roi(cropped, (0, 0, cropped.sizes["x"], cropped.sizes["y"]))
-        x0, y0, x1, y1 = MaskROI(selection=sel).bounding_box()
-        sel_crop = sel[y0:y1, x0:x1]
-        pooled = s.values[:, y0:y1, x0:x1][:, sel_crop].sum(axis=1) / sel_crop.sum()
-        np.testing.assert_allclose(out.values, s.values[:, y0:y1, x0:x1] / pooled[:, None, None], rtol=1e-12)
+        with pytest.raises(TypeError, match="does not accept a MaskROI"):
+            apply_roi(_stack(28), MaskROI(selection=_cross_selection()))
 
 
-class TestHdf5OutsideRoi:
-    def test_outside_roi_mask_persisted(self, tmp_path):
-        import h5py
+class TestPooledOverlapDedup:
+    """Overlapping pooled regions count each shared pixel once — correct mean AND variance (F3)."""
 
-        from neunorm.exporters.hdf5_writer import write_hdf5
-        from neunorm.processing.roi_clipper import apply_roi
+    def _frame(self):
+        vals = np.arange(1, 49, dtype="float64").reshape(6, 8)
+        return sc.DataArray(sc.array(dims=["y", "x"], values=vals.copy(), variances=vals.copy(), unit="counts"))
 
-        s = _stack(32)
-        sel = _cross_selection()
-        cropped = apply_roi(s, MaskROI(selection=sel))
-        path = tmp_path / "out.h5"
-        write_hdf5(path, cropped)
-        with h5py.File(path, "r") as f:
-            assert "masks/outside_roi" in f
-            x0, y0, x1, y1 = MaskROI(selection=sel).bounding_box()
-            np.testing.assert_array_equal(f["masks/outside_roi"][()], ~sel[y0:y1, x0:x1])
+    def _union_oracle(self, regions, ny=6, nx=8):
+        vals = np.arange(1, 49, dtype="float64").reshape(ny, nx)
+        union = np.zeros((ny, nx), dtype=bool)
+        for r in regions:
+            if isinstance(r, MaskROI):
+                union |= r.selection
+            else:
+                x0, y0, x1, y1 = r
+                union[y0:y1, x0:x1] = True
+        v = vals[union]
+        n = v.size
+        return v.sum() / n, v.sum() / n**2  # mean, Var(mean) with variances == values
+
+    def test_overlapping_rects_dedup_to_union(self):
+        from neunorm.processing.normalizer import _pooled_roi_coefficient
+
+        rois = [(0, 0, 5, 4), (3, 2, 8, 6)]  # overlap on x 3-4, y 2-3
+        coeff = _pooled_roi_coefficient(self._frame(), rois, "data", strict=True)
+        mean, var = self._union_oracle(rois)
+        np.testing.assert_allclose(coeff.value, mean, rtol=1e-12)
+        np.testing.assert_allclose(coeff.variance, var, rtol=1e-12)
+
+    def test_overlapping_rect_and_mask_dedup_to_union(self):
+        from neunorm.processing.normalizer import _pooled_roi_coefficient
+
+        sel = np.zeros((6, 8), dtype=bool)
+        sel[1:5, 2:6] = True
+        rois = [(0, 0, 4, 3), MaskROI(selection=sel)]  # rect and mask share pixels
+        coeff = _pooled_roi_coefficient(self._frame(), rois, "data", strict=True)
+        mean, var = self._union_oracle(rois)
+        np.testing.assert_allclose(coeff.value, mean, rtol=1e-12)
+        np.testing.assert_allclose(coeff.variance, var, rtol=1e-12)
+
+    def test_duplicate_region_equals_single_not_halved(self):
+        """Listing a region twice must equal listing it once — the old code halved the variance."""
+        from neunorm.processing.normalizer import _pooled_roi_coefficient
+
+        rect = (1, 1, 5, 4)
+        single = _pooled_roi_coefficient(self._frame(), [rect], "data", strict=True)
+        dup = _pooled_roi_coefficient(self._frame(), [rect, rect], "data", strict=True)
+        np.testing.assert_allclose(dup.value, single.value, rtol=1e-12)
+        np.testing.assert_allclose(dup.variance, single.variance, rtol=1e-12)
+
+    def test_disjoint_pooled_keeps_fast_path(self):
+        """Non-overlapping pooled regions are unchanged (values AND variances) — union oracle."""
+        from neunorm.processing.normalizer import _pooled_roi_coefficient
+
+        rois = [(0, 0, 2, 2), (5, 4, 8, 6)]
+        coeff = _pooled_roi_coefficient(self._frame(), rois, "data", strict=True)
+        mean, var = self._union_oracle(rois)
+        np.testing.assert_allclose(coeff.value, mean, rtol=1e-12)
+        np.testing.assert_allclose(coeff.variance, var, rtol=1e-12)
+
+    def test_covariance_duplicate_region_equals_single(self):
+        """Shared-dark covariance must also dedup: [R, R] == [R] (was double-counted)."""
+        from neunorm.processing.dark_corrector import subtract_dark
+        from neunorm.processing.normalizer import _roi_dark_mean_covariance
+
+        s, o = _stack(40), _stack(41, base=200)
+        d = _stack(42, base=5)["N_image", 0].copy()
+        s_dc, o_dc = subtract_dark(s, d), subtract_dark(o, d)
+        rect = (2, 1, 6, 4)
+        cov1 = _roi_dark_mean_covariance(s_dc, o_dc, d, [rect])
+        cov2 = _roi_dark_mean_covariance(s_dc, o_dc, d, [rect, rect])
+        v1 = np.atleast_1d(sc.values(cov1).values)
+        v2 = np.broadcast_to(np.atleast_1d(sc.values(cov2).values), v1.shape)
+        np.testing.assert_allclose(v2, v1, rtol=1e-12)

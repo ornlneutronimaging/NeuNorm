@@ -2,51 +2,50 @@
 Function for cropping spatial dimensions to a region of interest (ROI).
 """
 
-import numpy as np
 import scipp as sc
 from loguru import logger
 
-from neunorm.data_models.roi import MaskROI, RegionLike, as_roi_bounds
+from neunorm.data_models.roi import MaskROI, ROILike, as_roi_bounds
 
 
 def apply_roi(
     data: sc.DataArray,
-    roi: RegionLike,  # (x0, y0, x1, y1) tuple, an ROI, or a MaskROI
+    roi: ROILike,  # (x0, y0, x1, y1) tuple or an ROI
 ) -> sc.DataArray:
-    """Crop spatial dimensions to a region of interest.
+    """Crop spatial dimensions to a rectangular region of interest.
 
     Crop to specified ROI: (x0, y0, x1, y1)
     Work with 2D, 3D, and 4D arrays (preserve other dimensions)
     Update coordinate arrays if present
     Validate ROI is within bounds
 
-    Arrays are rectangular, so an arbitrary-shape :class:`~neunorm.data_models.roi.MaskROI` crops
-    to the selection's **bounding box** and attaches the outside-selection pixels as a scipp
-    exclusion mask named ``"outside_roi"``: every downstream mask-aware statistic (background-ROI
-    pooling, air-region correction, mean/sum reductions) then automatically ignores pixels outside
-    the region. Cropping an already-mask-cropped array ORs the exclusions (the selections
-    intersect). The mask is persisted by ``write_hdf5`` (``/masks/outside_roi``) and folded into
-    the merged TIFF ``scitiff-mask``. Rectangular ROIs crop exactly as before, with no mask
-    attached.
+    Cropping always yields a rectangular array, so only a rectangular ROI is accepted here. An
+    arbitrary-shape :class:`~neunorm.data_models.roi.MaskROI` is not a crop region — pass it to the
+    region-statistics operations instead (``background_roi=`` / ``air_roi=`` /
+    :func:`~neunorm.processing.air_region_corrector.apply_air_region_correction` /
+    :func:`~neunorm.processing.normalizer.normalize_transmission`), which average over the selected
+    pixels without resizing the image.
 
     Parameters
     ----------
     data : sc.DataArray
         Input data array to be cropped.
-    roi : ROI, MaskROI, or tuple[int, int, int, int]
+    roi : ROI or tuple[int, int, int, int]
         Region of interest as an :class:`~neunorm.data_models.roi.ROI` (e.g.
-        ``ROI(x0=10, y0=20, x1=30, y1=40)`` or ``ROI(x0=10, y0=20, width=20, height=20)``), an
-        arbitrary-shape :class:`~neunorm.data_models.roi.MaskROI` (selection mask: 1 = pixel in the
-        region), or a bare ``(x0, y0, x1, y1)`` tuple with exclusive stop indices.
+        ``ROI(x0=10, y0=20, x1=30, y1=40)`` or ``ROI(x0=10, y0=20, width=20, height=20)``) or a bare
+        ``(x0, y0, x1, y1)`` tuple with exclusive stop indices.
 
     Returns
     -------
     sc.DataArray
-        Cropped data array with updated coordinates (and, for a ``MaskROI``, the ``outside_roi``
-        exclusion mask).
+        Cropped (rectangular) data array with updated coordinates.
     """
     if isinstance(roi, MaskROI):
-        return _apply_mask_roi(data, roi)
+        raise TypeError(
+            "apply_roi crops to a rectangle and does not accept a MaskROI. Use a MaskROI only with "
+            "the region-statistics APIs (background_roi= / air_roi= / apply_air_region_correction / "
+            "normalize_transmission), which average over the selected pixels without cropping."
+        )
     roi = as_roi_bounds(roi)
 
     logger.info("Applying ROI: {}", roi)
@@ -77,32 +76,3 @@ def apply_roi(
 
     # Crop the DataArray
     return data["x", x_slice]["y", y_slice].copy()  # return a copy so it's not read-only
-
-
-def _apply_mask_roi(data: sc.DataArray, roi: MaskROI) -> sc.DataArray:
-    """Bounding-box crop + ``outside_roi`` exclusion mask for an arbitrary-shape region."""
-    if "x" not in data.dims or "y" not in data.dims:
-        raise ValueError("DataArray must have 'x' and 'y' dimensions for ROI cropping")
-    ny, nx = roi.shape
-    if ny != data.sizes["y"] or nx != data.sizes["x"]:
-        raise ValueError(
-            f"roi MaskROI selection shape (ny={ny}, nx={nx}) does not match data size "
-            f"(y={data.sizes['y']}, x={data.sizes['x']})"
-        )
-    x0, y0, x1, y1 = roi.bounding_box()
-    logger.info(
-        "Applying MaskROI: bbox ({}, {}, {}, {}), {} selected pixels; outside pixels masked as 'outside_roi'",
-        x0,
-        y0,
-        x1,
-        y1,
-        roi.n_selected,
-    )
-    cropped = data["x", x0:x1]["y", y0:y1].copy()
-    outside = sc.array(dims=["y", "x"], values=np.ascontiguousarray(~roi.selection[y0:y1, x0:x1]))
-    if "outside_roi" in cropped.masks:
-        # repeat mask-crop: exclusions OR together (the selections intersect)
-        cropped.masks["outside_roi"] = cropped.masks["outside_roi"] | outside
-    else:
-        cropped.masks["outside_roi"] = outside
-    return cropped

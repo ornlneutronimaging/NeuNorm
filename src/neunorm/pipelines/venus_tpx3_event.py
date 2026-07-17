@@ -14,6 +14,7 @@ from neunorm import __version__
 from neunorm.data_models.roi import (
     MaskROI,
     RegionLike,
+    ROILike,
     as_roi_bounds,
     region_provenance,
 )
@@ -40,7 +41,7 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     ob_paths: Sequence[str | Path],
     binning: BinningConfig,
     output_path: Path,
-    roi: Optional[RegionLike] = None,
+    roi: Optional[ROILike] = None,
     air_roi: Optional[RegionLike] = None,
     rebin_by_tof: Optional[bool | int] = False,
     rebin_by_spatial: Optional[int | tuple[int, int]] = None,
@@ -113,7 +114,7 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
     # tuples up front so cropping and provenance see a consistent form.
     if roi is not None:
-        roi = roi if isinstance(roi, MaskROI) else as_roi_bounds(roi)
+        roi = as_roi_bounds(roi)
     if air_roi is not None:
         air_roi = air_roi if isinstance(air_roi, MaskROI) else as_roi_bounds(air_roi)
 
@@ -241,6 +242,9 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
 
     if roi:
         metadata["roi_applied"] = region_provenance(roi)
+
+    if air_roi is not None:
+        metadata["air_roi"] = region_provenance(air_roi)
 
     if output_path.suffix.lower() in (".hdf5", ".h5"):
         write_hdf5(
