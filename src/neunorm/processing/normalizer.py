@@ -131,7 +131,19 @@ def _pooled_union_selection(rois_bounds, ny: int, nx: int) -> np.ndarray:
 
 
 def _pooled_regions_overlap(rois_bounds, ny: int, nx: int) -> bool:
-    """True if any pixel is selected by more than one region in a pooled list (validated bounds)."""
+    """True if any pixel is selected by more than one region in a pooled list (validated bounds).
+
+    Rectangle-only lists (the common pooled case) use a cheap pairwise interval-overlap test with no
+    per-frame allocation; a per-pixel ``ny*nx`` coverage map is built only when a ``MaskROI`` is
+    present, where arbitrary shapes make pairwise geometry insufficient.
+    """
+    if not any(isinstance(r, MaskROI) for r in rois_bounds):
+        # exclusive-stop rectangles overlap iff they intersect on both axes
+        for i, (ax0, ay0, ax1, ay1) in enumerate(rois_bounds):
+            for bx0, by0, bx1, by1 in rois_bounds[i + 1 :]:
+                if ax0 < bx1 and bx0 < ax1 and ay0 < by1 and by0 < ay1:
+                    return True
+        return False
     coverage = np.zeros((ny, nx), dtype=np.int32)
     for region_spec in rois_bounds:
         if isinstance(region_spec, MaskROI):

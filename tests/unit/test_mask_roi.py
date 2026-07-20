@@ -566,6 +566,20 @@ class TestPooledOverlapDedup:
         np.testing.assert_allclose(coeff.value, mean, rtol=1e-12)
         np.testing.assert_allclose(coeff.variance, var, rtol=1e-12)
 
+    def test_overlapping_two_masks_dedup_to_union(self):
+        """Two overlapping MaskROIs (the per-pixel coverage branch) also dedup to their union."""
+        from neunorm.processing.normalizer import _pooled_roi_coefficient
+
+        sel_a = np.zeros((6, 8), dtype=bool)
+        sel_a[1:4, 1:5] = True
+        sel_b = np.zeros((6, 8), dtype=bool)
+        sel_b[2:5, 3:7] = True  # overlaps sel_a on rows 2-3, cols 3-4
+        rois = [MaskROI(selection=sel_a), MaskROI(selection=sel_b)]
+        coeff = _pooled_roi_coefficient(self._frame(), rois, "data", strict=True)
+        mean, var = self._union_oracle(rois)
+        np.testing.assert_allclose(coeff.value, mean, rtol=1e-12)
+        np.testing.assert_allclose(coeff.variance, var, rtol=1e-12)
+
     def test_duplicate_region_equals_single_not_halved(self):
         """Listing a region twice must equal listing it once — the old code halved the variance."""
         from neunorm.processing.normalizer import _pooled_roi_coefficient
