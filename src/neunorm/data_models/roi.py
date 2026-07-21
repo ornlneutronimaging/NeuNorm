@@ -7,6 +7,7 @@ from typing import Any, Optional, Sequence, Union
 
 import numpy as np
 import scipp as sc
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, field_serializer, model_validator
 
 
@@ -104,6 +105,9 @@ class MaskROI(BaseModel):
     The selection is canonicalized at construction to a C-contiguous, read-only boolean array in
     ``(y, x)`` row-major order (the same layout as loaded TIFF/FITS frames), regardless of the
     input form. Any nonzero value selects: integer or float arrays are thresholded ``!= 0``.
+    Non-finite (``NaN``/``inf``) values in a float array are treated as **unselected** (not in the
+    region) and a warning is logged — they are not meaningful "in-region" markers, yet ``NaN != 0``
+    is ``True``, so selecting them would silently corrupt the region statistics.
 
     Parameters
     ----------
@@ -157,11 +161,29 @@ class MaskROI(BaseModel):
                 raise ValueError(f"MaskROI dims must be ('y', 'x') or ('x', 'y'); got {dims}")
         if arr.ndim != 2:
             raise ValueError(f"MaskROI selection must be a 2D (y, x) array; got shape {arr.shape}")
-        # One thresholding rule for every input path: nonzero selects. `!= 0` also copies, so the
-        # caller's array can never mutate the (frozen, read-only) canonical buffer.
-        canonical = np.ascontiguousarray(arr != 0)
+        # Nonzero selects. `!= 0` also copies, so the caller's array can never mutate the (frozen,
+        # read-only) canonical buffer.
+        selected = arr != 0
+        # A non-finite value in a float mask (NaN/inf — e.g. a no-data sentinel in a float TIFF) is
+        # not a meaningful "in-region" marker, yet `NaN != 0` and `inf != 0` both evaluate True. So
+        # rather than silently select it (corrupting the region mean/variance) or reject the whole
+        # mask over one bad pixel, drop non-finite pixels from the selection and warn — the run
+        # continues over the valid pixels. Integer/bool masks cannot be non-finite, so skip the check.
+        if np.issubdtype(arr.dtype, np.floating):
+            non_finite = ~np.isfinite(arr)
+            n_bad = int(non_finite.sum())
+            if n_bad:
+                logger.warning(
+                    f"MaskROI selection has {n_bad} non-finite (NaN/inf) value(s); treating them as "
+                    "unselected (not in the region)."
+                )
+                selected = selected & ~non_finite
+        canonical = np.ascontiguousarray(selected)
         if not canonical.any():
-            raise ValueError("MaskROI selection must select at least one pixel (it is all zeros/False)")
+            raise ValueError(
+                "MaskROI selection must select at least one pixel (it is all zeros/False, "
+                "or every nonzero value was non-finite)"
+            )
         canonical.setflags(write=False)
         data["selection"] = canonical
         data["dims"] = ("y", "x")

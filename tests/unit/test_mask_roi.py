@@ -38,6 +38,39 @@ class TestMaskROIConstruction:
             m = MaskROI(selection=sel)
             assert m.n_selected == 6, dtype
 
+    def test_non_finite_float_selection_treated_as_unselected(self):
+        """A NaN/inf in a float mask is dropped from the selection — not silently selected
+        (``NaN != 0`` is True), and without halting the run over one bad pixel.
+
+        Guards a real defect: a no-data sentinel (NaN/inf) in a float TIFF/array must not join the
+        region (it would corrupt the region mean and propagated variance). The run continues over
+        the valid pixels; only the non-finite pixels are excluded.
+        """
+        for bad in (np.nan, np.inf, -np.inf):
+            sel = np.zeros((6, 8), dtype=np.float64)
+            sel[1:3, 2:5] = 1.0  # 6 genuine finite-nonzero pixels
+            sel[0, 0] = bad
+            m = MaskROI(selection=sel)
+            assert m.n_selected == 6, bad  # the non-finite pixel is NOT selected
+            assert not bool(m.selection[0, 0]), bad
+            assert m.selection[1:3, 2:5].all(), bad
+        # the scipp-Variable input path is handled identically
+        sel = np.zeros((6, 8), dtype=np.float64)
+        sel[1:3, 2:5] = 1.0
+        sel[0, 0] = np.nan
+        m = MaskROI(selection=sc.array(dims=["y", "x"], values=sel))
+        assert m.n_selected == 6
+        assert not bool(m.selection[0, 0])
+
+    def test_all_nonfinite_selection_raises_as_empty(self):
+        """A float mask whose only nonzero entries are non-finite selects nothing after they are
+        dropped -> the structural empty-mask error (never a spurious all-NaN region)."""
+        sel = np.zeros((4, 4), dtype=np.float64)
+        sel[0, 0] = np.nan
+        sel[1, 1] = np.inf
+        with pytest.raises(ValueError, match="at least one pixel"):
+            MaskROI(selection=sel)
+
     def test_canonical_buffer_is_readonly_and_isolated(self):
         sel = _block_selection()
         m = MaskROI(selection=sel)
