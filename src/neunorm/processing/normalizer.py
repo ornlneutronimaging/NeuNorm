@@ -559,10 +559,12 @@ def normalize_with_dark(
         Integrated proton charge for the SNS beam correction (see ``normalize_transmission``).
     pc_uncertainty : float, optional
         Relative proton-charge uncertainty (default 0.005).
-    background_roi : tuple[int, int, int, int], optional
+    background_roi : ROI/MaskROI/tuple or a sequence of them, optional
         Background-ROI flux normalization (see ``normalize_transmission``), used instead of proton
-        charge. The shared-dark correction then uses ``k = co/cs`` (ratio of dark-corrected ROI
-        means) in place of the proton-charge ratio, and additionally removes the ROI-mean shared-dark
+        charge. Accepts the same forms as ``normalize_transmission`` — a rectangle, an arbitrary-shape
+        ``MaskROI``, or a pooled sequence mixing them. The shared-dark correction then uses
+        ``k = co/cs`` (ratio of dark-corrected ROI means) in place of the proton-charge ratio, and
+        additionally removes the ROI-mean shared-dark
         covariance term ``2*T^2*Cov(cs,co)/(cs*co)`` (``Cov(cs,co) = Var(mean(D_roi))``) — the
         ROI-mean analog of the pixel-level correction. (The in-ROI pixel/ROI-mean correlation
         remains uncorrected, as documented on ``normalize_transmission``.)

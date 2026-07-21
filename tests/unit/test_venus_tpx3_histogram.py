@@ -325,6 +325,42 @@ class TestVenusTPX3HistogramPipeline:
         np.testing.assert_allclose(transmission.values, 1)
         np.testing.assert_allclose(transmission.variances, 0.0227, rtol=0.1)
 
+    def test_venus_tpx3_histogram_pipeline_mask_air_roi(self):
+        """A non-rectangular MaskROI air_roi flows through the TPX3 histogram pipeline over a
+        bin-edge tof coord: air-region mean -> 1.0 per tof bin, the N+1 bin-edge tof axis survives,
+        variance stays finite, and the mask is recorded as its JSON provenance summary.
+        """
+        from neunorm.data_models.roi import MaskROI
+
+        # L-shaped (non-rectangular) selection -> exercises the mask reduction path, not as_roi_bounds.
+        sel = np.zeros((32, 32), dtype=bool)
+        sel[0:10, 0:5] = True
+        sel[0:5, 0:10] = True
+        mask = MaskROI(selection=sel)
+
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx3_histogram_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                air_roi=mask,
+            )
+            assert output_path.exists()
+
+            assert transmission.shape == (5, 32, 32)
+            # Bin-edge tof axis (N+1 edges) survives the MaskROI air correction untouched.
+            assert transmission.coords["tof"].sizes["tof"] == transmission.sizes["tof"] + 1
+            np.testing.assert_allclose(transmission.values, 1.0, rtol=1e-5)
+            assert np.all(np.isfinite(transmission.variances))
+            assert np.all(transmission.variances >= 0.0)
+
+            with h5py.File(output_path, "r") as hf:
+                assert "metadata/air_roi" in hf
+                assert json.loads(hf["metadata/air_roi"].asstr()[()]) == {"mask": mask.provenance_summary()}
+
     def test_venus_tpx3_histogram_pipeline_invalid_paths(self):
         """Check error when the length of tiff and hdf5 paths do not match."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
