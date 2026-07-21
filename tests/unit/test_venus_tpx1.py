@@ -72,11 +72,11 @@ class TestVenusTPX1Pipeline:
             Image.fromarray(data).save(filename)
             cls.ob_tiff_paths.append(filename)
 
-        # Co-located spectra: 6 rows (N+1) so the tof coord is treated as bin edges (0.1..0.6),
-        # matching the wavelength/energy/rebin assertions below. (Real autoreduce data has one row
-        # per image; the centers case is covered by test_venus_tpx1_real_data_topology_default_path.)
-        _write_spectra(sample_image_dir / "sample_Spectra.txt", [round(0.1 * (i + 1), 1) for i in range(6)])
-        _write_spectra(ob_image_dir / "ob_Spectra.txt", [round(0.1 * (i + 1), 1) for i in range(6)])
+        # Co-located spectra: 5 rows = one LEFT bin edge per image (real autoreduce topology). The
+        # pipeline appends the closing edge -> N+1 bin edges [0.1..0.6], matching the
+        # wavelength/energy/rebin assertions below.
+        _write_spectra(sample_image_dir / "sample_Spectra.txt", [round(0.1 * (i + 1), 1) for i in range(5)])
+        _write_spectra(ob_image_dir / "ob_Spectra.txt", [round(0.1 * (i + 1), 1) for i in range(5)])
 
         # DECOY raw dir recorded in the DAS log, with a DIFFERENT frame count (8). If the fix
         # regresses to DAS-log resolution, assigning a length-8 coord onto the length-5 image stack
@@ -467,9 +467,10 @@ class TestVenusTPX1Pipeline:
         np.testing.assert_allclose(transmission.coords["tof"].values, [0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
 
     def test_venus_tpx1_real_data_topology_default_path(self):
-        """Real autoreduce topology: the co-located spectra has exactly one row per image (N TOF
-        centers, not N+1 edges) — the shape of actual VENUS TPX1 data that #187 crashed on. The
-        default (non-rebin) pipeline must run and produce a length-N tof coord from that sidecar.
+        """Real autoreduce topology: the co-located spectra has exactly one row per image (N LEFT
+        bin edges) — the shape of actual VENUS TPX1 data that #187 crashed on. The pipeline appends
+        the closing edge, so the default (non-rebin) pipeline runs and produces an N+1 bin-edge tof
+        coord from that sidecar.
         """
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
@@ -487,7 +488,7 @@ class TestVenusTPX1Pipeline:
                 Image.fromarray(np.full((8, 8), 99 + i, dtype=np.float32)).save(op)
                 ob_tiffs.append(op)
 
-            # N (=5) co-located spectra rows — the real-data centers shape
+            # N (=5) co-located spectra rows — one LEFT bin edge per image (real-data shape)
             _write_spectra(sample_dir / "s_Spectra.txt", [round(0.1 * (i + 1), 1) for i in range(5)])
             _write_spectra(ob_dir / "o_Spectra.txt", [round(0.1 * (i + 1), 1) for i in range(5)])
             # decoy raw dir with a different frame count, recorded in the DAS log
@@ -511,9 +512,9 @@ class TestVenusTPX1Pipeline:
 
                 assert output_path.exists()
 
-        # length-N (5) tof coord, one value per image, taken from the co-located sidecar
+        # 5 images = 5 bins; the 5 left edges + appended closing edge => 6 bin edges [0.1..0.6]
         assert transmission.shape == (5, 8, 8)
-        assert transmission.coords["tof"].sizes["tof"] == 5
-        np.testing.assert_allclose(transmission.coords["tof"].values, [0.1, 0.2, 0.3, 0.4, 0.5])
+        assert transmission.coords["tof"].sizes["tof"] == 6
+        np.testing.assert_allclose(transmission.coords["tof"].values, [0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
         for i in range(5):
             np.testing.assert_allclose(transmission.values[i], (81 + i) / (99 + i) * 2)

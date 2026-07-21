@@ -28,6 +28,22 @@ from neunorm.tof.statistics_analyzer import analyze_statistics
 from neunorm.utils.constants import VENUS_FLIGHT_PATH_M
 
 
+def _tof_bin_edges_from_left_edges(spectra_tof: sc.Variable) -> sc.Variable:
+    """Build N+1 TOF bin edges from the per-frame LEFT edges.
+
+    The VENUS TPX1 ``*_Spectra.txt`` ``shutter_time`` column gives the LEFT (opening) edge of each
+    frame's TOF bin — one value per image, i.e. N left edges for N frames. scipp histograms need
+    N+1 bin edges, so the closing edge (right edge of the last bin) is appended using the last bin's
+    width. This makes ``tof`` a proper bin-edge axis so ``rebin_by_tof`` works (GitHub #187). A
+    single-frame stack (N < 2) has no inferable width and is returned unchanged.
+    """
+    values = spectra_tof.values
+    if values.size < 2:
+        return spectra_tof.rename_dims({"N_image": "tof"})
+    closing = values[-1] + (values[-1] - values[-2])
+    return sc.array(dims=["tof"], values=np.append(values, closing), unit=spectra_tof.unit)
+
+
 def run_venus_tpx1_pipeline(  # noqa: C901
     sample_hdf5_paths: Sequence[str | Path],
     ob_hdf5_paths: Sequence[str | Path],
@@ -131,9 +147,10 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         # Attach metadata as coordinates to the sample DataArray for later use in normalization and rebinning
         for key, value in metadata.items():
             if key == "spectra_tof":
-                # replace N_image dim with TOF from spectra_tof
+                # spectra_tof holds per-frame LEFT bin edges; build N+1 bin edges so tof is a
+                # proper bin-edge axis and rebin_by_tof works (#187).
                 sample = sample.rename_dims({"N_image": "tof"})
-                sample.coords["tof"] = metadata["spectra_tof"].rename_dims({"N_image": "tof"})
+                sample.coords["tof"] = _tof_bin_edges_from_left_edges(value)
             else:
                 sample.coords[key] = value
                 sample.coords.set_aligned(key, False)
@@ -151,9 +168,10 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         # Attach metadata as coordinates to the OB DataArray for later use in normalization and rebinning
         for key, value in metadata.items():
             if key == "spectra_tof":
-                # replace N_image dim with TOF from spectra_tof
+                # spectra_tof holds per-frame LEFT bin edges; build N+1 bin edges so tof is a
+                # proper bin-edge axis and rebin_by_tof works (#187).
                 ob_run = ob_run.rename_dims({"N_image": "tof"})
-                ob_run.coords["tof"] = metadata["spectra_tof"].rename_dims({"N_image": "tof"})
+                ob_run.coords["tof"] = _tof_bin_edges_from_left_edges(value)
             else:
                 ob_run.coords[key] = value
                 ob_run.coords.set_aligned(key, False)
