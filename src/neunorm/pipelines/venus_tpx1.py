@@ -29,17 +29,18 @@ from neunorm.utils.constants import VENUS_FLIGHT_PATH_M
 
 
 def _tof_bin_edges_from_left_edges(spectra_tof: sc.Variable) -> sc.Variable:
-    """Build N+1 TOF bin edges from the per-frame LEFT edges.
+    """Build N+1 TOF bin edges from the N per-frame LEFT edges.
 
     The VENUS TPX1 ``*_Spectra.txt`` ``shutter_time`` column gives the LEFT (opening) edge of each
     frame's TOF bin — one value per image, i.e. N left edges for N frames. scipp histograms need
-    N+1 bin edges, so the closing edge (right edge of the last bin) is appended using the last bin's
-    width. This makes ``tof`` a proper bin-edge axis so ``rebin_by_tof`` works (GitHub #187). A
-    single-frame stack (N < 2) has no inferable width and is returned unchanged.
+    N+1 bin edges, so the closing edge (right edge of the last bin) is appended. Its width is
+    extrapolated from the last observed step, which is exact for VENUS's fixed-width TOF grid.
+    This makes ``tof`` a proper bin-edge axis so ``rebin_by_tof`` works (GitHub #187).
+
+    ``spectra_tof`` always has >= 2 rows here: ``load_spectra_tof`` rejects a single-row sidecar
+    before this is reached, and real TPX1 acquisitions have thousands of frames.
     """
     values = spectra_tof.values
-    if values.size < 2:
-        return spectra_tof.rename_dims({"N_image": "tof"})
     closing = values[-1] + (values[-1] - values[-2])
     return sc.array(dims=["tof"], values=np.append(values, closing), unit=spectra_tof.unit)
 

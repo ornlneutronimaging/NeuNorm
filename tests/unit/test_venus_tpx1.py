@@ -10,7 +10,7 @@ from PIL import Image
 from scitiff.io import load_scitiff
 
 from neunorm import __version__
-from neunorm.pipelines.venus_tpx1 import run_venus_tpx1_pipeline
+from neunorm.pipelines.venus_tpx1 import _tof_bin_edges_from_left_edges, run_venus_tpx1_pipeline
 
 
 def _write_spectra(path, tof_values):
@@ -32,6 +32,20 @@ def _write_nexus(path, proton_charge, das_image_path, include_time_offset=True):
         if include_time_offset:
             daslogs.create_group("BL10:Det:TH:DSPT1:TIDelay").create_dataset("average_value", data=[5000])
         daslogs.create_group("BL10:Exp:Det").create_dataset("value_strings", data=[[b"MCP TPX1"]])
+
+
+def test_tof_bin_edges_from_left_edges_non_uniform():
+    """The appended closing edge extrapolates the LAST bin's width, verified on non-uniform edges.
+
+    Left edges [0.1, 0.2, 0.4, 0.7] have widths [0.1, 0.2, 0.3], so the closing edge is
+    0.7 + 0.3 = 1.0 — which distinguishes the ``last + (last - prev)`` rule from a first-width
+    or average-width formula (uniform fixtures could not).
+    """
+    left = sc.array(dims=["N_image"], values=[0.1, 0.2, 0.4, 0.7], unit="s")
+    edges = _tof_bin_edges_from_left_edges(left)
+    assert edges.dims == ("tof",)
+    assert edges.unit == sc.Unit("s")
+    np.testing.assert_allclose(edges.values, [0.1, 0.2, 0.4, 0.7, 1.0])
 
 
 class TestVenusTPX1Pipeline:
@@ -448,9 +462,10 @@ class TestVenusTPX1Pipeline:
         not the raw dir recorded in the DAS log.
 
         The shared fixture's DAS log points at a decoy raw dir whose spectra has 8 rows; the
-        co-located sidecar has 6 (0.1..0.6). Reading the decoy would raise scipp DimensionError
-        (length-8 coord onto a length-5 stack). A successful run whose tof equals the co-located
-        values proves the fix.
+        co-located sidecar has 5 rows (left edges 0.1..0.5), which the pipeline turns into 6 bin
+        edges (0.1..0.6). Reading the decoy would raise scipp DimensionError (a mismatched-length
+        coord onto the length-5 stack). A successful run whose tof equals the co-located edges
+        proves the fix.
         """
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
@@ -463,7 +478,7 @@ class TestVenusTPX1Pipeline:
                 output_path=output_path,
             )
 
-        # tof came from the co-located sidecar (6 rows), NOT the decoy raw dir (8 rows: 0.05..0.4)
+        # tof from the co-located sidecar (5 left edges -> 6 bin edges), NOT the decoy raw dir (8 rows)
         np.testing.assert_allclose(transmission.coords["tof"].values, [0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
 
     def test_venus_tpx1_real_data_topology_default_path(self):

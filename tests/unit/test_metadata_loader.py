@@ -98,8 +98,8 @@ class TestMetadataLoader:
 
         assert "spectra_tof" in metadata
         assert sc.identical(metadata["spectra_tof"], sc.array(dims=["N_image"], values=[0.1, 0.2, 0.3, 0.4], unit="s"))
-        # image_file_path now reflects the real read directory, not the DAS-log value (#187)
-        assert sc.identical(metadata["image_file_path"], sc.scalar(str(real_dir)))
+        # image_file_path now reflects the real read directory (resolved), not the DAS-log value (#187)
+        assert sc.identical(metadata["image_file_path"], sc.scalar(str(real_dir.resolve())))
 
     def test_load_metadata_image_dir_overrides_daslog_for_shutter_counts(self):
         """#187: shutter counts are read from image_dir too (same resolution path as spectra)."""
