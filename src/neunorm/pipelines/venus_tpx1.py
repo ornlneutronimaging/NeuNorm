@@ -122,7 +122,9 @@ def run_venus_tpx1_pipeline(  # noqa: C901
 
     # Load data from TIFF files and metadata from HDF5 files
     for hdf5_path, tiff_paths in zip(sample_hdf5_paths, sample_tiff_paths):
-        metadata = load_metadata(hdf5_path, read_spectra_tof=True)
+        # Read the spectra TOF sidecar from the directory the images actually came from (the
+        # auto-reduction tree), not the raw-acquisition path in the DAS log — see GitHub #187.
+        metadata = load_metadata(hdf5_path, read_spectra_tof=True, image_dir=Path(tiff_paths[0]).parent)
         sample = load_tiff_stack(tiff_paths)
         # Attach metadata as coordinates to the sample DataArray for later use in normalization and rebinning
         for key, value in metadata.items():
@@ -138,7 +140,9 @@ def run_venus_tpx1_pipeline(  # noqa: C901
 
     # Load data from TIFF files and metadata from HDF5 files
     for hdf5_path, tiff_paths in zip(ob_hdf5_paths, ob_tiff_paths):
-        metadata = load_metadata(hdf5_path, read_spectra_tof=True)
+        # Read the spectra TOF sidecar from the directory the images actually came from (the
+        # auto-reduction tree), not the raw-acquisition path in the DAS log — see GitHub #187.
+        metadata = load_metadata(hdf5_path, read_spectra_tof=True, image_dir=Path(tiff_paths[0]).parent)
         ob_run = load_tiff_stack(tiff_paths)
         # Attach metadata as coordinates to the OB DataArray for later use in normalization and rebinning
         for key, value in metadata.items():

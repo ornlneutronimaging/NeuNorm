@@ -75,3 +75,39 @@ class TestMetadataLoader:
         assert sc.identical(
             metadata["shutter_counts"], sc.array(dims=["N_image"], values=[1000.0, 2000.0, 3000.0, 4000.0, 5000.0])
         )
+
+    def test_load_metadata_image_dir_overrides_daslog_for_spectra(self):
+        """#187: when image_dir is given, spectra TOF is read from THERE, not the DAS-log raw path.
+
+        A decoy ``*_Spectra.txt`` with different values sits at the DAS-log-resolved directory; the
+        loader must ignore it and read the file co-located with the caller's images instead.
+        """
+        tmp = Path(self._tmpdir.name)
+        # decoy spectra at the DAS-log-resolved dir (tmp/images) — must NOT be read
+        with open(tmp / "images" / "decoy_Spectra.txt", "w") as f:
+            for i in range(3):
+                f.write(f"{9.0 + i} 0\n")
+        # the real image directory the caller passes, with the correct spectra
+        real_dir = tmp / "autoreduce_spectra"
+        real_dir.mkdir(exist_ok=True)
+        with open(real_dir / "real_Spectra.txt", "w") as f:
+            for v in (0.1, 0.2, 0.3, 0.4):
+                f.write(f"{v} 0\n")
+
+        metadata = load_metadata(self.nexus_path, read_spectra_tof=True, image_dir=real_dir)
+
+        assert "spectra_tof" in metadata
+        assert sc.identical(metadata["spectra_tof"], sc.array(dims=["N_image"], values=[0.1, 0.2, 0.3, 0.4], unit="s"))
+
+    def test_load_metadata_image_dir_overrides_daslog_for_shutter_counts(self):
+        """#187: shutter counts are read from image_dir too (same resolution path as spectra)."""
+        tmp = Path(self._tmpdir.name)
+        real_dir = tmp / "autoreduce_shutter"
+        real_dir.mkdir(exist_ok=True)
+        with open(real_dir / "real_ShutterCount.txt", "w") as f:
+            f.write("0\t111\n1\t222\n2\t0\n")  # loader stops at the first 0 count
+
+        metadata = load_metadata(self.nexus_path, read_shutter_counts=True, image_dir=real_dir)
+
+        # values come from real_dir, not the tmp/images shutter file used by the other tests
+        assert sc.identical(metadata["shutter_counts"], sc.array(dims=["N_image"], values=[111.0, 222.0]))

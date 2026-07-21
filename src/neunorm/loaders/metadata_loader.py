@@ -6,7 +6,7 @@ VENUS NeXus files, plus optional shutter-count and spectra-TOF sidecar text file
 
 import glob
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 import h5py
 import numpy as np
@@ -15,7 +15,10 @@ from loguru import logger
 
 
 def load_metadata(  # noqa: C901
-    file_path: Union[str, Path], read_shutter_counts: bool = False, read_spectra_tof: bool = False
+    file_path: Union[str, Path],
+    read_shutter_counts: bool = False,
+    read_spectra_tof: bool = False,
+    image_dir: Optional[Union[str, Path]] = None,
 ) -> dict[str, sc.Variable]:
     """Load metadata from NeXus file.
 
@@ -24,9 +27,15 @@ def load_metadata(  # noqa: C901
     file_path : str or Path
         Path to NeXus HDF5 file containing metadata
     read_shutter_counts : bool
-        Whether to read shutter counts from the image directory specified in the metadata (default: False)
+        Whether to read shutter counts from the image directory (default: False)
     read_spectra_tof : bool
-        Whether to read spectra TOF from the image directory specified in the metadata (default: False)
+        Whether to read spectra TOF from the image directory (default: False)
+    image_dir : str or Path, optional
+        Directory the image stack was actually loaded from. When given, the ``*_Spectra.txt`` and
+        ``*_ShutterCount.txt`` sidecar files are read from here instead of the raw-acquisition
+        directory recorded in the NeXus DAS log ``BL10:Exp:IM:ImageFilePath``. This is required for
+        VENUS TPX1, whose images come from the auto-reduction tree (different frame count than raw);
+        reading the sidecars from the raw tree mismatches the image stack (GitHub #187).
     Returns
     -------
     dict
@@ -61,6 +70,12 @@ def load_metadata(  # noqa: C901
             metadata["image_file_path"] = sc.scalar(image_file_path)
             # The image path is relative to the parent directory of the HDF5 file, so we need to resolve it
             image_path = file_path.parent.parent.joinpath(image_file_path).resolve()
+
+        # The DAS log records the RAW acquisition directory, which is not necessarily where the
+        # caller's images came from. When the caller supplies the actual image directory, read the
+        # sidecar files (spectra TOF, shutter counts) from there so they match the image stack (#187).
+        if image_dir is not None:
+            image_path = Path(image_dir)
 
         if read_shutter_counts:
             metadata["shutter_counts"] = load_shutter_counts(image_path)
