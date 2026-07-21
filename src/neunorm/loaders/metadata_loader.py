@@ -35,7 +35,9 @@ def load_metadata(  # noqa: C901
         ``*_ShutterCount.txt`` sidecar files are read from here instead of the raw-acquisition
         directory recorded in the NeXus DAS log ``BL10:Exp:IM:ImageFilePath``. This is required for
         VENUS TPX1, whose images come from the auto-reduction tree (different frame count than raw);
-        reading the sidecars from the raw tree mismatches the image stack (GitHub #187).
+        reading the sidecars from the raw tree mismatches the image stack (GitHub #187). When given,
+        the returned ``image_file_path`` reflects this directory rather than the DAS-log value, so the
+        recorded provenance matches where the data was actually read.
     Returns
     -------
     dict
@@ -73,9 +75,12 @@ def load_metadata(  # noqa: C901
 
         # The DAS log records the RAW acquisition directory, which is not necessarily where the
         # caller's images came from. When the caller supplies the actual image directory, read the
-        # sidecar files (spectra TOF, shutter counts) from there so they match the image stack (#187).
+        # sidecar files (spectra TOF, shutter counts) from there so they match the image stack (#187),
+        # and record that directory as image_file_path so the stored provenance points at the real
+        # data source instead of the known-mismatched raw DAS-log path.
         if image_dir is not None:
             image_path = Path(image_dir)
+            metadata["image_file_path"] = sc.scalar(str(image_path))
 
         if read_shutter_counts:
             metadata["shutter_counts"] = load_shutter_counts(image_path)

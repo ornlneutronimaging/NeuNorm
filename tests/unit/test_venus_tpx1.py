@@ -367,6 +367,29 @@ class TestVenusTPX1Pipeline:
                     output_path=output_path,
                 )
 
+    def test_venus_tpx1_pipeline_empty_tiff_group(self):
+        """An empty inner TIFF path group is rejected with a descriptive error, not a bare IndexError."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+
+            with pytest.raises(ValueError, match=r"sample TIFF path group must contain at least one"):
+                run_venus_tpx1_pipeline(
+                    sample_tiff_paths=[[]],  # empty run group
+                    ob_tiff_paths=[self.ob_tiff_paths],
+                    sample_hdf5_paths=[self.sample_nexus_path],
+                    ob_hdf5_paths=[self.ob_nexus_path],
+                    output_path=output_path,
+                )
+
+            with pytest.raises(ValueError, match=r"OB TIFF path group must contain at least one"):
+                run_venus_tpx1_pipeline(
+                    sample_tiff_paths=[self.sample_tiff_paths],
+                    ob_tiff_paths=[[]],  # empty run group
+                    sample_hdf5_paths=[self.sample_nexus_path],
+                    ob_hdf5_paths=[self.ob_nexus_path],
+                    output_path=output_path,
+                )
+
     def test_venus_tpx1_pipeline_invalid_rebin_by_tof(self):
         """Check error for invalid rebin_by_tof values."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:

@@ -122,6 +122,8 @@ def run_venus_tpx1_pipeline(  # noqa: C901
 
     # Load data from TIFF files and metadata from HDF5 files
     for hdf5_path, tiff_paths in zip(sample_hdf5_paths, sample_tiff_paths):
+        if not tiff_paths:
+            raise ValueError("Each sample TIFF path group must contain at least one TIFF file.")
         # Read the spectra TOF sidecar from the directory the images actually came from (the
         # auto-reduction tree), not the raw-acquisition path in the DAS log — see GitHub #187.
         metadata = load_metadata(hdf5_path, read_spectra_tof=True, image_dir=Path(tiff_paths[0]).parent)
@@ -140,6 +142,8 @@ def run_venus_tpx1_pipeline(  # noqa: C901
 
     # Load data from TIFF files and metadata from HDF5 files
     for hdf5_path, tiff_paths in zip(ob_hdf5_paths, ob_tiff_paths):
+        if not tiff_paths:
+            raise ValueError("Each OB TIFF path group must contain at least one TIFF file.")
         # Read the spectra TOF sidecar from the directory the images actually came from (the
         # auto-reduction tree), not the raw-acquisition path in the DAS log — see GitHub #187.
         metadata = load_metadata(hdf5_path, read_spectra_tof=True, image_dir=Path(tiff_paths[0]).parent)
