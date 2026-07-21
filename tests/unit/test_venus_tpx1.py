@@ -10,7 +10,42 @@ from PIL import Image
 from scitiff.io import load_scitiff
 
 from neunorm import __version__
-from neunorm.pipelines.venus_tpx1 import run_venus_tpx1_pipeline
+from neunorm.pipelines.venus_tpx1 import _tof_bin_edges_from_left_edges, run_venus_tpx1_pipeline
+
+
+def _write_spectra(path, tof_values):
+    """Write a whitespace-delimited ``*_Spectra.txt`` sidecar (one TOF value per row)."""
+    with open(path, "w") as f:
+        for v in tof_values:
+            f.write(f"{v} 0\n")
+
+
+def _write_nexus(path, proton_charge, das_image_path, include_time_offset=True):
+    """Write a minimal VENUS NeXus file. ``das_image_path`` is the RAW dir recorded in the DAS log."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with h5py.File(path, "w") as f:
+        entry = f.create_group("entry")
+        entry.create_dataset("proton_charge", data=[proton_charge])
+        entry.create_dataset("duration", data=[60.0])
+        daslogs = entry.create_group("DASlogs")
+        daslogs.create_group("BL10:Exp:IM:ImageFilePath").create_dataset("value", data=[[das_image_path]])
+        if include_time_offset:
+            daslogs.create_group("BL10:Det:TH:DSPT1:TIDelay").create_dataset("average_value", data=[5000])
+        daslogs.create_group("BL10:Exp:Det").create_dataset("value_strings", data=[[b"MCP TPX1"]])
+
+
+def test_tof_bin_edges_from_left_edges_non_uniform():
+    """The appended closing edge extrapolates the LAST bin's width, verified on non-uniform edges.
+
+    Left edges [0.1, 0.2, 0.4, 0.7] have widths [0.1, 0.2, 0.3], so the closing edge is
+    0.7 + 0.3 = 1.0 — which distinguishes the ``last + (last - prev)`` rule from a first-width
+    or average-width formula (uniform fixtures could not).
+    """
+    left = sc.array(dims=["N_image"], values=[0.1, 0.2, 0.4, 0.7], unit="s")
+    edges = _tof_bin_edges_from_left_edges(left)
+    assert edges.dims == ("tof",)
+    assert edges.unit == sc.Unit("s")
+    np.testing.assert_allclose(edges.values, [0.1, 0.2, 0.4, 0.7, 1.0])
 
 
 class TestVenusTPX1Pipeline:
@@ -18,73 +53,60 @@ class TestVenusTPX1Pipeline:
 
     @classmethod
     def setup_class(cls):
-        """Create tiff files for testing once for all tests in this class."""
+        """Create tiff files (with co-located spectra) for testing once for all tests in this class.
+
+        Mirrors real VENUS TPX1 topology: the images live in the auto-reduction tree with their
+        ``*_Spectra.txt`` sidecar CO-LOCATED next to them, while the NeXus DAS log records a
+        DIFFERENT raw-acquisition directory (a decoy here) whose spectra has a different frame
+        count. The pipeline must read the co-located sidecar, not the DAS-log one (GitHub #187).
+        """
         cls.sample_tiff_paths = []
         cls.ob_tiff_paths = []
 
         cls._tmpdir = tempfile.TemporaryDirectory(delete=False)
         tmp_dir = Path(cls._tmpdir.name)
 
-        # create 5 sample tiffs with values 81-85 and metadata.
+        # Images + co-located spectra live in the auto-reduction tree (where the pipeline reads).
+        sample_image_dir = tmp_dir / "autoreduce" / "sample"
+        ob_image_dir = tmp_dir / "autoreduce" / "ob"
+        sample_image_dir.mkdir(parents=True, exist_ok=True)
+        ob_image_dir.mkdir(parents=True, exist_ok=True)
+
+        # create 5 sample tiffs with values 81-85
         for i in range(5):
             data = np.full((32, 32), 81 + i, dtype=np.float32)
-            img = Image.fromarray(data)
-            filename = tmp_dir / f"sample_{i:03}.tiff"
-            img.save(filename)
+            filename = sample_image_dir / f"sample_{i:03}.tiff"
+            Image.fromarray(data).save(filename)
             cls.sample_tiff_paths.append(filename)
 
-        # create 5 OB tiffs with values 99, 100, 101, 102, 103 and metadata
+        # create 5 OB tiffs with values 99, 100, 101, 102, 103
         for i in range(5):
             data = np.full((32, 32), 99 + i, dtype=np.float32)
-            img = Image.fromarray(data)
-            filename = tmp_dir / f"ob_{i:03}.tiff"
-            img.save(filename)
+            filename = ob_image_dir / f"ob_{i:03}.tiff"
+            Image.fromarray(data).save(filename)
             cls.ob_tiff_paths.append(filename)
 
-        # Create temporary HDF5 file with minimal metadata
+        # Co-located spectra: 5 rows = one LEFT bin edge per image (real autoreduce topology). The
+        # pipeline appends the closing edge -> N+1 bin edges [0.1..0.6], matching the
+        # wavelength/energy/rebin assertions below.
+        _write_spectra(sample_image_dir / "sample_Spectra.txt", [round(0.1 * (i + 1), 1) for i in range(5)])
+        _write_spectra(ob_image_dir / "ob_Spectra.txt", [round(0.1 * (i + 1), 1) for i in range(5)])
+
+        # DECOY raw dir recorded in the DAS log, with a DIFFERENT frame count (8). If the fix
+        # regresses to DAS-log resolution, assigning a length-8 coord onto the length-5 image stack
+        # raises scipp DimensionError and every pipeline test fails — the #187 regression guard.
+        sample_raw_dir = tmp_dir / "raw" / "sample"
+        ob_raw_dir = tmp_dir / "raw" / "ob"
+        sample_raw_dir.mkdir(parents=True, exist_ok=True)
+        ob_raw_dir.mkdir(parents=True, exist_ok=True)
+        _write_spectra(sample_raw_dir / "raw_Spectra.txt", [round(0.05 * (i + 1), 2) for i in range(8)])
+        _write_spectra(ob_raw_dir / "raw_Spectra.txt", [round(0.05 * (i + 1), 2) for i in range(8)])
+
+        # NeXus files; DAS log points at the raw decoy (relative to the NeXus grandparent = tmp_dir).
         cls.sample_nexus_path = tmp_dir / "nexus" / "test_sample_metadata.nxs.h5"
-        cls.sample_nexus_path.parent.mkdir(parents=True, exist_ok=True)
-        with h5py.File(cls.sample_nexus_path, "w") as f:
-            entry = f.create_group("entry")
-            entry.create_dataset("proton_charge", data=[12345])
-            entry.create_dataset("duration", data=[60.0])
-            daslogs = entry.create_group("DASlogs")
-            image_file_path = daslogs.create_group("BL10:Exp:IM:ImageFilePath")
-            image_file_path.create_dataset("value", data=[[b"images/sample"]])
-            time_offset_path = daslogs.create_group("BL10:Det:TH:DSPT1:TIDelay")
-            time_offset_path.create_dataset("average_value", data=[5000])
-            detector_path = daslogs.create_group("BL10:Exp:Det")
-            detector_path.create_dataset("value_strings", data=[[b"MCP TPX1"]])
-
-        # Also create a directory for the image file and a spectra TOF file
-        image_dir = tmp_dir / "images" / "sample"
-        image_dir.mkdir(exist_ok=True, parents=True)
-        spectra_tof_file = image_dir / "test_Spectra.txt"
-        with open(spectra_tof_file, "w") as f:
-            for i in range(6):
-                f.write(f"{i * 0.1 + 0.1} 0\n")
-
+        _write_nexus(cls.sample_nexus_path, 12345, b"raw/sample")
         cls.ob_nexus_path = tmp_dir / "nexus" / "test_ob_metadata.nxs.h5"
-        cls.ob_nexus_path.parent.mkdir(parents=True, exist_ok=True)
-        with h5py.File(cls.ob_nexus_path, "w") as f:
-            entry = f.create_group("entry")
-            entry.create_dataset("proton_charge", data=[12345 * 2])
-            entry.create_dataset("duration", data=[60.0])
-            daslogs = entry.create_group("DASlogs")
-            image_file_path = daslogs.create_group("BL10:Exp:IM:ImageFilePath")
-            image_file_path.create_dataset("value", data=[[b"images/ob"]])
-            time_offset_path = daslogs.create_group("BL10:Det:TH:DSPT1:TIDelay")
-            time_offset_path.create_dataset("average_value", data=[5000])
-            detector_path = daslogs.create_group("BL10:Exp:Det")
-            detector_path.create_dataset("value_strings", data=[[b"MCP TPX1"]])
-
-        # Also create a directory for the image file and a spectra TOF file
-        image_dir = tmp_dir / "images" / "ob"
-        image_dir.mkdir(exist_ok=True, parents=True)
-        spectra_tof_file = image_dir / "test_Spectra.txt"
-        with open(spectra_tof_file, "w") as f:
-            for i in range(6):
-                f.write(f"{i * 0.1 + 0.1} 0\n")
+        _write_nexus(cls.ob_nexus_path, 12345 * 2, b"raw/ob")
 
     @classmethod
     def teardown_class(cls):
@@ -359,6 +381,29 @@ class TestVenusTPX1Pipeline:
                     output_path=output_path,
                 )
 
+    def test_venus_tpx1_pipeline_empty_tiff_group(self):
+        """An empty inner TIFF path group is rejected with a descriptive error, not a bare IndexError."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+
+            with pytest.raises(ValueError, match=r"sample TIFF path group must contain at least one"):
+                run_venus_tpx1_pipeline(
+                    sample_tiff_paths=[[]],  # empty run group
+                    ob_tiff_paths=[self.ob_tiff_paths],
+                    sample_hdf5_paths=[self.sample_nexus_path],
+                    ob_hdf5_paths=[self.ob_nexus_path],
+                    output_path=output_path,
+                )
+
+            with pytest.raises(ValueError, match=r"OB TIFF path group must contain at least one"):
+                run_venus_tpx1_pipeline(
+                    sample_tiff_paths=[self.sample_tiff_paths],
+                    ob_tiff_paths=[[]],  # empty run group
+                    sample_hdf5_paths=[self.sample_nexus_path],
+                    ob_hdf5_paths=[self.ob_nexus_path],
+                    output_path=output_path,
+                )
+
     def test_venus_tpx1_pipeline_invalid_rebin_by_tof(self):
         """Check error for invalid rebin_by_tof values."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
@@ -392,15 +437,7 @@ class TestVenusTPX1Pipeline:
         """Check warning when detector_time_offset is missing."""
 
         path = Path(self._tmpdir.name) / "nexus" / "test_missing_detector_time_offset.nxs.h5"
-        with h5py.File(path, "w") as f:
-            entry = f.create_group("entry")
-            entry.create_dataset("proton_charge", data=[12345])
-            entry.create_dataset("duration", data=[60.0])
-            daslogs = entry.create_group("DASlogs")
-            image_file_path = daslogs.create_group("BL10:Exp:IM:ImageFilePath")
-            image_file_path.create_dataset("value", data=[[b"images/sample"]])
-            detector_path = daslogs.create_group("BL10:Exp:Det")
-            detector_path.create_dataset("value_strings", data=[[b"MCP TPX1"]])
+        _write_nexus(path, 12345, b"raw/sample", include_time_offset=False)
 
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
@@ -419,3 +456,80 @@ class TestVenusTPX1Pipeline:
         assert "tof" in transmission.coords
         assert "wavelength" not in transmission.coords
         assert "energy" not in transmission.coords
+
+    def test_venus_tpx1_reads_spectra_from_image_dir_not_daslog(self):
+        """#187 regression: the TOF axis must come from the spectra co-located with the images,
+        not the raw dir recorded in the DAS log.
+
+        The shared fixture's DAS log points at a decoy raw dir whose spectra has 8 rows; the
+        co-located sidecar has 5 rows (left edges 0.1..0.5), which the pipeline turns into 6 bin
+        edges (0.1..0.6). Reading the decoy would raise scipp DimensionError (a mismatched-length
+        coord onto the length-5 stack). A successful run whose tof equals the co-located edges
+        proves the fix.
+        """
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+            )
+
+        # tof from the co-located sidecar (5 left edges -> 6 bin edges), NOT the decoy raw dir (8 rows)
+        np.testing.assert_allclose(transmission.coords["tof"].values, [0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+
+    def test_venus_tpx1_real_data_topology_default_path(self):
+        """Real autoreduce topology: the co-located spectra has exactly one row per image (N LEFT
+        bin edges) — the shape of actual VENUS TPX1 data that #187 crashed on. The pipeline appends
+        the closing edge, so the default (non-rebin) pipeline runs and produces an N+1 bin-edge tof
+        coord from that sidecar.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            sample_dir = tmp / "autoreduce" / "sample"
+            ob_dir = tmp / "autoreduce" / "ob"
+            sample_dir.mkdir(parents=True)
+            ob_dir.mkdir(parents=True)
+
+            sample_tiffs, ob_tiffs = [], []
+            for i in range(5):
+                sp = sample_dir / f"s_{i:03}.tiff"
+                Image.fromarray(np.full((8, 8), 81 + i, dtype=np.float32)).save(sp)
+                sample_tiffs.append(sp)
+                op = ob_dir / f"o_{i:03}.tiff"
+                Image.fromarray(np.full((8, 8), 99 + i, dtype=np.float32)).save(op)
+                ob_tiffs.append(op)
+
+            # N (=5) co-located spectra rows — one LEFT bin edge per image (real-data shape)
+            _write_spectra(sample_dir / "s_Spectra.txt", [round(0.1 * (i + 1), 1) for i in range(5)])
+            _write_spectra(ob_dir / "o_Spectra.txt", [round(0.1 * (i + 1), 1) for i in range(5)])
+            # decoy raw dir with a different frame count, recorded in the DAS log
+            (tmp / "raw" / "sample").mkdir(parents=True)
+            (tmp / "raw" / "ob").mkdir(parents=True)
+            _write_spectra(tmp / "raw" / "sample" / "r_Spectra.txt", [round(0.05 * (i + 1), 2) for i in range(7)])
+            _write_spectra(tmp / "raw" / "ob" / "r_Spectra.txt", [round(0.05 * (i + 1), 2) for i in range(7)])
+            _write_nexus(tmp / "nexus" / "s.nxs.h5", 12345, b"raw/sample")
+            _write_nexus(tmp / "nexus" / "o.nxs.h5", 12345 * 2, b"raw/ob")
+
+            with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+                output_path = Path(f.name)
+
+                transmission = run_venus_tpx1_pipeline(
+                    sample_tiff_paths=[sample_tiffs],
+                    ob_tiff_paths=[ob_tiffs],
+                    sample_hdf5_paths=[tmp / "nexus" / "s.nxs.h5"],
+                    ob_hdf5_paths=[tmp / "nexus" / "o.nxs.h5"],
+                    output_path=output_path,
+                )
+
+                assert output_path.exists()
+
+        # 5 images = 5 bins; the 5 left edges + appended closing edge => 6 bin edges [0.1..0.6]
+        assert transmission.shape == (5, 8, 8)
+        assert transmission.coords["tof"].sizes["tof"] == 6
+        np.testing.assert_allclose(transmission.coords["tof"].values, [0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+        for i in range(5):
+            np.testing.assert_allclose(transmission.values[i], (81 + i) / (99 + i) * 2)
