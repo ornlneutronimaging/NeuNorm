@@ -170,6 +170,61 @@ def reduce_tof_bins(
 DROPPED_FRAMES_MASK = "dropped_frames"
 
 
+def _parse_bin_list(bin_list: Sequence[Sequence[int]]) -> list[tuple[int, int]]:
+    """Coerce a user bin list to integer ``(start, stop)`` pairs, rejecting malformed entries."""
+    if len(bin_list) == 0:
+        raise ValueError("bin_list must contain at least one [start, stop) range")
+    ranges: list[tuple[int, int]] = []
+    for entry in bin_list:
+        if isinstance(entry, (str, bytes)):
+            raise ValueError(f"each bin must be a [start, stop] pair of integers; got {entry!r}")
+        try:
+            pair = tuple(entry)
+        except TypeError:
+            raise ValueError(f"each bin must be a [start, stop] pair of integers; got {entry!r}") from None
+        if len(pair) != 2:
+            raise ValueError(f"each bin must be a [start, stop] pair (exactly two indices); got {entry!r}")
+        start, stop = pair
+        if (
+            isinstance(start, bool)
+            or isinstance(stop, bool)
+            or not isinstance(start, (int, np.integer))
+            or not isinstance(stop, (int, np.integer))
+        ):
+            raise ValueError(f"bin indices must be integers; got [{start!r}, {stop!r}]")
+        ranges.append((int(start), int(stop)))
+    return ranges
+
+
+def _validate_bin_list(ranges: list[tuple[int, int]], n_frames: int) -> None:
+    """Reject out-of-bounds, empty/reversed, unordered, or overlapping ranges.
+
+    Interior gaps between bins are legitimate (the user may drop frames) and are NOT flagged here.
+    """
+    for start, stop in ranges:
+        if start < 0 or stop > n_frames:
+            raise ValueError(
+                f"bin [{start}, {stop}) is out of bounds for a TOF axis of {n_frames} frames "
+                f"(require 0 <= start < stop <= {n_frames})"
+            )
+        if start >= stop:
+            raise ValueError(
+                f"bin [{start}, {stop}) is empty or reversed: require start < stop "
+                "(half-open, at least one frame per bin)"
+            )
+    for (prev_start, prev_stop), (start, stop) in zip(ranges[:-1], ranges[1:]):
+        if start < prev_stop:
+            if start >= prev_start:
+                raise ValueError(
+                    f"bins overlap: [{prev_start}, {prev_stop}) and [{start}, {stop}) share frame(s); "
+                    "bins must be disjoint (gaps between bins are allowed, overlaps are not)"
+                )
+            raise ValueError(
+                f"bins must be given in increasing order; bin [{start}, {stop}) starts before the "
+                f"preceding bin [{prev_start}, {prev_stop})"
+            )
+
+
 def rebin_tof_by_list(
     data: sc.DataArray,
     bin_list: Sequence[Sequence[int]],
@@ -217,9 +272,10 @@ def rebin_tof_by_list(
         If ``bin_list`` is empty, or (via :func:`reduce_tof_bins`) a range is out of bounds,
         non-increasing, overlapping, or unordered.
     """
-    ranges = [(int(start), int(stop)) for start, stop in bin_list]
-    if len(ranges) == 0:
-        raise ValueError("bin_list must contain at least one [start, stop) range")
+    ranges = _parse_bin_list(bin_list)
+    if tof_dim not in data.dims:
+        raise ValueError(f"TOF dimension '{tof_dim}' not found in data dimensions {data.dims}")
+    _validate_bin_list(ranges, data.sizes[tof_dim])
 
     # Fill interior gaps with explicit bins so the reduced axis is contiguous, tracking which
     # output bins are dropped-frame gaps. Overlaps/unordered ranges are left for reduce_tof_bins

@@ -262,7 +262,7 @@ def test_list_leading_and_trailing_frames_excluded():
 
 def test_list_overlap_rejected():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
-    with pytest.raises(ValueError, match="contiguous"):
+    with pytest.raises(ValueError, match="overlap"):
         rebin_tof_by_list(data, [[0, 3], [2, 5]])  # overlap on frame 2
 
 
@@ -270,3 +270,52 @@ def test_list_empty_raises():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
     with pytest.raises(ValueError, match="at least one"):
         rebin_tof_by_list(data, [])
+
+
+# --------------------------------------------------------------------------------------------
+# rebin_tof_by_list — dedicated bin-list validation & clear errors (Task 3)
+# --------------------------------------------------------------------------------------------
+
+
+def test_validate_out_of_bounds():
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    with pytest.raises(ValueError, match="out of bounds"):
+        rebin_tof_by_list(data, [[0, 2], [3, 6]])  # stop 6 > 5 frames
+    with pytest.raises(ValueError, match="out of bounds"):
+        rebin_tof_by_list(data, [[-1, 2]])  # negative start
+
+
+def test_validate_empty_or_reversed_bin():
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    with pytest.raises(ValueError, match="empty or reversed"):
+        rebin_tof_by_list(data, [[2, 2]])  # zero-width
+    with pytest.raises(ValueError, match="empty or reversed"):
+        rebin_tof_by_list(data, [[3, 1]])  # reversed
+
+
+def test_validate_unordered_bins():
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    with pytest.raises(ValueError, match="increasing order"):
+        rebin_tof_by_list(data, [[3, 5], [0, 2]])  # out of order
+
+
+def test_validate_malformed_structure():
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    with pytest.raises(ValueError, match="pair"):
+        rebin_tof_by_list(data, [[0, 2, 4]])  # three indices, not a pair
+    with pytest.raises(ValueError, match="pair"):
+        rebin_tof_by_list(data, [5])  # scalar entry, not a pair
+
+
+def test_validate_non_integer_indices():
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    with pytest.raises(ValueError, match="integers"):
+        rebin_tof_by_list(data, [[0.0, 2.5]])  # float indices
+
+
+def test_validate_gaps_still_allowed():
+    """Validation must NOT reject a legitimate between-bin gap (regression for Task 2 behavior)."""
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    out = rebin_tof_by_list(data, [[0, 2], [3, 5]])  # frame 2 dropped -> gap bin, no error
+    assert out.sizes["tof"] == 3
+    np.testing.assert_array_equal(out.masks[DROPPED_FRAMES_MASK].values, [False, True, False])
