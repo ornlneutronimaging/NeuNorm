@@ -8,15 +8,15 @@ from loguru import logger
 from neunorm.tof.flexible_rebinner import DROPPED_FRAMES_MASK, rebin_tof_by_list, reduce_tof_bins
 
 
-def _stack(frame_values, variances=None, ny=2, nx=2, edges=None):
+def _stack(frame_values, variances=None, ny=2, nx=2, edges=None, dtype="float64"):
     """Build a (tof, y, x) stack where each frame is filled with one constant value.
 
     Constant-per-frame values make the reduction math easy to assert while still exercising
     the real (tof, y, x) shape, spatial coords, and — via the ``edges`` arg — a bin-edge tof
-    coordinate of length N+1.
+    coordinate of length N+1. ``dtype`` allows integer fixtures (which carry no variances).
     """
     n = len(frame_values)
-    vals = np.empty((n, ny, nx), dtype="float64")
+    vals = np.empty((n, ny, nx), dtype=dtype)
     for i, v in enumerate(frame_values):
         vals[i] = v
     kwargs = {}
@@ -76,19 +76,39 @@ def test_default_reduction_is_mean():
     np.testing.assert_allclose(default.variances, explicit.variances)
 
 
-def test_median_values_and_approx_variance_with_warning():
+def test_median_two_frame_bin_variance_is_exact_no_warning():
+    """A 2-frame bin's median EQUALS the mean, so its variance is exactly Var(mean) — no pi/2,
+    no warning. (Independent oracle: median([10,20])=15; Var of the average of two var-4 frames
+    is (4+4)/4 = 2, NOT the (pi/2)*2 the large-N formula would give.)"""
     data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
     messages, remove = _capture_warnings()
     try:
         out = reduce_tof_bins(data, [(0, 2), (2, 4)], reduction="median")
     finally:
         remove()
-    # median of a 2-element bin is the mean of the two middle values
     np.testing.assert_allclose(out.values[0], 15)
     np.testing.assert_allclose(out.values[1], 35)
-    # Var(median) ~= (pi/2) * Var(mean); Var(mean) = 8/4 = 2 -> (pi/2)*2
-    np.testing.assert_allclose(out.variances[0], (np.pi / 2) * 2)
-    np.testing.assert_allclose(out.variances[1], (np.pi / 2) * 2)
+    np.testing.assert_allclose(out.variances[0], 2.0)  # exact Var(mean), NOT (pi/2)*2
+    np.testing.assert_allclose(out.variances[1], 2.0)
+    assert not any("median" in m.lower() and "approxim" in m.lower() for m in messages)
+
+
+def test_median_large_bin_variance_is_pi_over_2_approx_with_warning():
+    """For N>=3 the median variance uses the large-N approximation (pi/2)*Var(mean) and warns.
+
+    Independent oracle: a 3-frame bin of equal var-4 frames has Var(mean) = (4+4+4)/3**2 = 4/3,
+    and the median of three sorted values is the middle one.
+    """
+    data = _stack([10, 20, 30, 40, 50, 60], variances=[4, 4, 4, 4, 4, 4])
+    messages, remove = _capture_warnings()
+    try:
+        out = reduce_tof_bins(data, [(0, 3), (3, 6)], reduction="median")
+    finally:
+        remove()
+    np.testing.assert_allclose(out.values[0], 20)  # median(10, 20, 30)
+    np.testing.assert_allclose(out.values[1], 50)  # median(40, 50, 60)
+    np.testing.assert_allclose(out.variances[0], (np.pi / 2) * (4.0 / 3.0))
+    np.testing.assert_allclose(out.variances[1], (np.pi / 2) * (4.0 / 3.0))
     assert any("median" in m.lower() and "approxim" in m.lower() for m in messages)
 
 
@@ -319,3 +339,47 @@ def test_validate_gaps_still_allowed():
     out = rebin_tof_by_list(data, [[0, 2], [3, 5]])  # frame 2 dropped -> gap bin, no error
     assert out.sizes["tof"] == 3
     np.testing.assert_array_equal(out.masks[DROPPED_FRAMES_MASK].values, [False, True, False])
+
+
+# --------------------------------------------------------------------------------------------
+# Integer-dtype input paths (raw counts) — review findings F2 (median) and F1 (sum + gap)
+# --------------------------------------------------------------------------------------------
+
+
+def test_median_on_integer_data_promotes_no_crash():
+    """median on an integer stack (raw counts, no variances) must not crash — sc.median promotes."""
+    data = _stack([10, 20, 30, 40], dtype="int64")  # integer, carries no variances
+    out = reduce_tof_bins(data, [(0, 2), (2, 4)], reduction="median")
+    assert np.issubdtype(out.values.dtype, np.floating)
+    assert out.variances is None
+    np.testing.assert_allclose(out.values[0], 15)  # median(10, 20)
+    np.testing.assert_allclose(out.values[1], 35)  # median(30, 40)
+
+
+def test_sum_gap_on_integer_data_promotes_no_crash():
+    """sum + interior gap on an integer stack must not crash: result is promoted to float for NaN."""
+    data = _stack([10, 20, 30, 40, 50], dtype="int64")  # integer, no variances
+    out = rebin_tof_by_list(data, [[0, 2], [3, 5]], reduction="sum")  # frame 2 dropped -> gap
+    assert np.issubdtype(out.values.dtype, np.floating)
+    np.testing.assert_allclose(out.values[0], 30)  # sum(10, 20)
+    np.testing.assert_allclose(out.values[2], 90)  # sum(40, 50)
+    assert np.isnan(out.values[1]).all()  # gap bin NaN
+    np.testing.assert_array_equal(out.masks[DROPPED_FRAMES_MASK].values, [False, True, False])
+
+
+def test_sum_gap_on_integer_data_without_gap_stays_integer():
+    """Without a gap there is no NaN, so an integer sum keeps its integer dtype (no needless promote)."""
+    data = _stack([10, 20, 30, 40], dtype="int64")
+    out = rebin_tof_by_list(data, [[0, 2], [2, 4]], reduction="sum")  # contiguous, no gap
+    assert np.issubdtype(out.values.dtype, np.integer)
+    assert DROPPED_FRAMES_MASK not in out.masks
+    np.testing.assert_array_equal(out.values[:, 0, 0], [30, 70])
+
+
+def test_reduce_tof_bins_rejects_non_integer_indices():
+    """The reduce_tof_bins primitive must also reject non-integer / bool indices (no silent int())."""
+    data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
+    with pytest.raises(ValueError, match="integers"):
+        reduce_tof_bins(data, [(0.5, 2.5)])
+    with pytest.raises(ValueError, match="integers"):
+        reduce_tof_bins(data, [(False, 2)])

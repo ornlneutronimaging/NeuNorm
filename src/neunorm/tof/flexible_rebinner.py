@@ -6,10 +6,11 @@ frame each and lets the caller choose how the frames are combined (mean, sum, or
 is the core reducer behind the flexible list-based rebinning requested in the project (a list
 such as ``[[0, 4], [5, 30]]`` grouping frames into non-uniform bins).
 
-This module provides only the reduction primitive over already-canonical, contiguous
-``(start, stop)`` index ranges. Parsing the user-facing list, representing dropped-frame gaps
-as missing data, input validation, and the per-bin mean-time spectra provenance are layered on
-top of it elsewhere.
+This module has two entry points: :func:`reduce_tof_bins`, the low-level reducer over
+already-canonical, contiguous ``(start, stop)`` index ranges, and :func:`rebin_tof_by_list`,
+the user-facing entry that parses the ``[[start, stop], ...]`` list, validates it, and
+represents dropped-frame gaps as missing data. The per-bin mean-time spectra provenance is
+layered on separately (a later task).
 """
 
 from typing import Literal, Sequence
@@ -21,10 +22,25 @@ from loguru import logger
 #: Reductions understood by :func:`reduce_tof_bins`.
 ReductionMode = Literal["mean", "sum", "median"]
 
-#: Large-N approximation for the variance of the sample median of normally distributed values:
-#: ``Var(median) ≈ (π/2)·Var(mean)``. Applied only to bins with two or more frames — for a
-#: single-frame bin the median is the frame itself, so its variance is exact.
+#: Large-N approximation for the variance of the sample median of i.i.d. normal values:
+#: ``Var(median) ≈ (π/2)·Var(mean)``. Applied only to bins of three or more frames — for a
+#: one- or two-frame bin the median equals the arithmetic mean exactly, so its variance is exact.
 _MEDIAN_VARIANCE_FACTOR = np.pi / 2.0
+
+
+def _is_integer_index(value: object) -> bool:
+    """True only for a genuine integer index (``int`` / NumPy integer), excluding ``bool``."""
+    return not isinstance(value, bool) and isinstance(value, (int, np.integer))
+
+
+def _coerce_int_ranges(bins: Sequence[Sequence[int]]) -> list[tuple[int, int]]:
+    """Coerce ``(start, stop)`` pairs to plain ints, rejecting non-integer / bool indices."""
+    ranges = []
+    for start, stop in bins:
+        if not (_is_integer_index(start) and _is_integer_index(stop)):
+            raise ValueError(f"bin indices must be integers; got ({start!r}, {stop!r})")
+        ranges.append((int(start), int(stop)))
+    return ranges
 
 
 def _validate_bins(
@@ -50,7 +66,7 @@ def _validate_bins(
             f"({n_frames + 1}); got length {tof_edges.sizes[tof_dim]}"
         )
 
-    ranges = [(int(start), int(stop)) for start, stop in bins]
+    ranges = _coerce_int_ranges(bins)
     for start, stop in ranges:
         if not (0 <= start < stop <= n_frames):
             raise ValueError(
@@ -78,14 +94,17 @@ def _reduce_one_bin(
         return sc.sum(chunk, tof_dim), False
     if reduction == "mean":
         return sc.mean(chunk, tof_dim), False
-    # median: sc.median rejects variance-bearing input, so take the value from a values-only copy.
-    frame = sc.median(sc.values(chunk), tof_dim)
+    # median: sc.median rejects variance-bearing input, so strip variances first when present.
+    # sc.median itself promotes integer data to float, so no manual dtype handling is needed
+    # (and sc.values() would itself reject an integer dtype, so only call it when variances exist).
+    frame = sc.median(sc.values(chunk) if has_variances else chunk, tof_dim)
     if not has_variances:
         return frame, False
-    # Var(median) has no simple closed form: use (π/2)·Var(mean) for N >= 2 (the large-N normal
-    # approximation) and the exact Var(mean) for a single-frame bin, where the median IS the frame.
+    # Var(median) has no simple closed form. For N <= 2 the sample median equals the arithmetic
+    # mean exactly (N=1: the frame; N=2: the average of the two frames), so its variance is exactly
+    # Var(mean). For N >= 3 use the large-N i.i.d.-normal approximation Var(median) ≈ (π/2)·Var(mean).
     mean_variance = sc.variances(sc.mean(chunk, tof_dim)).values
-    if chunk.sizes[tof_dim] > 1:
+    if chunk.sizes[tof_dim] > 2:
         frame.variances = _MEDIAN_VARIANCE_FACTOR * mean_variance
         return frame, True
     frame.variances = mean_variance
@@ -121,8 +140,11 @@ def reduce_tof_bins(
 
         - ``"mean"``  — value ``= (1/N)·Σxᵢ``; variance ``= ΣVar(xᵢ)/N²``.
         - ``"sum"``   — value ``= Σxᵢ``;        variance ``= ΣVar(xᵢ)``.
-        - ``"median"``— value ``= median(xᵢ)``; variance ``≈ (π/2)·ΣVar(xᵢ)/N²`` for ``N ≥ 2``
-          (a large-N approximation; a warning is emitted), and the exact ``Var`` for ``N = 1``.
+        - ``"median"``— value ``= median(xᵢ)``; variance ``≈ (π/2)·ΣVar(xᵢ)/N²`` for ``N ≥ 3`` (a
+          large-N approximation valid for i.i.d. normal samples with a common variance; a warning
+          is emitted, and for strongly heterogeneous per-frame variances it is only a rough
+          estimate). For ``N ≤ 2`` the median equals the mean, so the exact ``Var(mean)`` is used.
+          Integer input is promoted to float.
     tof_dim : str, optional
         Name of the TOF dimension. Default ``"tof"``.
 
@@ -135,9 +157,9 @@ def reduce_tof_bins(
     Raises
     ------
     ValueError
-        If ``tof_dim`` is absent, ``reduction`` is not recognised, ``bins`` is empty, a range
-        is out of bounds or non-increasing, the ranges are not contiguous, or ``data`` lacks a
-        bin-edge ``tof_dim`` coordinate.
+        If ``tof_dim`` is absent, ``reduction`` is not recognised, ``bins`` is empty, an index is
+        not an integer, a range is out of bounds or non-increasing, the ranges are not contiguous,
+        or ``data`` lacks a bin-edge ``tof_dim`` coordinate.
     """
     if reduction not in ("mean", "sum", "median"):
         raise ValueError(f"reduction must be 'mean', 'sum', or 'median'; got {reduction!r}")
@@ -185,12 +207,7 @@ def _parse_bin_list(bin_list: Sequence[Sequence[int]]) -> list[tuple[int, int]]:
         if len(pair) != 2:
             raise ValueError(f"each bin must be a [start, stop] pair (exactly two indices); got {entry!r}")
         start, stop = pair
-        if (
-            isinstance(start, bool)
-            or isinstance(stop, bool)
-            or not isinstance(start, (int, np.integer))
-            or not isinstance(stop, (int, np.integer))
-        ):
+        if not (_is_integer_index(start) and _is_integer_index(stop)):
             raise ValueError(f"bin indices must be integers; got [{start!r}, {stop!r}]")
         ranges.append((int(start), int(stop)))
     return ranges
@@ -277,9 +294,10 @@ def rebin_tof_by_list(
         raise ValueError(f"TOF dimension '{tof_dim}' not found in data dimensions {data.dims}")
     _validate_bin_list(ranges, data.sizes[tof_dim])
 
-    # Fill interior gaps with explicit bins so the reduced axis is contiguous, tracking which
-    # output bins are dropped-frame gaps. Overlaps/unordered ranges are left for reduce_tof_bins
-    # to reject via its contiguity/bounds guards.
+    # Fill interior gaps with explicit bins so the reduced axis stays contiguous, tracking which
+    # output bins are dropped-frame gaps. _validate_bin_list above has already guaranteed the
+    # ranges are sorted, disjoint and in-bounds, so reduce_tof_bins' contiguity guard is only a
+    # backstop here.
     filled: list[tuple[int, int]] = []
     is_gap: list[bool] = []
     for index, (start, stop) in enumerate(ranges):
@@ -295,7 +313,11 @@ def rebin_tof_by_list(
 
     if any(is_gap):
         gap = np.array(is_gap)
-        # A dropped-frame bin carries no meaningful value: NaN it and flag it with the tof mask.
+        # A dropped-frame bin carries no meaningful value: NaN it (values + variances) and flag it
+        # with the tof mask. NaN needs a float dtype, so promote an integer result (e.g. an int-count
+        # sum, which scipp keeps integer) to float first. (result.dtype is a scipp DType.)
+        if result.dtype not in (sc.DType.float32, sc.DType.float64):
+            result = result.astype(sc.DType.float64)
         result.values[gap] = np.nan
         if result.variances is not None:
             result.variances[gap] = np.nan
