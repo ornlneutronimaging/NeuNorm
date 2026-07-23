@@ -11,12 +11,18 @@ import scipp as sc
 from loguru import logger
 
 from neunorm import __version__
-from neunorm.data_models.roi import ROILike, as_roi_bounds
+from neunorm.data_models.roi import (
+    ROILike,
+    as_region_list,
+    as_region_provenance,
+    as_roi_bounds,
+    region_provenance,
+)
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
 from neunorm.loaders.event_loader import load_event_nexus
-from neunorm.processing.normalizer import BackgroundROILike, as_roi_bounds_list, normalize_transmission
+from neunorm.processing.normalizer import BackgroundROILike, normalize_transmission
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.run_combiner import combine_runs
@@ -62,12 +68,12 @@ def run_mars_tpx3_pipeline(  # noqa: C901
         Whether to apply gamma filtering to the sample data (default: True)
     detector_shape : tuple[int, int]
         Shape of the TPX3 detector (default: (514, 514))
-    background_roi : ROI/tuple or a sequence of them
-        Sample-free background region(s) — one ROI or a pooled sequence of ROIs (see
-        ``normalize_transmission``) — for flux-proxy normalization when proton charge is
-        unavailable. Mutually exclusive with proton-charge correction. If
-        ``roi`` is also given the detector is cropped first, so ``background_roi`` indices are
-        resolved in the post-crop frame.
+    background_roi : ROI, MaskROI, tuple, or a sequence of them
+        Sample-free background region(s) — one region or a pooled sequence (rectangles and/or
+        arbitrary-shape ``MaskROI`` selections; see ``normalize_transmission``) — for flux-proxy
+        normalization when proton charge is unavailable. Mutually exclusive with proton-charge
+        correction. If ``roi`` is also given the detector is cropped first, so ``background_roi``
+        indices are resolved in the post-crop frame.
 
     Notes
     -----
@@ -84,7 +90,7 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     if roi is not None:
         roi = as_roi_bounds(roi)
     if background_roi is not None:
-        background_roi = as_roi_bounds_list(background_roi)
+        background_roi = as_region_list(background_roi, arg_name="background_roi")
 
     # Load data and convert to histogram
     samples = [
@@ -143,12 +149,10 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     }
 
     if roi:
-        metadata["roi_applied"] = roi
+        metadata["roi_applied"] = region_provenance(roi)
 
     if background_roi is not None:
-        metadata["background_roi"] = (
-            list(background_roi[0]) if len(background_roi) == 1 else [list(b) for b in background_roi]
-        )
+        metadata["background_roi"] = as_region_provenance(background_roi)
 
     if output_path.suffix.lower() in (".hdf5", ".h5"):
         write_hdf5(

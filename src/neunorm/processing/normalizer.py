@@ -6,17 +6,18 @@ with proper uncertainty propagation and beam corrections.
 """
 
 import collections.abc
-from typing import Optional, Sequence, Union
+from typing import Optional, Union
 
 import numpy as np
 import scipp as sc
 from loguru import logger
 
-from neunorm.data_models.roi import ROI, ROILike, as_roi_bounds
+from neunorm.data_models.roi import ROI, MaskROI, RegionsLike, as_region_list, as_roi_bounds
 from neunorm.processing.dark_corrector import subtract_dark
 
-# One ROI or a sequence of ROIs (pooled). A bare 4-int tuple/list is a single ROI.
-BackgroundROILike = Union[ROILike, Sequence[ROILike]]
+# One region (rectangle or MaskROI) or a sequence of regions (pooled). A bare 4-int tuple/list is a
+# single rectangle. Kept as a named alias for backward compatibility with existing imports.
+BackgroundROILike = RegionsLike
 
 
 def _as_plain_int_bounds(bounds: tuple) -> tuple[int, int, int, int]:
@@ -60,37 +61,145 @@ def _unmasked_count(region: sc.DataArray) -> sc.Variable:
     return sc.sum(counter, dim=["x", "y"]).data
 
 
-def _pooled_roi_coefficient(
-    data: sc.DataArray,
-    rois_bounds: list[tuple[int, int, int, int]],
-    name: str,
-    strict: bool = True,
-) -> sc.Variable:
-    """Per-image **pooled** background coefficient over one or more ROIs.
+def _masked_ones_count(region: sc.DataArray) -> sc.Variable:
+    """Unmasked-pixel count like ``_unmasked_count``, but sharing buffers instead of deep-copying.
 
-    ``coefficient = sum(counts over all ROIs) / sum(unmasked pixels over all ROIs)`` per spectral
-    bin — the pooled ratio-of-means (1.x / iBeatles form). For a single ROI this is the plain
-    mask-aware ROI mean. Reductions are mask-aware: masked dead/hot pixels are excluded from both
-    the summed counts and the pixel count (spatial ``(x, y)`` masks assumed). ``x1``/``y1`` are
-    exclusive stops. Returns a variance-bearing scipp Variable (the variance of the pooled mean).
+    Used on the MaskROI path, where ``region`` can be a large bounding-box view: builds the ones
+    counter directly (no copy of values/variances). When every mask is spatial the counter is 2D —
+    the count is then a scalar rather than ``_unmasked_count``'s constant per-spectral vector, which
+    divides/broadcasts identically.
+    """
+    if all(set(m.dims) <= {"x", "y"} for m in region.masks.values()):
+        sizes = {d: s for d, s in region.sizes.items() if d in ("x", "y")}
+    else:
+        sizes = dict(region.data.sizes)
+    counter = sc.DataArray(
+        sc.ones(sizes=sizes, dtype="int64", unit="one"),
+        masks={k: m for k, m in region.masks.items()},
+    )
+    return sc.sum(counter, dim=["x", "y"]).data
 
-    Raises ``ValueError`` on an invalid/out-of-bounds ROI or missing ``x``/``y`` dims. With
-    ``strict`` (default) it also rejects a non-positive/non-finite pooled mean (which would
-    silently yield inf/nan output); ``strict=False`` skips only that guard and lets zeros
-    propagate through the division — the 1.x semantics, for downstreams reproducing legacy
-    outputs bit for bit.
+
+def _unique_mask_name(existing, base: str = "_region_sel") -> str:
+    """A mask name not colliding with ``existing`` (a same-named user mask must never be replaced)."""
+    name = base
+    i = 1
+    while name in existing:
+        name = f"{base}_{i}"
+        i += 1
+    return name
+
+
+def _mask_region_view(
+    data: sc.DataArray, region: MaskROI, name: str, region_arg: str = "background_roi"
+) -> sc.DataArray:
+    """Bounding-box view of ``data`` with the region's inverse selection attached as a scipp mask.
+
+    The bbox slice keeps temporaries proportional to the region, not the frame; the shallow copy
+    shares data/variance buffers and never mutates ``data``'s own masks. The attached exclusion
+    (``~selection``) composes (OR) with any existing dead/hot/per-image masks, so the same
+    mask-aware reductions used for rectangles yield sum/count over ``selected & unmasked`` pixels.
     """
     if "x" not in data.dims or "y" not in data.dims:
-        raise ValueError(f"{name} must have 'x' and 'y' dimensions for background_roi normalization")
+        raise ValueError(f"{name} must have 'x' and 'y' dimensions for {region_arg} normalization")
+    ny, nx = region.shape
+    if ny != data.sizes["y"] or nx != data.sizes["x"]:
+        raise ValueError(
+            f"{name} MaskROI selection shape (ny={ny}, nx={nx}) does not match data size "
+            f"(y={data.sizes['y']}, x={data.sizes['x']})"
+        )
+    x0, y0, x1, y1 = region.bounding_box()
+    work = data["x", x0:x1]["y", y0:y1].copy(deep=False)
+    work.masks[_unique_mask_name(work.masks.keys())] = sc.array(dims=["y", "x"], values=~region.selection[y0:y1, x0:x1])
+    return work
+
+
+def _pooled_union_selection(rois_bounds, ny: int, nx: int) -> np.ndarray:
+    """Boolean ``(ny, nx)`` union of every pooled region (rectangles and masks) — each pixel once.
+
+    Collapses an overlapping pooled list to one equivalent selection so shared pixels are counted
+    once. Bounds/shapes are assumed already validated (by ``_pooled_roi_coefficient``).
+    """
+    union = np.zeros((ny, nx), dtype=bool)
+    for region_spec in rois_bounds:
+        if isinstance(region_spec, MaskROI):
+            union |= region_spec.selection
+        else:
+            x0, y0, x1, y1 = region_spec
+            union[y0:y1, x0:x1] = True
+    return union
+
+
+def _pooled_regions_overlap(rois_bounds, ny: int, nx: int) -> bool:
+    """True if any pixel is selected by more than one region in a pooled list (validated bounds).
+
+    Rectangle-only lists (the common pooled case) use a cheap pairwise interval-overlap test with no
+    per-frame allocation; a per-pixel ``ny*nx`` coverage map is built only when a ``MaskROI`` is
+    present, where arbitrary shapes make pairwise geometry insufficient.
+    """
+    if not any(isinstance(r, MaskROI) for r in rois_bounds):
+        # exclusive-stop rectangles overlap iff they intersect on both axes
+        for i, (ax0, ay0, ax1, ay1) in enumerate(rois_bounds):
+            for bx0, by0, bx1, by1 in rois_bounds[i + 1 :]:
+                if ax0 < bx1 and bx0 < ax1 and ay0 < by1 and by0 < ay1:
+                    return True
+        return False
+    coverage = np.zeros((ny, nx), dtype=np.int32)
+    for region_spec in rois_bounds:
+        if isinstance(region_spec, MaskROI):
+            coverage += region_spec.selection
+        else:
+            x0, y0, x1, y1 = region_spec
+            coverage[y0:y1, x0:x1] += 1
+    return bool((coverage > 1).any())
+
+
+def _pooled_roi_coefficient(
+    data: sc.DataArray,
+    rois_bounds: list,
+    name: str,
+    strict: bool = True,
+    region_arg: str = "background_roi",
+) -> sc.Variable:
+    """Per-image **pooled** background coefficient over one or more regions (rectangles or masks).
+
+    ``coefficient = sum(counts over all regions) / sum(unmasked pixels over all regions)`` per
+    spectral bin — the pooled ratio-of-means (1.x / iBeatles form). For a single region this is the
+    plain mask-aware region mean. Reductions are mask-aware: masked dead/hot pixels are excluded
+    from both the summed counts and the pixel count (spatial ``(x, y)`` masks assumed). Rectangle
+    entries are exclusive-stop ``(x0, y0, x1, y1)`` bounds and keep the sliced fast path
+    bit-for-bit; ``MaskROI`` entries contribute their selected pixels through the same mask-aware
+    reductions. Regions that **overlap** in a pooled list are reduced over their **union** (each
+    selected, unmasked pixel counted once) so the pooled mean and its variance are correct; a
+    non-overlapping (or single-region) list keeps the per-region accumulation bit-for-bit. Returns a
+    variance-bearing scipp Variable (the variance of the pooled mean).
+
+    Raises ``ValueError`` on an invalid/out-of-bounds rectangle, a selection shape not matching the
+    data, or missing ``x``/``y`` dims. With ``strict`` (default) it also rejects a
+    non-positive/non-finite pooled mean (which would silently yield inf/nan output);
+    ``strict=False`` skips only that guard and lets zeros propagate through the division — the 1.x
+    semantics, for downstreams reproducing legacy outputs bit for bit. (A selection whose pixels
+    are all dead/hot-masked behaves like an all-masked rectangle: strict raises, non-strict
+    propagates inf/nan.)
+    """
+    if "x" not in data.dims or "y" not in data.dims:
+        raise ValueError(f"{name} must have 'x' and 'y' dimensions for {region_arg} normalization")
     total = None
     n_unmasked = None
-    for x0, y0, x1, y1 in rois_bounds:
+    for region_spec in rois_bounds:
+        if isinstance(region_spec, MaskROI):
+            region = _mask_region_view(data, region_spec, name, region_arg=region_arg)
+            roi_sum = sc.sum(region, dim=["x", "y"]).data  # selected & unmasked (mask-aware)
+            roi_n = _masked_ones_count(region)
+            total = roi_sum if total is None else total + roi_sum
+            n_unmasked = roi_n if n_unmasked is None else n_unmasked + roi_n
+            continue
+        x0, y0, x1, y1 = region_spec
         if x0 < 0 or y0 < 0 or x1 <= x0 or y1 <= y0:
-            raise ValueError(f"Invalid background_roi ({x0}, {y0}, {x1}, {y1}): need 0 <= x0 < x1 and 0 <= y0 < y1")
+            raise ValueError(f"Invalid {region_arg} ({x0}, {y0}, {x1}, {y1}): need 0 <= x0 < x1 and 0 <= y0 < y1")
         if x1 > data.sizes["x"] or y1 > data.sizes["y"]:
             raise ValueError(
-                f"background_roi ({x0}, {y0}, {x1}, {y1}) exceeds {name} size "
-                f"(x={data.sizes['x']}, y={data.sizes['y']})"
+                f"{region_arg} ({x0}, {y0}, {x1}, {y1}) exceeds {name} size (x={data.sizes['x']}, y={data.sizes['y']})"
             )
         region = data["x", x0:x1]["y", y0:y1]
         roi_sum = sc.sum(region, dim=["x", "y"]).data  # per-spectral (mask-aware; var = sum of unmasked var)
@@ -102,10 +211,23 @@ def _pooled_roi_coefficient(
         roi_n = _unmasked_count(region)
         n_unmasked = roi_n if n_unmasked is None else n_unmasked + roi_n
 
+    # Overlapping pooled regions double-count shared pixels in the accumulation above — inflating
+    # the pooled mean and, because each shared pixel's variance is then added more than once as if
+    # from independent samples, understating its variance. When the regions actually overlap,
+    # recompute over their UNION (each selected & unmasked pixel exactly once); a non-overlapping
+    # list keeps the per-region accumulation above bit-for-bit. Bounds/shapes are already validated.
+    if len(rois_bounds) > 1:
+        ny, nx = data.sizes["y"], data.sizes["x"]
+        if _pooled_regions_overlap(rois_bounds, ny, nx):
+            union_region = MaskROI(selection=_pooled_union_selection(rois_bounds, ny, nx))
+            region = _mask_region_view(data, union_region, name, region_arg=region_arg)
+            total = sc.sum(region, dim=["x", "y"]).data
+            n_unmasked = _masked_ones_count(region)
+
     coeff = total / n_unmasked
     if strict and (not bool(sc.all(sc.isfinite(coeff)).value) or sc.min(coeff).value <= 0):
         raise ValueError(
-            f"background_roi {name} pooled mean must be strictly positive and finite "
+            f"{region_arg} {name} pooled mean must be strictly positive and finite "
             f"(min={sc.min(coeff).value}); the ROI(s) must contain positive counts in every image"
         )
     return coeff
@@ -114,7 +236,7 @@ def _pooled_roi_coefficient(
 def _background_roi_means(
     sample: sc.DataArray,
     ob: sc.DataArray,
-    rois_bounds: list[tuple[int, int, int, int]],
+    rois_bounds: list[Union[tuple[int, int, int, int], MaskROI]],
     strict: bool = True,
 ) -> tuple[sc.Variable, sc.Variable]:
     """Per-image pooled background means (cs, co) for sample and OB over the same ROI list."""
@@ -127,7 +249,7 @@ def _roi_dark_mean_covariance(
     sample_dc: sc.DataArray,
     ob_dc: sc.DataArray,
     dark: sc.DataArray,
-    rois_bounds: list[tuple[int, int, int, int]],
+    rois_bounds: list[Union[tuple[int, int, int, int], MaskROI]],
 ) -> sc.Variable:
     """Covariance of the two **pooled** background-ROI means induced by the shared dark frame.
 
@@ -148,17 +270,39 @@ def _roi_dark_mean_covariance(
             m = mask if m is None else (m | mask)
         return m
 
+    # Collapse an overlapping pooled list to its single union region so a dark pixel shared by
+    # several ROIs is counted once — otherwise the shared-dark covariance (and the n_s / n_o
+    # denominators) double-count it. A non-overlapping list is unchanged. Bounds are already
+    # validated by the _background_roi_means call that precedes this one.
+    if len(rois_bounds) > 1:
+        ny, nx = sample_dc.sizes["y"], sample_dc.sizes["x"]
+        if _pooled_regions_overlap(rois_bounds, ny, nx):
+            rois_bounds = [MaskROI(selection=_pooled_union_selection(rois_bounds, ny, nx))]
+
     n_s = None
     n_o = None
     intersection_var_sum = None  # sum over all ROIs of sum_{A∩B} Var(D)
-    for x0, y0, x1, y1 in rois_bounds:
-        d_roi = dark["x", x0:x1]["y", y0:y1].copy()
-        s_roi = sample_dc["x", x0:x1]["y", y0:y1]
-        o_roi = ob_dc["x", x0:x1]["y", y0:y1]
-        ms, mo = _excluded(s_roi), _excluded(o_roi)
-        # per-spectral unmasked counts (reduce masks over x,y only, mirroring _pooled_roi_coefficient
-        # so a per-image (spectral, x, y) mask does not collapse the denominator).
-        n_s_roi, n_o_roi = _unmasked_count(s_roi), _unmasked_count(o_roi)
+    for region_spec in rois_bounds:
+        if isinstance(region_spec, MaskROI):
+            # The bbox views carry ~selection as one more mask, so _excluded() and the counts below
+            # automatically restrict A/B to selected & unmasked pixels — the same generalization as
+            # the pooled coefficient (A/B = selection ∩ unmasked).
+            x0, y0, x1, y1 = region_spec.bounding_box()
+            d_roi = dark["x", x0:x1]["y", y0:y1].copy()
+            s_roi = _mask_region_view(sample_dc, region_spec, "sample")
+            o_roi = _mask_region_view(ob_dc, region_spec, "ob")
+            ms, mo = _excluded(s_roi), _excluded(o_roi)
+            n_s_roi, n_o_roi = _masked_ones_count(s_roi), _masked_ones_count(o_roi)
+        else:
+            x0, y0, x1, y1 = region_spec
+            d_roi = dark["x", x0:x1]["y", y0:y1].copy()
+            s_roi = sample_dc["x", x0:x1]["y", y0:y1]
+            o_roi = ob_dc["x", x0:x1]["y", y0:y1]
+            ms, mo = _excluded(s_roi), _excluded(o_roi)
+            # per-spectral unmasked counts (reduce masks over x,y only, mirroring
+            # _pooled_roi_coefficient so a per-image (spectral, x, y) mask does not collapse the
+            # denominator).
+            n_s_roi, n_o_roi = _unmasked_count(s_roi), _unmasked_count(o_roi)
         n_s = n_s_roi if n_s is None else n_s + n_s_roi
         n_o = n_o_roi if n_o is None else n_o + n_o_roi
         # sum Var(D) over A∩B (ROI pixels kept in BOTH sample and OB).
@@ -219,19 +363,21 @@ def normalize_transmission(  # noqa: C901
     pc_uncertainty : float, optional
         Relative proton charge uncertainty (default: 0.005 = 0.5%)
         From PLEIADES measurements
-    background_roi : ROI/tuple or a sequence of them, optional
+    background_roi : ROI/MaskROI/tuple or a sequence of them, optional
         Sample-free background region(s) — an :class:`~neunorm.data_models.roi.ROI` (or a bare
-        ``(x0, y0, x1, y1)`` tuple, exclusive stops), **or a sequence of those which are pooled**
-        (``sum(counts over all ROIs) / sum(pixels)``). When given, each image is normalized by its
-        pooled background mean — a proton-charge proxy for when proton charge is unavailable (e.g.
-        MARS): ``T = (S/mean(S[B])) / (O/mean(O[B]))``. For legacy inclusive extents (a width-``w`` ROI
-        spanning ``w+1`` pixels), use ``ROI(..., inclusive=True)``; see ``apply_background_roi`` for the
-        open-beam-less form. Mutually exclusive with ``proton_charge_sample`` / ``proton_charge_ob``.
-        Uncertainty is propagated first-order (the in-ROI sample/ROI-mean correlation is not
-        corrected). Unless ``background_roi_strict=False``, raises ``ValueError`` if the pooled mean
-        is not strictly positive and finite in every image. Indices are resolved against the passed
-        arrays; if a pipeline crops with ``roi`` first, give ``background_roi`` in the post-crop
-        frame.
+        ``(x0, y0, x1, y1)`` tuple, exclusive stops), an arbitrary-shape
+        :class:`~neunorm.data_models.roi.MaskROI` (selection mask: 1 = pixel in the region), **or a
+        sequence mixing those, which are pooled** (``sum(counts over all regions) / sum(pixels)``).
+        When given, each image is normalized by its pooled background mean — a proton-charge proxy
+        for when proton charge is unavailable (e.g. MARS): ``T = (S/mean(S[B])) / (O/mean(O[B]))``.
+        For legacy inclusive extents (a width-``w`` ROI spanning ``w+1`` pixels), use
+        ``ROI(..., inclusive=True)``; see ``apply_background_roi`` for the open-beam-less form.
+        Mutually exclusive with ``proton_charge_sample`` / ``proton_charge_ob``. Uncertainty is
+        propagated first-order (the in-ROI sample/ROI-mean correlation is not corrected). Unless
+        ``background_roi_strict=False``, raises ``ValueError`` if the pooled mean is not strictly
+        positive and finite in every image. Indices (and mask shapes) are resolved against the
+        passed arrays; if a pipeline crops with ``roi`` first, give ``background_roi`` in the
+        post-crop frame.
     background_roi_strict : bool, optional
         With the default ``True``, a non-positive/non-finite pooled background mean raises
         ``ValueError``. ``False`` skips only that guard and lets zeros propagate through the
@@ -265,7 +411,7 @@ def normalize_transmission(  # noqa: C901
     """
     logger.info("Normalizing transmission: T = Sample / OB")
 
-    roi_list = as_roi_bounds_list(background_roi) if background_roi is not None else None
+    roi_list = as_region_list(background_roi, arg_name="background_roi") if background_roi is not None else None
 
     # Background-ROI flux normalization: when no proton charge is available
     # (e.g. MARS), scale each image by its pooled mean counts in one or more sample-free ROIs so
@@ -413,10 +559,12 @@ def normalize_with_dark(
         Integrated proton charge for the SNS beam correction (see ``normalize_transmission``).
     pc_uncertainty : float, optional
         Relative proton-charge uncertainty (default 0.005).
-    background_roi : tuple[int, int, int, int], optional
+    background_roi : ROI/MaskROI/tuple or a sequence of them, optional
         Background-ROI flux normalization (see ``normalize_transmission``), used instead of proton
-        charge. The shared-dark correction then uses ``k = co/cs`` (ratio of dark-corrected ROI
-        means) in place of the proton-charge ratio, and additionally removes the ROI-mean shared-dark
+        charge. Accepts the same forms as ``normalize_transmission`` — a rectangle, an arbitrary-shape
+        ``MaskROI``, or a pooled sequence mixing them. The shared-dark correction then uses
+        ``k = co/cs`` (ratio of dark-corrected ROI means) in place of the proton-charge ratio, and
+        additionally removes the ROI-mean shared-dark
         covariance term ``2*T^2*Cov(cs,co)/(cs*co)`` (``Cov(cs,co) = Var(mean(D_roi))``) — the
         ROI-mean analog of the pixel-level correction. (The in-ROI pixel/ROI-mean correlation
         remains uncorrected, as documented on ``normalize_transmission``.)
@@ -429,7 +577,7 @@ def normalize_with_dark(
     sc.DataArray
         Transmission with correctly-propagated variance (no shared-dark double-counting).
     """
-    roi_list = as_roi_bounds_list(background_roi) if background_roi is not None else None
+    roi_list = as_region_list(background_roi, arg_name="background_roi") if background_roi is not None else None
 
     sample_dc = subtract_dark(sample, dark)
     ob_dc = subtract_dark(ob, dark)
@@ -523,8 +671,9 @@ def apply_background_roi(
 
     Returns ``data / pooled_mean(data over background_roi)`` — the **sample-only** form of the
     background-ROI flux proxy, for when there is no open beam to normalize against. ``background_roi``
-    is a single ROI or a sequence of ROIs (pooled as ``sum(counts) / sum(pixels)``); see
-    ``normalize_transmission(..., background_roi=)`` for the with-open-beam transmission form.
+    is a single region or a sequence of them — rectangles and/or arbitrary-shape ``MaskROI``
+    selections — pooled as ``sum(counts) / sum(pixels)`` (overlapping regions are de-duplicated to
+    their union); see ``normalize_transmission(..., background_roi=)`` for the with-open-beam form.
 
     First-order uncertainty from the pooled ROI mean is propagated
     (``Var += corrected**2 * Var(coeff) / coeff**2``); the in-ROI pixel/ROI-mean correlation is not
@@ -535,8 +684,9 @@ def apply_background_roi(
     ----------
     data : sc.DataArray
         Image stack with ``x``/``y`` dims (e.g. ``(spectral, x, y)``), optionally carrying variance.
-    background_roi : ROI/tuple or a sequence of them
-        Sample-free background region(s), pooled.
+    background_roi : ROI, MaskROI, tuple, or a sequence of them
+        Sample-free background region(s), pooled — rectangles and/or arbitrary-shape ``MaskROI``
+        selections, mixable in one list.
     strict : bool, optional
         With the default ``True``, a non-positive/non-finite pooled mean raises ``ValueError``.
         ``False`` skips only that guard and lets zeros propagate through the division (inf/nan
@@ -548,7 +698,7 @@ def apply_background_roi(
     sc.DataArray
         ``data`` scaled so its pooled background-ROI mean is 1 per image.
     """
-    roi_list = as_roi_bounds_list(background_roi)
+    roi_list = as_region_list(background_roi, arg_name="background_roi")
     logger.info("Applying sample-only background-ROI flux flattening with ROI(s) {}", roi_list)
     coeff = _pooled_roi_coefficient(data, roi_list, "data", strict=strict)
     coeff_var = sc.variances(coeff) if coeff.variances is not None else None

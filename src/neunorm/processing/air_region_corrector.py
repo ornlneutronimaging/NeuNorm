@@ -5,83 +5,68 @@ Air region correction.
 import scipp as sc
 from loguru import logger
 
-from neunorm.data_models.roi import ROILike, as_roi_bounds
+from neunorm.data_models.roi import RegionsLike, as_region_list
+from neunorm.processing.normalizer import _pooled_roi_coefficient
 
 
 def apply_air_region_correction(
     transmission: sc.DataArray,
-    air_roi: ROILike,  # (x0, y0, x1, y1) tuple or an ROI; x1, y1 are exclusive stops
+    air_roi: RegionsLike,
 ) -> sc.DataArray:
-    """Scale transmission so air region has mean = 1.0.
+    """Scale transmission so the air region has mean = 1.0.
 
     Requirements
     ------------
 
-    - Calculate mean transmission in user-specified air region
-    - Scale entire image so air region = 1.0
+    - Calculate mean transmission in the user-specified air region(s)
+    - Scale entire image so the air-region mean = 1.0
     - Support per-image correction (radiography) and per-TOF-bin correction (hyperspectral)
-    - Propagate uncertainty from air region mean
+    - Propagate uncertainty from the air-region mean
 
     Formula
     -------
 
-    T_final = T / mean(T[air_ROI])
+    T_final = T / mean(T[air region])
 
-    Uncertainty:
+    Uncertainty (first order):
     σ_T_final = T_final × √[(σ_T/T)² + (σ_air/<T_air>)²]
 
+    The mean is the mask-aware **pooled** region mean (``sum(T) / count(unmasked pixels)``, per
+    spectral bin), shared with the ``background_roi`` machinery. For a masked air region this is
+    the true region mean — dead/hot pixels are excluded from numerator and denominator — and a
+    region is valid even when a full row of it is masked. Raises ``ValueError`` if the air mean is
+    not strictly positive and finite in every image (a non-positive mean transmission in the air
+    region is pathological and would silently corrupt the scale).
 
     Parameters
     ----------
     transmission : sc.DataArray
         Normalized transmission (after OB correction)
-    air_roi : ROI or tuple[int, int, int, int]
-        Air region as an :class:`~neunorm.data_models.roi.ROI` or a bare ``(x0, y0, x1, y1)`` tuple,
-        where x1 and y1 are exclusive upper bounds.
+    air_roi : ROI, MaskROI, tuple, or a sequence of them
+        Air region as an :class:`~neunorm.data_models.roi.ROI` (or a bare ``(x0, y0, x1, y1)``
+        tuple, exclusive stops), an arbitrary-shape :class:`~neunorm.data_models.roi.MaskROI`
+        (selection mask: 1 = pixel in the region), or a sequence mixing those (pooled).
 
     """
-    air_roi = as_roi_bounds(air_roi)
+    regions = as_region_list(air_roi, arg_name="air_roi")
 
-    logger.info(f"Applying air region correction with ROI: {air_roi}")
+    logger.info(f"Applying air region correction with region(s): {regions}")
 
-    if len(air_roi) != 4 or not all(isinstance(i, int) for i in air_roi):
-        raise ValueError("ROI must be a tuple of 4 integers (x0, y0, x1, y1)")
+    coeff = _pooled_roi_coefficient(transmission, regions, "transmission", strict=True, region_arg="air_roi")
 
-    x0, y0, x1, y1 = air_roi
+    # scipp refuses to divide by a variance-bearing scalar (it would introduce correlations), so
+    # divide by the variance-free mean and add its first-order contribution manually — the same
+    # scheme as apply_background_roi. At T == 0 pixels this keeps the variance finite (Var(T)/m²),
+    # where the previous corrected**2 * (Var(T)/T**2 + ...) form produced 0 * inf = NaN.
+    coeff_var = sc.variances(coeff) if coeff.variances is not None else None
+    coeff = coeff.copy()
+    coeff.variances = None
+    corrected = transmission / coeff
 
-    # Validate ROI
-    if x0 < 0 or y0 < 0 or x1 <= x0 or y1 <= y0:
-        raise ValueError("Invalid ROI: (x0, y0, x1, y1) must satisfy 0 <= x0 < x1 and 0 <= y0 < y1")
-
-    # Get current dimensions
-    if "x" not in transmission.dims or "y" not in transmission.dims:
-        raise ValueError("DataArray must have 'x' and 'y' dimensions for ROI cropping")
-
-    # Validate ROI against current sizes
-    if x1 > transmission.sizes["x"] or y1 > transmission.sizes["y"]:
-        raise ValueError(
-            f"ROI (x1={x1}, y1={y1}) exceeds data size (x={transmission.sizes['x']}, y={transmission.sizes['y']})"
-        )
-
-    # Extract air region
-    air_region = transmission["x", slice(x0, x1)]["y", slice(y0, y1)]
-
-    # Calculate mean transmission in air region
-    mean_air = sc.mean(air_region, dim=["x", "y"])
-    if transmission.variances is not None:
-        mean_air_variance = sc.variances(mean_air)
-        mean_air.variances = None  # Temporarily remove variance to avoid issues with division
-
-    # Scale entire image so mean of the air region = 1.0
-    corrected_transmission = transmission / mean_air
-
-    # Propagate uncertainty from air region mean
-    if transmission.variances is not None:
-        variances = corrected_transmission**2 * (
-            sc.variances(transmission) / transmission**2 + mean_air_variance / mean_air**2
-        )
-
-        corrected_transmission.variances = variances.values
+    if coeff_var is not None and corrected.variances is not None:
+        rel = coeff_var / (coeff * coeff)
+        extra = sc.array(dims=list(corrected.dims), values=corrected.values**2) * rel
+        corrected.variances = corrected.variances + extra.values.astype(corrected.variances.dtype, copy=False)
 
     logger.success("✓ Air region correction applied")
-    return corrected_transmission
+    return corrected

@@ -353,6 +353,71 @@ class TestVenusTPX1Pipeline:
         np.testing.assert_allclose(transmission.values, 1)
         np.testing.assert_allclose(transmission.variances, 0.0227, rtol=0.1)
 
+    def test_venus_tpx1_pipeline_air_roi_provenance_recorded(self):
+        """A TPX pipeline records air_roi in HDF5 output-file provenance (#180 F7)."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                air_roi=(0, 0, 10, 10),
+            )
+            with h5py.File(output_path, "r") as hf:
+                assert "metadata/air_roi" in hf
+                ds = hf["metadata/air_roi"]
+                assert ds.attrs.get("encoding") != "json"  # native int array, not the JSON backstop
+                np.testing.assert_array_equal(ds[()], [0, 0, 10, 10])
+
+    def test_venus_tpx1_pipeline_mask_air_roi_over_bin_edge_tof(self):
+        """A non-rectangular MaskROI air_roi flows through the TPX1 pipeline on top of #187's N+1
+        bin-edge tof coord (the #187 x MaskROI seam).
+
+        Regression guard for the exact interaction introduced when this feature was rebased onto the
+        #187 fix: a MaskROI air region reduces over (y, x) only, so the bin-edge tof coord (length
+        N+1 on a length-N tof dim) must survive air correction untouched, the air-region mean must be
+        driven to 1.0 per tof bin, the propagated variance must stay finite, and the mask must be
+        recorded in provenance as its JSON summary (not a native-int rectangle).
+        """
+        from neunorm.data_models.roi import MaskROI
+
+        # L-shaped (non-rectangular) selection over the (y, x) frame -> exercises the mask reduction
+        # path (as_region_list), not the rectangle as_roi_bounds path.
+        sel = np.zeros((32, 32), dtype=bool)
+        sel[0:10, 0:5] = True
+        sel[0:5, 0:10] = True
+        mask = MaskROI(selection=sel)
+
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                air_roi=mask,
+            )
+            assert output_path.exists()
+
+            # #187: tof is a proper bin-edge axis (N+1 edges) and survives MaskROI air correction.
+            assert transmission.shape == (5, 32, 32)
+            assert transmission.coords["tof"].sizes["tof"] == transmission.sizes["tof"] + 1
+            np.testing.assert_allclose(transmission.coords["tof"].values, [0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+
+            # Spatially-uniform input -> air correction drives the frame to 1.0 per tof bin; the
+            # mask-aware pooled mean keeps the propagated variance finite (no 0*inf = NaN).
+            np.testing.assert_allclose(transmission.values, 1.0, rtol=1e-5)
+            assert np.all(np.isfinite(transmission.variances))
+            assert np.all(transmission.variances >= 0.0)
+
+            # MaskROI air_roi provenance is the JSON mask summary, not a native-int rect array.
+            with h5py.File(output_path, "r") as hf:
+                assert "metadata/air_roi" in hf
+                assert json.loads(hf["metadata/air_roi"].asstr()[()]) == {"mask": mask.provenance_summary()}
+
     def test_venus_tpx1_pipeline_invalid_paths(self):
         """Check error when the length of tiff and hdf5 paths do not match."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:

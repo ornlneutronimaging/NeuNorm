@@ -415,3 +415,39 @@ class TestVenusTPX3EventPipeline:
         # Since all the data are the same for a single tof the air correction should just normalize 1.
         np.testing.assert_allclose(transmission.values, 1)
         np.testing.assert_allclose(transmission.variances, 0.244, rtol=0.25)
+
+    def test_venus_tpx3_event_pipeline_mask_air_roi(self):
+        """A non-rectangular MaskROI air_roi flows through the TPX3 event pipeline over a bin-edge
+        tof coord: air-region mean -> 1.0 per tof bin, the N+1 bin-edge tof axis survives, variance
+        stays finite, and the mask is recorded as its JSON provenance summary.
+        """
+        from neunorm.data_models.roi import MaskROI
+
+        # L-shaped (non-rectangular) selection -> exercises the mask reduction path, not as_roi_bounds.
+        sel = np.zeros((32, 32), dtype=bool)
+        sel[0:10, 0:5] = True
+        sel[0:5, 0:10] = True
+        mask = MaskROI(selection=sel)
+
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx3_event_pipeline(
+                sample_paths=[self.sample],
+                ob_paths=[self.ob],
+                binning=self.binning,
+                output_path=output_path,
+                detector_shape=(32, 32),
+                air_roi=mask,
+            )
+            assert output_path.exists()
+
+            assert transmission.shape == (5, 32, 32)
+            # Bin-edge tof axis (N+1 edges) survives the MaskROI air correction untouched.
+            assert transmission.coords["tof"].sizes["tof"] == transmission.sizes["tof"] + 1
+            np.testing.assert_allclose(transmission.values, 1.0, rtol=1e-5)
+            assert np.all(np.isfinite(transmission.variances))
+            assert np.all(transmission.variances >= 0.0)
+
+            with h5py.File(output_path, "r") as hf:
+                assert "metadata/air_roi" in hf
+                assert json.loads(hf["metadata/air_roi"].asstr()[()]) == {"mask": mask.provenance_summary()}

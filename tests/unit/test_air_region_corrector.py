@@ -89,32 +89,32 @@ def test_apply_air_region_correction_invalid_roi():
 
     # Define invalid ROI: only x0 and y0 provided
     roi_invalid = (0, 0)
-    with pytest.raises(ValueError, match="ROI must be a tuple of 4 integers"):
+    with pytest.raises(ValueError, match="air_roi must be a tuple of 4 integers"):
         apply_air_region_correction(data, roi_invalid)
 
     # Define invalid ROI: non-integer values
     roi_invalid = (0.5, 0.5, 4.5, 4.5)
-    with pytest.raises(ValueError, match="ROI must be a tuple of 4 integers"):
+    with pytest.raises(ValueError, match="air_roi must be a tuple of 4 integers"):
         apply_air_region_correction(data, roi_invalid)
 
     # Define invalid ROI: (x0, y0, x1, y1) where x1 <= x0
     roi_invalid = (3, 0, 2, 4)
-    with pytest.raises(ValueError, match="Invalid ROI"):
+    with pytest.raises(ValueError, match="Invalid air_roi"):
         apply_air_region_correction(data, roi_invalid)
 
     # Define invalid ROI: (x0, y0, x1, y1) where y1 <= y0
     roi_invalid = (0, 3, 4, 2)
-    with pytest.raises(ValueError, match="Invalid ROI"):
+    with pytest.raises(ValueError, match="Invalid air_roi"):
         apply_air_region_correction(data, roi_invalid)
 
     # Define invalid ROI: negative coordinates
     roi_invalid = (-1, -1, 4, 4)
-    with pytest.raises(ValueError, match="Invalid ROI"):
+    with pytest.raises(ValueError, match="Invalid air_roi"):
         apply_air_region_correction(data, roi_invalid)
 
     # Define invalid ROI: exceeds data size
     roi_invalid = (0, 0, 6, 6)
-    with pytest.raises(ValueError, match="ROI .* exceeds data size"):
+    with pytest.raises(ValueError, match="air_roi .* exceeds transmission size"):
         apply_air_region_correction(data, roi_invalid)
 
 
@@ -134,5 +134,5 @@ def test_apply_air_region_correction_no_spatial_dims():
     )
 
     roi = (0, 0, 2, 2)  # ROI is irrelevant since there are no spatial dimensions
-    with pytest.raises(ValueError, match="DataArray must have 'x' and 'y' dimensions"):
+    with pytest.raises(ValueError, match="must have 'x' and 'y' dimensions"):
         apply_air_region_correction(data, roi)

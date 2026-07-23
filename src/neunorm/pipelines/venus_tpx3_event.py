@@ -11,7 +11,13 @@ import scipp as sc
 from loguru import logger
 
 from neunorm import __version__
-from neunorm.data_models.roi import ROILike, as_roi_bounds
+from neunorm.data_models.roi import (
+    MaskROI,
+    RegionLike,
+    ROILike,
+    as_roi_bounds,
+    region_provenance,
+)
 from neunorm.data_models.tof import BinningConfig
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
@@ -36,7 +42,7 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     binning: BinningConfig,
     output_path: Path,
     roi: Optional[ROILike] = None,
-    air_roi: Optional[ROILike] = None,
+    air_roi: Optional[RegionLike] = None,
     rebin_by_tof: Optional[bool | int] = False,
     rebin_by_spatial: Optional[int | tuple[int, int]] = None,
     detector_shape: tuple[int, int] = (514, 514),
@@ -74,8 +80,9 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
         Path to save the output file (HDF5 or TIFF)
     roi : Optional[tuple]
         Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
-    air_roi : Optional[tuple]
-        Region of interest for air correction — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
+    air_roi : ROI, MaskROI, or tuple, optional
+        Region of interest for air correction — an ``ROI``, a bare ``(x0, y0, x1, y1)`` tuple, or an
+        arbitrary-shape ``MaskROI`` selection. If None, air correction is not applied.
     rebin_by_tof : Optional[bool,int]
         Whether to apply TOF rebinning based on statistics analysis. If an integer is provided,
         it will be used as the rebinning factor instead of the recommended one.
@@ -110,7 +117,7 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     if roi is not None:
         roi = as_roi_bounds(roi)
     if air_roi is not None:
-        air_roi = as_roi_bounds(air_roi)
+        air_roi = air_roi if isinstance(air_roi, MaskROI) else as_roi_bounds(air_roi)
 
     x_bins, y_bins = detector_shape
 
@@ -235,7 +242,10 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     }
 
     if roi:
-        metadata["roi_applied"] = roi
+        metadata["roi_applied"] = region_provenance(roi)
+
+    if air_roi is not None:
+        metadata["air_roi"] = region_provenance(air_roi)
 
     if output_path.suffix.lower() in (".hdf5", ".h5"):
         write_hdf5(

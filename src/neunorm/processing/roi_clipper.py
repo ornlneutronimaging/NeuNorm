@@ -5,19 +5,26 @@ Function for cropping spatial dimensions to a region of interest (ROI).
 import scipp as sc
 from loguru import logger
 
-from neunorm.data_models.roi import ROILike, as_roi_bounds
+from neunorm.data_models.roi import MaskROI, ROILike, as_roi_bounds
 
 
 def apply_roi(
     data: sc.DataArray,
     roi: ROILike,  # (x0, y0, x1, y1) tuple or an ROI
 ) -> sc.DataArray:
-    """Crop spatial dimensions to ROI.
+    """Crop spatial dimensions to a rectangular region of interest.
 
     Crop to specified ROI: (x0, y0, x1, y1)
     Work with 2D, 3D, and 4D arrays (preserve other dimensions)
     Update coordinate arrays if present
     Validate ROI is within bounds
+
+    Cropping always yields a rectangular array, so only a rectangular ROI is accepted here. An
+    arbitrary-shape :class:`~neunorm.data_models.roi.MaskROI` is not a crop region — pass it to the
+    region-statistics operations instead (``background_roi=`` / ``air_roi=`` /
+    :func:`~neunorm.processing.air_region_corrector.apply_air_region_correction` /
+    :func:`~neunorm.processing.normalizer.normalize_transmission`), which average over the selected
+    pixels without resizing the image.
 
     Parameters
     ----------
@@ -31,8 +38,14 @@ def apply_roi(
     Returns
     -------
     sc.DataArray
-        Cropped data array with updated coordinates.
+        Cropped (rectangular) data array with updated coordinates.
     """
+    if isinstance(roi, MaskROI):
+        raise TypeError(
+            "apply_roi crops to a rectangle and does not accept a MaskROI. Use a MaskROI only with "
+            "the region-statistics APIs (background_roi= / air_roi= / apply_air_region_correction / "
+            "normalize_transmission), which average over the selected pixels without cropping."
+        )
     roi = as_roi_bounds(roi)
 
     logger.info("Applying ROI: {}", roi)
