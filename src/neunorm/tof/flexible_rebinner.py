@@ -164,3 +164,85 @@ def reduce_tof_bins(
     edge_indices = [ranges[0][0]] + [stop for _, stop in ranges]
     result.coords[tof_dim] = sc.concat([tof_edges[tof_dim, i] for i in edge_indices], tof_dim)
     return result
+
+
+#: Mask name flagging output bins that are dropped-frame gaps (True = not real data).
+DROPPED_FRAMES_MASK = "dropped_frames"
+
+
+def rebin_tof_by_list(
+    data: sc.DataArray,
+    bin_list: Sequence[Sequence[int]],
+    reduction: ReductionMode = "mean",
+    tof_dim: str = "tof",
+) -> sc.DataArray:
+    """Rebin a TOF stack by an explicit list of half-open frame-index ranges.
+
+    This is the user-facing entry point for flexible rebinning. Each ``[start, stop]`` in
+    ``bin_list`` (half-open, Python convention) selects the frames ``start .. stop - 1`` and
+    reduces them to one output frame via :func:`reduce_tof_bins`.
+
+    **Gaps are allowed.** Where consecutive bins leave an interior hole (one bin's ``stop`` is
+    less than the next bin's ``start``), the dropped frames are represented as an explicit **gap
+    bin flagged as missing data** — added to the ``"dropped_frames"`` mask along ``tof``
+    (``True`` = dropped) and given ``NaN`` values/variances — so the output ``tof`` axis stays a
+    contiguous, monotonic bin-edge coordinate spanning the gap. Frames before the first bin or
+    after the last bin are simply excluded (the axis spans the first ``start`` to the last
+    ``stop``); only interior gaps become masked bins.
+
+    Within a single bin no frames can be skipped: each ``[start, stop)`` is contiguous by
+    construction, satisfying the "no in-bin skipping" rule.
+
+    Parameters
+    ----------
+    data : scipp.DataArray
+        Image stack with a bin-edge ``tof_dim`` coordinate (see :func:`reduce_tof_bins`).
+    bin_list : sequence of [start, stop]
+        Ordered, non-overlapping half-open frame-index ranges, e.g. ``[[0, 4], [5, 30]]``. Ranges
+        must be increasing and not overlap; interior gaps between them are permitted.
+    reduction : {"mean", "sum", "median"}, optional
+        How to combine the frames in each real bin. Default ``"mean"``.
+    tof_dim : str, optional
+        Name of the TOF dimension. Default ``"tof"``.
+
+    Returns
+    -------
+    scipp.DataArray
+        Rebinned stack with ``len(bin_list)`` real bins plus one masked bin per interior gap,
+        propagated variances, and a bin-edge ``tof_dim`` coordinate.
+
+    Raises
+    ------
+    ValueError
+        If ``bin_list`` is empty, or (via :func:`reduce_tof_bins`) a range is out of bounds,
+        non-increasing, overlapping, or unordered.
+    """
+    ranges = [(int(start), int(stop)) for start, stop in bin_list]
+    if len(ranges) == 0:
+        raise ValueError("bin_list must contain at least one [start, stop) range")
+
+    # Fill interior gaps with explicit bins so the reduced axis is contiguous, tracking which
+    # output bins are dropped-frame gaps. Overlaps/unordered ranges are left for reduce_tof_bins
+    # to reject via its contiguity/bounds guards.
+    filled: list[tuple[int, int]] = []
+    is_gap: list[bool] = []
+    for index, (start, stop) in enumerate(ranges):
+        if index > 0:
+            prev_stop = ranges[index - 1][1]
+            if start > prev_stop:  # interior gap: frames [prev_stop, start) were dropped
+                filled.append((prev_stop, start))
+                is_gap.append(True)
+        filled.append((start, stop))
+        is_gap.append(False)
+
+    result = reduce_tof_bins(data, filled, reduction=reduction, tof_dim=tof_dim)
+
+    if any(is_gap):
+        gap = np.array(is_gap)
+        # A dropped-frame bin carries no meaningful value: NaN it and flag it with the tof mask.
+        result.values[gap] = np.nan
+        if result.variances is not None:
+            result.variances[gap] = np.nan
+        result.masks[DROPPED_FRAMES_MASK] = sc.array(dims=[tof_dim], values=gap)
+
+    return result

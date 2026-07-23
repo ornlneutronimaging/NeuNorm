@@ -5,7 +5,7 @@ import pytest
 import scipp as sc
 from loguru import logger
 
-from neunorm.tof.flexible_rebinner import reduce_tof_bins
+from neunorm.tof.flexible_rebinner import DROPPED_FRAMES_MASK, rebin_tof_by_list, reduce_tof_bins
 
 
 def _stack(frame_values, variances=None, ny=2, nx=2, edges=None):
@@ -195,3 +195,78 @@ def test_non_bin_edge_coord_raises():
     data = _stack([10, 20, 30, 40], variances=[1, 1, 1, 1], edges=[0.0, 0.1, 0.2, 0.3])  # len N, not N+1
     with pytest.raises(ValueError, match="bin-edge"):
         reduce_tof_bins(data, [(0, 2), (2, 4)])
+
+
+# --------------------------------------------------------------------------------------------
+# rebin_tof_by_list — user-facing list input with gap-as-missing-data (Task 2)
+# --------------------------------------------------------------------------------------------
+
+
+def test_list_no_gap_equals_reduce_tof_bins():
+    """Contiguous bins add no mask and match reduce_tof_bins on the same ranges."""
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    out = rebin_tof_by_list(data, [[0, 2], [2, 5]], reduction="mean")
+    ref = reduce_tof_bins(data, [(0, 2), (2, 5)], reduction="mean")
+    assert DROPPED_FRAMES_MASK not in out.masks
+    np.testing.assert_allclose(out.values, ref.values)
+    np.testing.assert_allclose(out.variances, ref.variances)
+    np.testing.assert_allclose(out.coords["tof"].values, ref.coords["tof"].values)
+
+
+def test_list_single_interior_gap_is_missing_data():
+    """A dropped frame between bins becomes a masked, NaN gap bin; the tof axis stays contiguous."""
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])  # edges [0,.1,.2,.3,.4,.5]
+    out = rebin_tof_by_list(data, [[0, 2], [3, 5]], reduction="mean")  # frame 2 dropped
+    assert out.sizes["tof"] == 3  # real, gap, real
+    # gap flagged as missing data (mask + NaN), real bins correct
+    assert DROPPED_FRAMES_MASK in out.masks
+    np.testing.assert_array_equal(out.masks[DROPPED_FRAMES_MASK].values, [False, True, False])
+    np.testing.assert_allclose(out.values[0], 15)  # mean(10, 20)
+    np.testing.assert_allclose(out.values[2], 45)  # mean(40, 50)
+    assert np.isnan(out.values[1]).all()
+    np.testing.assert_allclose(out.variances[0], 2)
+    np.testing.assert_allclose(out.variances[2], 2)
+    assert np.isnan(out.variances[1]).all()
+    # contiguous bin-edge axis spanning the gap: edges at frame indices 0, 2, 3, 5
+    assert out.coords["tof"].sizes["tof"] == out.sizes["tof"] + 1
+    np.testing.assert_allclose(out.coords["tof"].values, [0.0, 0.2, 0.3, 0.5])
+
+
+def test_list_multiple_gaps():
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    out = rebin_tof_by_list(data, [[0, 1], [2, 3], [4, 5]], reduction="mean")  # drop frames 1 and 3
+    assert out.sizes["tof"] == 5
+    np.testing.assert_array_equal(out.masks[DROPPED_FRAMES_MASK].values, [False, True, False, True, False])
+    np.testing.assert_allclose([out.values[0, 0, 0], out.values[2, 0, 0], out.values[4, 0, 0]], [10, 30, 50])
+    assert np.isnan(out.values[1]).all() and np.isnan(out.values[3]).all()
+
+
+def test_list_reduction_mode_flows_through():
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    out = rebin_tof_by_list(data, [[0, 2], [3, 5]], reduction="sum")  # frame 2 dropped
+    np.testing.assert_allclose(out.values[0], 30)  # sum(10, 20)
+    np.testing.assert_allclose(out.values[2], 90)  # sum(40, 50)
+    np.testing.assert_allclose(out.variances[0], 8)  # 4 + 4
+    assert np.isnan(out.values[1]).all()
+
+
+def test_list_leading_and_trailing_frames_excluded():
+    """Frames before the first bin / after the last bin are dropped without a gap bin."""
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    out = rebin_tof_by_list(data, [[1, 3]], reduction="mean")  # frames 0, 3, 4 excluded
+    assert out.sizes["tof"] == 1
+    assert DROPPED_FRAMES_MASK not in out.masks
+    np.testing.assert_allclose(out.values[0], 25)  # mean(20, 30)
+    np.testing.assert_allclose(out.coords["tof"].values, [0.1, 0.3])
+
+
+def test_list_overlap_rejected():
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    with pytest.raises(ValueError, match="contiguous"):
+        rebin_tof_by_list(data, [[0, 3], [2, 5]])  # overlap on frame 2
+
+
+def test_list_empty_raises():
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    with pytest.raises(ValueError, match="at least one"):
+        rebin_tof_by_list(data, [])
