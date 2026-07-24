@@ -227,7 +227,7 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
         if spec is True:
             spec = analyze_statistics(ob).recommended_rebinning
             logger.info(f"Recommended TOF rebinning factor based on statistics analysis: {spec}")
-        if isinstance(spec, bool) or not isinstance(spec, (int, np.integer, list)):
+        if isinstance(spec, bool) or not isinstance(spec, (int, np.integer, list, tuple)):
             raise ValueError(
                 f"rebin_by_tof must be a bool, an int factor, or a list of [start, stop] pairs; got {spec!r}"
             )

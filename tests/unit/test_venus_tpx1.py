@@ -505,6 +505,22 @@ class TestVenusTPX1Pipeline:
             with h5py.File(output_path, "r") as hf:
                 assert "spectra_tof" in hf  # per-bin mean-time exported
 
+    def test_venus_tpx1_pipeline_rebin_by_tof_tuple(self):
+        """A tuple-of-pairs rebin_by_tof is accepted like a list (the spec guard + rebin_tof both
+        take list|tuple) — regression for the consolidation guard narrowing."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=((0, 2), (2, 5)),  # tuple of pairs -> 2 mean bins
+            )
+            assert transmission.shape == (2, 32, 32)
+            np.testing.assert_allclose(transmission.values[0], 81.5 / 99.5 * 2, rtol=1e-5)
+
     def test_venus_tpx1_pipeline_rebin_by_tof_median(self):
         """rebin_reduction='median' end-to-end: median values are produced; the >=3-frame bin's
         uncertainty is NaN (unavailable), the 2-frame bin's is finite. (Coverage the review flagged.)"""

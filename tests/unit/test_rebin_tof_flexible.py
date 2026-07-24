@@ -606,3 +606,36 @@ def test_rebin_tof_list_rejects_invalid_reduction():
     data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
     with pytest.raises(ValueError, match="reduction"):
         rebin_tof(data, [[0, 2], [2, 4]], reduction="")
+
+
+# --------------------------------------------------------------------------------------------
+# Backward-compat guards for the consolidation refactor (folding flexible_rebinner into rebin_tof)
+# --------------------------------------------------------------------------------------------
+
+
+def test_rebin_tof_accepts_numpy_integer_factor():
+    """A NumPy-integer factor must sum like a Python int, not be rejected by the unit='bins' check.
+
+    Regression: the retired apply_tof_rebin coerced an int factor via int(spec) before calling
+    rebin_tof; the consolidated pipelines pass the (np.integer-accepting) spec straight through, so
+    rebin_tof itself must accept np.integer (np.int64 is not a Python int subclass)."""
+    data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
+    np.testing.assert_allclose(rebin_tof(data, np.int64(2)).values[:, 0, 0], [30, 70])  # sum path
+    np.testing.assert_allclose(rebin_tof(data, np.int64(2), reduction="mean").values[:, 0, 0], [15, 35])
+
+
+def test_rebin_tof_preserves_legacy_positional_signature():
+    """The released positional order (data, width, unit, logarithmic, tof_dim) must still bind after
+    adding the keyword-only `reduction` parameter — i.e. `reduction` was NOT inserted before
+    `logarithmic` (regression: it had been, so a bool `logarithmic` bound to `reduction` and raised)."""
+    data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
+    out = rebin_tof(data, 2, "bins", False, "tof")  # unit, logarithmic, tof_dim passed positionally
+    np.testing.assert_allclose(out.values[:, 0, 0], [30, 70])  # adjacent-pair sum, unchanged
+
+
+def test_rebin_tof_accepts_tuple_bin_list():
+    """A tuple-of-pairs bin list is accepted like a list (matching the Sequence-based reducers and
+    the retired apply_tof_rebin, which took list|tuple)."""
+    data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
+    out = rebin_tof(data, ((0, 2), (2, 4)), reduction="sum")
+    np.testing.assert_allclose(out.values[:, 0, 0], [30, 70])

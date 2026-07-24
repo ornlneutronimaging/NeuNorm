@@ -470,11 +470,12 @@ def rebin_tof(  # noqa: C901
     data: sc.DataArray,
     width: Union[int, float, sc.Variable, list],
     unit: str = "bins",
-    reduction: Optional[ReductionMode] = None,
     logarithmic: bool = False,
     tof_dim: str = "tof",
     l_source_to_detector: float = 25.0,
     detector_time_offset: float = 5000.0,
+    *,
+    reduction: Optional[ReductionMode] = None,
 ) -> sc.DataArray:
     """Rebin a TOF stack — sum adjacent bins, or reduce explicit/uniform frame groups.
 
@@ -547,6 +548,12 @@ def rebin_tof(  # noqa: C901
 
     if tof_dim not in data.dims:
         raise ValueError(f"Specified TOF dimension '{tof_dim}' not found in data dimensions {data.dims}")
+
+    # A NumPy-integer factor is a valid integer factor: normalize it to a Python int so both the sum
+    # path (which checks `isinstance(width, int)`, and np.int64 is not a Python int) and the reduction
+    # path accept it. bool is excluded (np.bool_ is not np.integer, and Python bool is handled below).
+    if isinstance(width, np.integer):
+        width = int(width)
 
     if reduction not in (None, "sum", "mean", "median"):
         raise ValueError(f"reduction must be None, 'sum', 'mean', or 'median'; got {reduction!r}")
