@@ -173,10 +173,16 @@ def write_hdf5(  # noqa: C901
         for mask_name in transmission.masks:
             if mask_name in (dead_pixel_mask, hot_pixel_mask):
                 continue
+            if "/" in mask_name:  # a '/' would create nested HDF5 groups and clash unpredictably
+                raise ValueError(f"mask name '{mask_name}' must not contain '/'")
             path = f"masks/{mask_name}"
-            if path in f:  # a mask literally named 'dead'/'hot' would collide with the canonical path
-                logger.warning(f"Skipping mask '{mask_name}': HDF5 path '{path}' already written")
-                continue
+            if path in f:
+                # A mask genuinely named 'dead'/'hot' distinct from the designated dead/hot mask
+                # collides with the canonical path. Fail loudly rather than silently drop its data.
+                raise ValueError(
+                    f"mask '{mask_name}' collides with the already-written HDF5 path '{path}'; "
+                    "rename it (it must not reuse the canonical 'dead'/'hot' names unless it is the designated mask)"
+                )
             f.create_dataset(path, data=transmission.masks[mask_name].values)
 
         # Write metadata. Provenance is best-effort: a single un-writable key — a bad value

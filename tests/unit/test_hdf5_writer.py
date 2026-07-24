@@ -518,3 +518,48 @@ def test_write_hdf5_overwrite_existing_file():
             assert f["transmission"].shape == (2, 3, 3)
             np.testing.assert_allclose(f["transmission"][:], new_values)
             assert "metadata" not in f
+
+
+def test_write_hdf5_persists_non_dead_hot_masks():
+    """A mask that is neither the dead nor hot mask (e.g. a 1-D dropped_frames) is persisted."""
+    from neunorm.exporters.hdf5_writer import write_hdf5
+
+    data = sc.DataArray(
+        data=sc.array(dims=["tof", "y", "x"], values=np.zeros((3, 2, 2)), unit="counts"),
+        coords={"tof": sc.arange("tof", 4, unit="ns"), "y": sc.arange("y", 2), "x": sc.arange("x", 2)},
+    )
+    data.masks["dropped_frames"] = sc.array(dims=["tof"], values=[False, True, False])
+    with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+        write_hdf5(f.name, data, dead_pixel_mask="dead_pixels", hot_pixel_mask="hot_pixels")
+        with h5py.File(f.name, "r") as hf:
+            assert "masks/dropped_frames" in hf
+            np.testing.assert_array_equal(hf["masks/dropped_frames"][()], [False, True, False])
+
+
+def test_write_hdf5_raises_on_mask_name_collision():
+    """A mask genuinely named 'dead' distinct from the designated dead mask must raise, not silently drop."""
+    from neunorm.exporters.hdf5_writer import write_hdf5
+
+    data = sc.DataArray(
+        data=sc.array(dims=["y", "x"], values=np.zeros((2, 2)), unit="counts"),
+        coords={"y": sc.arange("y", 2), "x": sc.arange("x", 2)},
+    )
+    data.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=np.zeros((2, 2), dtype=bool))
+    data.masks["dead"] = sc.array(dims=["y", "x"], values=np.ones((2, 2), dtype=bool))  # collides with masks/dead
+    with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+        with pytest.raises(ValueError, match="collides"):
+            write_hdf5(f.name, data, dead_pixel_mask="dead_pixels")
+
+
+def test_write_hdf5_rejects_mask_name_with_slash():
+    """A mask name containing '/' would create nested groups and is rejected up front."""
+    from neunorm.exporters.hdf5_writer import write_hdf5
+
+    data = sc.DataArray(
+        data=sc.array(dims=["y", "x"], values=np.zeros((2, 2)), unit="counts"),
+        coords={"y": sc.arange("y", 2), "x": sc.arange("x", 2)},
+    )
+    data.masks["foo/bar"] = sc.array(dims=["y", "x"], values=np.zeros((2, 2), dtype=bool))
+    with tempfile.NamedTemporaryFile(suffix=".h5", delete=True) as f:
+        with pytest.raises(ValueError, match="must not contain"):
+            write_hdf5(f.name, data)
