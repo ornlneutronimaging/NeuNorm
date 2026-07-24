@@ -341,7 +341,11 @@ def _reverse_tof_dependent(da: sc.DataArray, tof_dim: str = "tof") -> None:
     for name in list(da.coords):
         coord = da.coords[name]
         if name != tof_dim and tof_dim in coord.dims:
+            was_aligned = coord.aligned
             da.coords[name] = _flip_variable(coord, coord.dims.index(tof_dim))
+            # Reassigning a coord defaults it to aligned=True; keep the original flag (an unaligned
+            # provenance coord must stay unaligned), matching histogram_rebinner's convention.
+            da.coords.set_aligned(name, was_aligned)
     for name in list(da.masks):
         mask = da.masks[name]
         if tof_dim in mask.dims:
