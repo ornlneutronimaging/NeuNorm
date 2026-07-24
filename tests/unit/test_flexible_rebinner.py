@@ -1,11 +1,21 @@
 """Unit tests for neunorm.tof.flexible_rebinner.reduce_tof_bins (flexible rebinning, Task 1)."""
 
+import tempfile
+from pathlib import Path
+
+import h5py
 import numpy as np
 import pytest
 import scipp as sc
 from loguru import logger
 
-from neunorm.tof.flexible_rebinner import DROPPED_FRAMES_MASK, rebin_tof_by_list, reduce_tof_bins
+from neunorm.exporters.hdf5_writer import write_hdf5
+from neunorm.tof.flexible_rebinner import (
+    DROPPED_FRAMES_MASK,
+    SPECTRA_TOF_COORD,
+    rebin_tof_by_list,
+    reduce_tof_bins,
+)
 
 
 def _stack(frame_values, variances=None, ny=2, nx=2, edges=None, dtype="float64"):
@@ -383,3 +393,59 @@ def test_reduce_tof_bins_rejects_non_integer_indices():
         reduce_tof_bins(data, [(0.5, 2.5)])
     with pytest.raises(ValueError, match="integers"):
         reduce_tof_bins(data, [(False, 2)])
+
+
+# --------------------------------------------------------------------------------------------
+# Task 4: per-bin mean-time (spectra_tof) coordinate + HDF5 export provenance
+# --------------------------------------------------------------------------------------------
+
+
+def test_spectra_tof_is_mean_of_member_left_edge_times():
+    """reduce_tof_bins attaches a spectra_tof POINT coord = mean of member frames' left-edge times,
+    alongside the unchanged bin-edge tof axis."""
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])  # tof edges [0,.1,.2,.3,.4,.5]
+    out = reduce_tof_bins(data, [(0, 2), (2, 5)], reduction="mean")
+    assert SPECTRA_TOF_COORD in out.coords
+    # point coord: one value per bin (N), vs the bin-edge tof coord (N+1)
+    assert out.coords[SPECTRA_TOF_COORD].sizes["tof"] == out.sizes["tof"]
+    assert out.coords["tof"].sizes["tof"] == out.sizes["tof"] + 1
+    # frames 0,1 left edges [0.0, 0.1] -> 0.05; frames 2,3,4 left edges [0.2, 0.3, 0.4] -> 0.3
+    np.testing.assert_allclose(out.coords[SPECTRA_TOF_COORD].values, [0.05, 0.30])
+    assert out.coords[SPECTRA_TOF_COORD].unit == sc.Unit("s")
+
+
+def test_spectra_tof_variable_width_bins():
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    out = reduce_tof_bins(data, [(0, 1), (1, 5)], reduction="mean")
+    # frame 0 left edge [0.0] -> 0.0; frames 1..4 left edges [0.1,0.2,0.3,0.4] -> 0.25
+    np.testing.assert_allclose(out.coords[SPECTRA_TOF_COORD].values, [0.0, 0.25])
+
+
+def test_spectra_tof_gap_bin_is_nan_and_axis_monotonic():
+    """A dropped-frame gap bin has NaN spectra_tof; the bin-edge tof axis stays contiguous/monotonic."""
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    out = rebin_tof_by_list(data, [[0, 2], [3, 5]], reduction="mean")  # frame 2 dropped -> gap
+    st = out.coords[SPECTRA_TOF_COORD].values
+    np.testing.assert_allclose(st[0], 0.05)  # mean left edges of frames 0,1
+    assert np.isnan(st[1])  # gap bin has no representative time
+    np.testing.assert_allclose(st[2], 0.35)  # mean left edges of frames 3,4 = [0.3, 0.4]
+    tof = out.coords["tof"].values
+    assert np.all(np.diff(tof) > 0)  # strictly increasing (monotonic) across the gap
+    np.testing.assert_allclose(tof, [0.0, 0.2, 0.3, 0.5])
+
+
+def test_spectra_tof_round_trips_through_hdf5():
+    """The updated spectra (spectra_tof) is written to and read back from HDF5 output (#192)."""
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    out = rebin_tof_by_list(data, [[0, 2], [3, 5]], reduction="mean")  # frame 2 dropped -> gap
+    with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+        output_path = Path(f.name)
+        write_hdf5(output_path, out)
+        with h5py.File(output_path, "r") as hf:
+            assert "/spectra_tof" in hf
+            st = hf["/spectra_tof"][()]
+            np.testing.assert_allclose(st[0], 0.05)
+            assert np.isnan(st[1])
+            np.testing.assert_allclose(st[2], 0.35)
+            assert hf["/spectra_tof"].attrs.get("units") == "s"
+            np.testing.assert_allclose(hf["/tof"][()], [0.0, 0.2, 0.3, 0.5])

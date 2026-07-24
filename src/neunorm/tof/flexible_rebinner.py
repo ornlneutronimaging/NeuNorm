@@ -27,6 +27,14 @@ ReductionMode = Literal["mean", "sum", "median"]
 #: one- or two-frame bin the median equals the arithmetic mean exactly, so its variance is exact.
 _MEDIAN_VARIANCE_FACTOR = np.pi / 2.0
 
+#: Point coord (one value per output bin) holding each bin's representative time — the mean of the
+#: member frames' left-edge times — carried alongside the bin-edge ``tof`` axis so the spectra can
+#: be updated on export (GitHub #192).
+SPECTRA_TOF_COORD = "spectra_tof"
+
+#: Mask name flagging output bins that are dropped-frame gaps (True = not real data).
+DROPPED_FRAMES_MASK = "dropped_frames"
+
 
 def _is_integer_index(value: object) -> bool:
     """True only for a genuine integer index (``int`` / NumPy integer), excluding ``bool``."""
@@ -151,8 +159,9 @@ def reduce_tof_bins(
     Returns
     -------
     scipp.DataArray
-        Stack with ``tof_dim`` reduced to ``len(bins)`` frames, propagated variances, and a
-        rebuilt bin-edge ``tof_dim`` coordinate.
+        Stack with ``tof_dim`` reduced to ``len(bins)`` frames, propagated variances, a rebuilt
+        bin-edge ``tof_dim`` coordinate, and a ``spectra_tof`` point coordinate giving each bin's
+        representative time (the mean of its member frames' left-edge times).
 
     Raises
     ------
@@ -185,11 +194,13 @@ def reduce_tof_bins(
     # Contiguity (checked in _validate_bins) makes these shared, giving exactly len(bins)+1 edges.
     edge_indices = [ranges[0][0]] + [stop for _, stop in ranges]
     result.coords[tof_dim] = sc.concat([tof_edges[tof_dim, i] for i in edge_indices], tof_dim)
+
+    # Per-bin representative time = mean of the member frames' left-edge times (the VENUS spectra
+    # convention: tof_edges[start:stop] are the left edges of frames start..stop-1). Carried as a
+    # point coord alongside the bin-edge tof axis so the spectra can be updated on export (#192).
+    bin_times = np.array([tof_edges[tof_dim, start:stop].values.mean() for start, stop in ranges])
+    result.coords[SPECTRA_TOF_COORD] = sc.array(dims=[tof_dim], values=bin_times, unit=tof_edges.unit)
     return result
-
-
-#: Mask name flagging output bins that are dropped-frame gaps (True = not real data).
-DROPPED_FRAMES_MASK = "dropped_frames"
 
 
 def _parse_bin_list(bin_list: Sequence[Sequence[int]]) -> list[tuple[int, int]]:
@@ -281,7 +292,8 @@ def rebin_tof_by_list(
     -------
     scipp.DataArray
         Rebinned stack with ``len(bin_list)`` real bins plus one masked bin per interior gap,
-        propagated variances, and a bin-edge ``tof_dim`` coordinate.
+        propagated variances, a bin-edge ``tof_dim`` coordinate, and a ``spectra_tof`` point
+        coordinate (mean member time per real bin; ``NaN`` on gap bins).
 
     Raises
     ------
@@ -321,6 +333,7 @@ def rebin_tof_by_list(
         result.values[gap] = np.nan
         if result.variances is not None:
             result.variances[gap] = np.nan
+        result.coords[SPECTRA_TOF_COORD].values[gap] = np.nan  # dropped bins have no representative time
         result.masks[DROPPED_FRAMES_MASK] = sc.array(dims=[tof_dim], values=gap)
 
     return result
