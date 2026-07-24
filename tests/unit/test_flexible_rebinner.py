@@ -402,6 +402,8 @@ def test_reduce_tof_bins_rejects_malformed_structure():
         reduce_tof_bins(data, [[0, 2, 4]])  # three indices
     with pytest.raises(ValueError, match="pair"):
         reduce_tof_bins(data, [5])  # scalar entry, not a pair
+    with pytest.raises(ValueError, match="pair"):
+        reduce_tof_bins(data, ["ab"])  # string entry: iterable of two chars, but not an index pair
 
 
 # --------------------------------------------------------------------------------------------
