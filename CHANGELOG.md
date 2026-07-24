@@ -23,10 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   missing data (a `dropped_frames` mask along `tof` plus `NaN` values), keeping a contiguous bin-edge
   `tof` axis; frames before the first/after the last bin are excluded. Each rebinned bin carries a
   `spectra_tof` point coordinate (the mean of its member frames' times), persisted to the HDF5/TIFF
-  output. The core API lives in `neunorm.tof.flexible_rebinner`: `reduce_tof_bins`, `rebin_tof_by_list`,
-  and the `linear_bin_list` / `log_bin_list` bin-list generators (uniform and geometric frame-index
-  bins, the latter porting iBeatles' logarithmic mode without its zero-start infinite loop). The
-  existing adjacent-bin, sum-only `rebin_tof` (integer/time/wavelength, edge-snapping) is unchanged.
+  output. The API lives in `neunorm.tof.histogram_rebinner`: the existing `rebin_tof` gains a
+  `reduction` argument and accepts an explicit `[[start, stop], ...]` bin list as its `width` (its
+  adjacent-bin, sum-only integer/time/wavelength/edge-snapping behavior is unchanged when summing),
+  backed by the public helpers `reduce_tof_bins` and the `linear_bin_list` / `log_bin_list` bin-list
+  generators (uniform and geometric frame-index bins, the latter porting iBeatles' logarithmic mode
+  without its zero-start infinite loop).
 - **Arbitrary-shape (mask-based) ROI regions** — `MaskROI`
   ([#180](https://github.com/ornlneutronimaging/NeuNorm/issues/180)). A pixel **selection** mask
   (same `(y, x)` size as the image; 1/nonzero = pixel *in* the region — the opposite polarity of

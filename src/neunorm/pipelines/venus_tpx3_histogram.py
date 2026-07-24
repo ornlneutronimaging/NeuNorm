@@ -28,7 +28,7 @@ from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.run_combiner import combine_runs
 from neunorm.processing.spatial_rebinner import rebin_spatial
 from neunorm.tof.coordinate_converter import convert_tof_to_energy, convert_tof_to_wavelength
-from neunorm.tof.flexible_rebinner import apply_tof_rebin
+from neunorm.tof.histogram_rebinner import rebin_tof
 from neunorm.tof.pixel_detector import detect_dead_pixels, detect_hot_pixels
 from neunorm.tof.statistics_analyzer import analyze_statistics
 from neunorm.utils.constants import VENUS_FLIGHT_PATH_M
@@ -219,16 +219,20 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
 
     # TOF rebinning (optional): an integer factor, ``True`` for the statistics-based recommended
     # factor, or an explicit ``[[start, stop], ...]`` bin list. ``rebin_reduction`` selects how
-    # frames combine (default: sum for a factor, mean for a bin list); see ``apply_tof_rebin``.
+    # frames combine (default: sum for a factor, mean for a bin list); see ``rebin_tof``.
     # A bin list (even empty) is an explicit rebin request; an empty one must surface as an error
-    # from apply_tof_rebin rather than be silently skipped by the plain falsy check.
+    # from ``rebin_tof`` rather than be silently skipped by the plain falsy check.
     if rebin_by_tof or isinstance(rebin_by_tof, list):
         spec = rebin_by_tof
         if spec is True:
             spec = analyze_statistics(ob).recommended_rebinning
             logger.info(f"Recommended TOF rebinning factor based on statistics analysis: {spec}")
-        sample = apply_tof_rebin(sample, spec, reduction=rebin_reduction)
-        ob = apply_tof_rebin(ob, spec, reduction=rebin_reduction)
+        if isinstance(spec, bool) or not isinstance(spec, (int, np.integer, list)):
+            raise ValueError(
+                f"rebin_by_tof must be a bool, an int factor, or a list of [start, stop] pairs; got {spec!r}"
+            )
+        sample = rebin_tof(sample, spec, reduction=rebin_reduction)
+        ob = rebin_tof(ob, spec, reduction=rebin_reduction)
 
     # Normalization
     transmission = normalize_transmission(

@@ -1,4 +1,5 @@
-"""Unit tests for neunorm.tof.flexible_rebinner.reduce_tof_bins (flexible rebinning, Task 1)."""
+"""Unit tests for the flexible reduction path of neunorm.tof.histogram_rebinner.rebin_tof
+(reduce_tof_bins, the list/int reduction dispatch, and the linear/log bin-list generators)."""
 
 import tempfile
 from pathlib import Path
@@ -10,13 +11,12 @@ import scipp as sc
 from loguru import logger
 
 from neunorm.exporters.hdf5_writer import write_hdf5
-from neunorm.tof.flexible_rebinner import (
+from neunorm.tof.histogram_rebinner import (
     DROPPED_FRAMES_MASK,
     SPECTRA_TOF_COORD,
-    apply_tof_rebin,
     linear_bin_list,
     log_bin_list,
-    rebin_tof_by_list,
+    rebin_tof,
     reduce_tof_bins,
 )
 
@@ -228,14 +228,14 @@ def test_non_bin_edge_coord_raises():
 
 
 # --------------------------------------------------------------------------------------------
-# rebin_tof_by_list — user-facing list input with gap-as-missing-data (Task 2)
+# rebin_tof — user-facing list input with gap-as-missing-data (Task 2)
 # --------------------------------------------------------------------------------------------
 
 
 def test_list_no_gap_equals_reduce_tof_bins():
     """Contiguous bins add no mask and match reduce_tof_bins on the same ranges."""
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
-    out = rebin_tof_by_list(data, [[0, 2], [2, 5]], reduction="mean")
+    out = rebin_tof(data, [[0, 2], [2, 5]], reduction="mean")
     ref = reduce_tof_bins(data, [(0, 2), (2, 5)], reduction="mean")
     assert DROPPED_FRAMES_MASK not in out.masks
     np.testing.assert_allclose(out.values, ref.values)
@@ -246,7 +246,7 @@ def test_list_no_gap_equals_reduce_tof_bins():
 def test_list_single_interior_gap_is_missing_data():
     """A dropped frame between bins becomes a masked, NaN gap bin; the tof axis stays contiguous."""
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])  # edges [0,.1,.2,.3,.4,.5]
-    out = rebin_tof_by_list(data, [[0, 2], [3, 5]], reduction="mean")  # frame 2 dropped
+    out = rebin_tof(data, [[0, 2], [3, 5]], reduction="mean")  # frame 2 dropped
     assert out.sizes["tof"] == 3  # real, gap, real
     # gap flagged as missing data (mask + NaN), real bins correct
     assert DROPPED_FRAMES_MASK in out.masks
@@ -264,7 +264,7 @@ def test_list_single_interior_gap_is_missing_data():
 
 def test_list_multiple_gaps():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
-    out = rebin_tof_by_list(data, [[0, 1], [2, 3], [4, 5]], reduction="mean")  # drop frames 1 and 3
+    out = rebin_tof(data, [[0, 1], [2, 3], [4, 5]], reduction="mean")  # drop frames 1 and 3
     assert out.sizes["tof"] == 5
     np.testing.assert_array_equal(out.masks[DROPPED_FRAMES_MASK].values, [False, True, False, True, False])
     np.testing.assert_allclose([out.values[0, 0, 0], out.values[2, 0, 0], out.values[4, 0, 0]], [10, 30, 50])
@@ -273,7 +273,7 @@ def test_list_multiple_gaps():
 
 def test_list_reduction_mode_flows_through():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
-    out = rebin_tof_by_list(data, [[0, 2], [3, 5]], reduction="sum")  # frame 2 dropped
+    out = rebin_tof(data, [[0, 2], [3, 5]], reduction="sum")  # frame 2 dropped
     np.testing.assert_allclose(out.values[0], 30)  # sum(10, 20)
     np.testing.assert_allclose(out.values[2], 90)  # sum(40, 50)
     np.testing.assert_allclose(out.variances[0], 8)  # 4 + 4
@@ -283,7 +283,7 @@ def test_list_reduction_mode_flows_through():
 def test_list_leading_and_trailing_frames_excluded():
     """Frames before the first bin / after the last bin are dropped without a gap bin."""
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
-    out = rebin_tof_by_list(data, [[1, 3]], reduction="mean")  # frames 0, 3, 4 excluded
+    out = rebin_tof(data, [[1, 3]], reduction="mean")  # frames 0, 3, 4 excluded
     assert out.sizes["tof"] == 1
     assert DROPPED_FRAMES_MASK not in out.masks
     np.testing.assert_allclose(out.values[0], 25)  # mean(20, 30)
@@ -293,60 +293,60 @@ def test_list_leading_and_trailing_frames_excluded():
 def test_list_overlap_rejected():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
     with pytest.raises(ValueError, match="overlap"):
-        rebin_tof_by_list(data, [[0, 3], [2, 5]])  # overlap on frame 2
+        rebin_tof(data, [[0, 3], [2, 5]])  # overlap on frame 2
 
 
 def test_list_empty_raises():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
     with pytest.raises(ValueError, match="at least one"):
-        rebin_tof_by_list(data, [])
+        rebin_tof(data, [])
 
 
 # --------------------------------------------------------------------------------------------
-# rebin_tof_by_list — dedicated bin-list validation & clear errors (Task 3)
+# rebin_tof — dedicated bin-list validation & clear errors (Task 3)
 # --------------------------------------------------------------------------------------------
 
 
 def test_validate_out_of_bounds():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
     with pytest.raises(ValueError, match="out of bounds"):
-        rebin_tof_by_list(data, [[0, 2], [3, 6]])  # stop 6 > 5 frames
+        rebin_tof(data, [[0, 2], [3, 6]])  # stop 6 > 5 frames
     with pytest.raises(ValueError, match="out of bounds"):
-        rebin_tof_by_list(data, [[-1, 2]])  # negative start
+        rebin_tof(data, [[-1, 2]])  # negative start
 
 
 def test_validate_empty_or_reversed_bin():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
     with pytest.raises(ValueError, match="empty or reversed"):
-        rebin_tof_by_list(data, [[2, 2]])  # zero-width
+        rebin_tof(data, [[2, 2]])  # zero-width
     with pytest.raises(ValueError, match="empty or reversed"):
-        rebin_tof_by_list(data, [[3, 1]])  # reversed
+        rebin_tof(data, [[3, 1]])  # reversed
 
 
 def test_validate_unordered_bins():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
     with pytest.raises(ValueError, match="increasing order"):
-        rebin_tof_by_list(data, [[3, 5], [0, 2]])  # out of order
+        rebin_tof(data, [[3, 5], [0, 2]])  # out of order
 
 
 def test_validate_malformed_structure():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
     with pytest.raises(ValueError, match="pair"):
-        rebin_tof_by_list(data, [[0, 2, 4]])  # three indices, not a pair
+        rebin_tof(data, [[0, 2, 4]])  # three indices, not a pair
     with pytest.raises(ValueError, match="pair"):
-        rebin_tof_by_list(data, [5])  # scalar entry, not a pair
+        rebin_tof(data, [5])  # scalar entry, not a pair
 
 
 def test_validate_non_integer_indices():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
     with pytest.raises(ValueError, match="integers"):
-        rebin_tof_by_list(data, [[0.0, 2.5]])  # float indices
+        rebin_tof(data, [[0.0, 2.5]])  # float indices
 
 
 def test_validate_gaps_still_allowed():
     """Validation must NOT reject a legitimate between-bin gap (regression for Task 2 behavior)."""
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
-    out = rebin_tof_by_list(data, [[0, 2], [3, 5]])  # frame 2 dropped -> gap bin, no error
+    out = rebin_tof(data, [[0, 2], [3, 5]])  # frame 2 dropped -> gap bin, no error
     assert out.sizes["tof"] == 3
     np.testing.assert_array_equal(out.masks[DROPPED_FRAMES_MASK].values, [False, True, False])
 
@@ -369,7 +369,7 @@ def test_median_on_integer_data_promotes_no_crash():
 def test_sum_gap_on_integer_data_promotes_no_crash():
     """sum + interior gap on an integer stack must not crash: result is promoted to float for NaN."""
     data = _stack([10, 20, 30, 40, 50], dtype="int64")  # integer, no variances
-    out = rebin_tof_by_list(data, [[0, 2], [3, 5]], reduction="sum")  # frame 2 dropped -> gap
+    out = rebin_tof(data, [[0, 2], [3, 5]], reduction="sum")  # frame 2 dropped -> gap
     assert np.issubdtype(out.values.dtype, np.floating)
     np.testing.assert_allclose(out.values[0], 30)  # sum(10, 20)
     np.testing.assert_allclose(out.values[2], 90)  # sum(40, 50)
@@ -380,7 +380,7 @@ def test_sum_gap_on_integer_data_promotes_no_crash():
 def test_sum_gap_on_integer_data_without_gap_stays_integer():
     """Without a gap there is no NaN, so an integer sum keeps its integer dtype (no needless promote)."""
     data = _stack([10, 20, 30, 40], dtype="int64")
-    out = rebin_tof_by_list(data, [[0, 2], [2, 4]], reduction="sum")  # contiguous, no gap
+    out = rebin_tof(data, [[0, 2], [2, 4]], reduction="sum")  # contiguous, no gap
     assert np.issubdtype(out.values.dtype, np.integer)
     assert DROPPED_FRAMES_MASK not in out.masks
     np.testing.assert_array_equal(out.values[:, 0, 0], [30, 70])
@@ -435,7 +435,7 @@ def test_spectra_tof_variable_width_bins():
 def test_spectra_tof_gap_bin_is_nan_and_axis_monotonic():
     """A dropped-frame gap bin has NaN spectra_tof; the bin-edge tof axis stays contiguous/monotonic."""
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
-    out = rebin_tof_by_list(data, [[0, 2], [3, 5]], reduction="mean")  # frame 2 dropped -> gap
+    out = rebin_tof(data, [[0, 2], [3, 5]], reduction="mean")  # frame 2 dropped -> gap
     st = out.coords[SPECTRA_TOF_COORD].values
     np.testing.assert_allclose(st[0], 0.05)  # mean left edges of frames 0,1
     assert np.isnan(st[1])  # gap bin has no representative time
@@ -448,7 +448,7 @@ def test_spectra_tof_gap_bin_is_nan_and_axis_monotonic():
 def test_spectra_tof_round_trips_through_hdf5():
     """The updated spectra (spectra_tof) is written to and read back from HDF5 output (#192)."""
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
-    out = rebin_tof_by_list(data, [[0, 2], [3, 5]], reduction="mean")  # frame 2 dropped -> gap
+    out = rebin_tof(data, [[0, 2], [3, 5]], reduction="mean")  # frame 2 dropped -> gap
     with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
         output_path = Path(f.name)
         write_hdf5(output_path, out)
@@ -530,54 +530,54 @@ def test_log_bin_list_validation():
         log_bin_list(10, float("inf"))  # non-finite factor
 
 
-def test_generators_compose_with_rebin_tof_by_list():
-    """linear/log generators feed rebin_tof_by_list end-to-end (mean) with a valid bin-edge axis."""
+def test_generators_compose_with_rebin_tof():
+    """linear/log generators feed rebin_tof end-to-end (mean) with a valid bin-edge axis."""
     data = _stack([10, 20, 30, 40, 50, 60], variances=[4, 4, 4, 4, 4, 4])
 
-    lin = rebin_tof_by_list(data, linear_bin_list(6, 2), reduction="mean")
+    lin = rebin_tof(data, linear_bin_list(6, 2), reduction="mean")
     assert lin.sizes["tof"] == 3
     np.testing.assert_allclose(lin.values[0], 15)  # mean(10, 20)
     assert lin.coords["tof"].sizes["tof"] == lin.sizes["tof"] + 1  # bin-edge axis (N+1)
     assert SPECTRA_TOF_COORD in lin.coords
 
     log_bins = log_bin_list(6, 0.5)
-    log = rebin_tof_by_list(data, log_bins, reduction="mean")
+    log = rebin_tof(data, log_bins, reduction="mean")
     assert log.sizes["tof"] == len(log_bins)
     assert log.coords["tof"].sizes["tof"] == log.sizes["tof"] + 1
     assert SPECTRA_TOF_COORD in log.coords
 
 
 # --------------------------------------------------------------------------------------------
-# apply_tof_rebin — pipeline dispatch helper (Task 6)
+# rebin_tof — unified entry point: int/list + reduction dispatch (Task 6, consolidated)
 # --------------------------------------------------------------------------------------------
 
 
-def test_apply_tof_rebin_int_default_is_sum():
+def test_rebin_tof_int_default_is_sum():
     """An integer factor with reduction=None sums (existing rebin_tof behavior; no spectra_tof)."""
     data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
-    out = apply_tof_rebin(data, 2)
+    out = rebin_tof(data, 2)
     assert out.sizes["tof"] == 2
     np.testing.assert_allclose(out.values[:, 0, 0], [30, 70])  # summed pairs
-    assert SPECTRA_TOF_COORD not in out.coords  # sum path uses rebin_tof, no spectra_tof
+    assert SPECTRA_TOF_COORD not in out.coords  # sum path uses scipp.rebin, no spectra_tof
 
 
-def test_apply_tof_rebin_int_sum_explicit_matches_default():
+def test_rebin_tof_int_sum_explicit_matches_default():
     data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
-    np.testing.assert_allclose(apply_tof_rebin(data, 2, reduction="sum").values, apply_tof_rebin(data, 2).values)
+    np.testing.assert_allclose(rebin_tof(data, 2, reduction="sum").values, rebin_tof(data, 2).values)
 
 
-def test_apply_tof_rebin_int_mean_uses_linear_bins():
-    """An integer factor with reduction='mean' averages via linear_bin_list + rebin_tof_by_list."""
+def test_rebin_tof_int_mean_uses_linear_bins():
+    """An integer factor with reduction='mean' averages via uniform (linear) frame-index bins."""
     data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
-    out = apply_tof_rebin(data, 2, reduction="mean")
+    out = rebin_tof(data, 2, reduction="mean")
     assert out.sizes["tof"] == 2
     np.testing.assert_allclose(out.values[:, 0, 0], [15, 35])  # averaged pairs
     assert SPECTRA_TOF_COORD in out.coords
 
 
-def test_apply_tof_rebin_list_default_is_mean_with_gap():
+def test_rebin_tof_list_default_is_mean_with_gap():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
-    out = apply_tof_rebin(data, [[0, 2], [3, 5]])  # frame 2 dropped
+    out = rebin_tof(data, [[0, 2], [3, 5]])  # frame 2 dropped
     assert out.sizes["tof"] == 3
     np.testing.assert_allclose(out.values[0, 0, 0], 15)  # mean(10, 20)
     assert np.isnan(out.values[1]).all()  # gap
@@ -585,22 +585,24 @@ def test_apply_tof_rebin_list_default_is_mean_with_gap():
     assert SPECTRA_TOF_COORD in out.coords
 
 
-def test_apply_tof_rebin_list_sum_reduction():
+def test_rebin_tof_list_sum_reduction():
     data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
-    out = apply_tof_rebin(data, [[0, 2], [2, 4]], reduction="sum")
+    out = rebin_tof(data, [[0, 2], [2, 4]], reduction="sum")
     np.testing.assert_allclose(out.values[:, 0, 0], [30, 70])
 
 
-def test_apply_tof_rebin_rejects_bool_and_bad_spec():
+def test_rebin_tof_mean_rejects_non_bins_unit_and_logarithmic():
+    """mean/median reduce frame-index groups only (scipp.rebin — the time/wavelength/log sum
+    machinery — cannot mean/median); those combinations must raise, not silently sum."""
     data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
-    with pytest.raises(ValueError, match="boolean"):
-        apply_tof_rebin(data, True)
-    with pytest.raises(ValueError, match="bool.*int.*list|int factor"):
-        apply_tof_rebin(data, "2")
+    with pytest.raises(ValueError, match="unit='bins'|bin list"):
+        rebin_tof(data, 2, unit="time", reduction="mean")
+    with pytest.raises(ValueError, match="log_bin_list|logarithmic"):
+        rebin_tof(data, 2, reduction="median", logarithmic=True)
 
 
-def test_apply_tof_rebin_list_rejects_invalid_reduction():
+def test_rebin_tof_list_rejects_invalid_reduction():
     """A falsy-but-invalid reduction ("") must be rejected, not silently coerced to mean."""
     data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
     with pytest.raises(ValueError, match="reduction"):
-        apply_tof_rebin(data, [[0, 2], [2, 4]], reduction="")
+        rebin_tof(data, [[0, 2], [2, 4]], reduction="")

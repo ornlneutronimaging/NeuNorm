@@ -403,8 +403,8 @@ TPX1 histogram data has fixed TOF bins determined at acquisition. Rebinning opti
   are excluded. Skipping frames *within* a range is impossible by construction; overlapping,
   out-of-bounds, or unordered lists are rejected with a clear error.
 - Each output bin carries a `spectra_tof` coordinate = the mean of its member frames' times,
-  written to the output file. `neunorm.tof.flexible_rebinner.linear_bin_list` / `log_bin_list`
-  generate uniform / geometric frame-index bin lists to feed this path.
+  written to the output file. `neunorm.tof.histogram_rebinner.linear_bin_list` / `log_bin_list`
+  generate uniform / geometric frame-index bin lists to pass as `rebin_tof`'s `width`.
 
 **Spatial Rebinning**:
 - Combine NxN pixel blocks

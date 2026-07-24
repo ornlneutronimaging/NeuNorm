@@ -949,7 +949,8 @@ Flexible bin-list rebinning (`rebin_by_tof=[[start, stop], ...]`, half-open fram
 on the histogrammed stack in **both** event mode (applied after event histogramming) and histogram
 mode. Each output bin gains a `spectra_tof` coordinate (mean of its member frames' times). See the
 TPX1 guide's "Rebinning Constraints" for the full description; the API is
-`neunorm.tof.flexible_rebinner` (`rebin_tof_by_list`, `linear_bin_list`, `log_bin_list`).
+`neunorm.tof.histogram_rebinner.rebin_tof` (a `[[start, stop], ...]` list as `width`, plus a
+`reduction`), with the `linear_bin_list` / `log_bin_list` generators alongside it.
 
 **Comparison with Event Mode**:
 - Event mode: Full flexibility (any bin scheme, incl. sub-frame edges, from raw events)
