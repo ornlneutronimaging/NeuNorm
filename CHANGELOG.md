@@ -15,9 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rebin_by_tof=[[start, stop], ...]` list of **half-open frame-index ranges** (Python convention)
   in addition to the existing `bool`/`int` factor, plus a new `rebin_reduction` parameter selecting
   how frames combine per bin — `"mean"` (default for a bin list), `"sum"`, or `"median"` — with
-  scipp variance propagation (mean `ΣVar/N²`, sum `ΣVar`, median `≈ (π/2)·ΣVar/N²` for N≥3, exact for
-  N≤2, warned). Existing `rebin_by_tof=int`/`True` behavior is unchanged (still sums; `rebin_reduction`
-  defaults to that). Interior **gaps** are allowed — dropped frames become an explicit bin flagged as
+  scipp variance propagation: mean `ΣVar/N²`, sum `ΣVar`; the median value is exact and, for a bin of
+  three or more frames, its uncertainty is reported as `NaN` (unavailable, with a warning) because the
+  sample-median variance of a few heterogeneous TOF frames has no reliable closed form — while a
+  one/two-frame bin uses the exact `Var(mean)`. Existing `rebin_by_tof=int`/`True` behavior is
+  unchanged (still sums; `rebin_reduction` defaults to that). Interior **gaps** are allowed — dropped frames become an explicit bin flagged as
   missing data (a `dropped_frames` mask along `tof` plus `NaN` values), keeping a contiguous bin-edge
   `tof` axis; frames before the first/after the last bin are excluded. Each rebinned bin carries a
   `spectra_tof` point coordinate (the mean of its member frames' times), persisted to the HDF5/TIFF

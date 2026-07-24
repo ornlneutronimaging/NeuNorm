@@ -162,12 +162,14 @@ def _require_positive_finite_coefficient(coeff: sc.Variable, data: sc.DataArray,
     the guard, so a gapped rebin can still be air/background corrected. ``sc.sum(...).data`` upstream
     dropped the mask, so it is read back from ``data.masks`` here.
     """
-    checked = np.atleast_1d(coeff.values).astype(float)
-    gap = np.zeros(checked.shape, dtype=bool)
+    values = np.atleast_1d(coeff.values).astype(float)
+    gap = np.zeros(values.shape, dtype=bool)
     for mask in data.masks.values():
-        if mask.dims == coeff.dims:
-            gap |= np.atleast_1d(mask.values)
-    checked = checked[~gap]
+        # A missing-bin mask (e.g. the 1-D dropped_frames tof mask) may be lower-dimensional than
+        # the coefficient; broadcast any mask whose dims are a subset of coeff's and drop those bins.
+        if set(mask.dims) <= set(coeff.dims):
+            gap |= np.atleast_1d(sc.broadcast(mask, sizes=coeff.sizes).values)
+    checked = values[~gap]
     if checked.size == 0 or not np.all(np.isfinite(checked)) or float(np.min(checked)) <= 0:
         worst = float(np.min(checked)) if checked.size else float("nan")
         raise ValueError(

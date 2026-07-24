@@ -505,6 +505,25 @@ class TestVenusTPX1Pipeline:
             with h5py.File(output_path, "r") as hf:
                 assert "spectra_tof" in hf  # per-bin mean-time exported
 
+    def test_venus_tpx1_pipeline_rebin_by_tof_median(self):
+        """rebin_reduction='median' end-to-end: median values are produced; the >=3-frame bin's
+        uncertainty is NaN (unavailable), the 2-frame bin's is finite. (Coverage the review flagged.)"""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 3], [3, 5]],  # N=3 bin (NaN variance) + N=2 bin (exact variance)
+                rebin_reduction="median",
+            )
+            assert transmission.shape == (2, 32, 32)
+            assert np.all(np.isfinite(transmission.values))  # median values are exact/finite
+            assert np.isnan(transmission.variances[0]).all()  # N=3 median: uncertainty unavailable
+            assert np.all(np.isfinite(transmission.variances[1]))  # N=2 median == mean: exact
+
     def test_venus_tpx1_pipeline_rebin_by_tof_list_gap(self):
         """A gap in the bin list flags the dropped frame as missing data through to the output."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:

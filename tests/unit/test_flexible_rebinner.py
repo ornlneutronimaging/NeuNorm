@@ -106,23 +106,20 @@ def test_median_two_frame_bin_variance_is_exact_no_warning():
     assert not any("median" in m.lower() and "approxim" in m.lower() for m in messages)
 
 
-def test_median_large_bin_variance_is_pi_over_2_approx_with_warning():
-    """For N>=3 the median variance uses the large-N approximation (pi/2)*Var(mean) and warns.
-
-    Independent oracle: a 3-frame bin of equal var-4 frames has Var(mean) = (4+4+4)/3**2 = 4/3,
-    and the median of three sorted values is the middle one.
-    """
+def test_median_large_bin_variance_is_nan_unavailable_with_warning():
+    """For N>=3 the sample-median variance of heterogeneous frames has no reliable closed form, so
+    it is reported as NaN (unavailable) with a warning — never a fabricated value. The median VALUE
+    is still exact (the middle of three sorted values)."""
     data = _stack([10, 20, 30, 40, 50, 60], variances=[4, 4, 4, 4, 4, 4])
     messages, remove = _capture_warnings()
     try:
         out = reduce_tof_bins(data, [(0, 3), (3, 6)], reduction="median")
     finally:
         remove()
-    np.testing.assert_allclose(out.values[0], 20)  # median(10, 20, 30)
-    np.testing.assert_allclose(out.values[1], 50)  # median(40, 50, 60)
-    np.testing.assert_allclose(out.variances[0], (np.pi / 2) * (4.0 / 3.0))
-    np.testing.assert_allclose(out.variances[1], (np.pi / 2) * (4.0 / 3.0))
-    assert any("median" in m.lower() and "approxim" in m.lower() for m in messages)
+    np.testing.assert_allclose(out.values[0], 20)  # median(10, 20, 30) — exact
+    np.testing.assert_allclose(out.values[1], 50)  # median(40, 50, 60) — exact
+    assert np.isnan(out.variances).all()  # uncertainty unavailable, not a bogus number
+    assert any("median" in m.lower() and "nan" in m.lower() for m in messages)
 
 
 def test_median_single_frame_bin_variance_is_exact_no_warning():
@@ -396,6 +393,15 @@ def test_reduce_tof_bins_rejects_non_integer_indices():
         reduce_tof_bins(data, [(0.5, 2.5)])
     with pytest.raises(ValueError, match="integers"):
         reduce_tof_bins(data, [(False, 2)])
+
+
+def test_reduce_tof_bins_rejects_malformed_structure():
+    """A malformed bin entry (not a [start, stop] pair) raises a clear error, not a bare unpack error."""
+    data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
+    with pytest.raises(ValueError, match="pair"):
+        reduce_tof_bins(data, [[0, 2, 4]])  # three indices
+    with pytest.raises(ValueError, match="pair"):
+        reduce_tof_bins(data, [5])  # scalar entry, not a pair
 
 
 # --------------------------------------------------------------------------------------------

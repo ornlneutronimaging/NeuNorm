@@ -32,11 +32,6 @@ from neunorm.tof.histogram_rebinner import rebin_tof
 #: Reductions understood by :func:`reduce_tof_bins`.
 ReductionMode = Literal["mean", "sum", "median"]
 
-#: Large-N approximation for the variance of the sample median of i.i.d. normal values:
-#: ``Var(median) ≈ (π/2)·Var(mean)``. Applied only to bins of three or more frames — for a
-#: one- or two-frame bin the median equals the arithmetic mean exactly, so its variance is exact.
-_MEDIAN_VARIANCE_FACTOR = np.pi / 2.0
-
 #: Point coord (one value per output bin) holding each bin's representative time — the mean of the
 #: member frames' left-edge times — carried alongside the bin-edge ``tof`` axis so the spectra can
 #: be updated on export (GitHub #192).
@@ -58,9 +53,15 @@ def _require_positive_int(value: object, name: str) -> None:
 
 
 def _coerce_int_ranges(bins: Sequence[Sequence[int]]) -> list[tuple[int, int]]:
-    """Coerce ``(start, stop)`` pairs to plain ints, rejecting non-integer / bool indices."""
+    """Coerce ``(start, stop)`` pairs to plain ints, rejecting malformed / non-integer / bool entries."""
     ranges = []
-    for start, stop in bins:
+    for entry in bins:
+        if isinstance(entry, (str, bytes)):
+            raise ValueError(f"each bin must be a [start, stop] pair of integers; got {entry!r}")
+        try:
+            start, stop = entry
+        except (TypeError, ValueError):
+            raise ValueError(f"each bin must be a [start, stop] pair (exactly two indices); got {entry!r}") from None
         if not (_is_integer_index(start) and _is_integer_index(stop)):
             raise ValueError(f"bin indices must be integers; got ({start!r}, {stop!r})")
         ranges.append((int(start), int(stop)))
@@ -112,7 +113,7 @@ def _reduce_one_bin(
 ) -> tuple[sc.DataArray, bool]:
     """Collapse one contiguous chunk of frames to a single frame.
 
-    Returns the reduced frame and whether the median large-N variance approximation was applied.
+    Returns the reduced frame and whether the median variance was reported as unavailable (NaN).
     """
     if reduction == "sum":
         return sc.sum(chunk, tof_dim), False
@@ -124,15 +125,17 @@ def _reduce_one_bin(
     frame = sc.median(sc.values(chunk) if has_variances else chunk, tof_dim)
     if not has_variances:
         return frame, False
-    # Var(median) has no simple closed form. For N <= 2 the sample median equals the arithmetic
-    # mean exactly (N=1: the frame; N=2: the average of the two frames), so its variance is exactly
-    # Var(mean). For N >= 3 use the large-N i.i.d.-normal approximation Var(median) ≈ (π/2)·Var(mean).
-    mean_variance = sc.variances(sc.mean(chunk, tof_dim)).values
-    if chunk.sizes[tof_dim] > 2:
-        frame.variances = _MEDIAN_VARIANCE_FACTOR * mean_variance
-        return frame, True
-    frame.variances = mean_variance
-    return frame, False
+    # Median uncertainty. For N <= 2 the sample median equals the arithmetic mean exactly (N=1: the
+    # frame; N=2: the average of the two frames), so its variance is exactly Var(mean). For N >= 3
+    # the variance of the sample median of a few HETEROGENEOUS frames (different per-frame means /
+    # Poisson variances, as TOF frames generally are) has no reliable closed form — the large-N
+    # i.i.d.-normal (π/2)·Var(mean) result materially misstates it — so the uncertainty is reported
+    # as NaN (unavailable) rather than a misleading number. The median VALUE itself is exact.
+    if chunk.sizes[tof_dim] <= 2:
+        frame.variances = sc.variances(sc.mean(chunk, tof_dim)).values
+        return frame, False
+    frame.variances = np.full(frame.shape, np.nan)
+    return frame, True
 
 
 def reduce_tof_bins(
@@ -164,11 +167,11 @@ def reduce_tof_bins(
 
         - ``"mean"``  — value ``= (1/N)·Σxᵢ``; variance ``= ΣVar(xᵢ)/N²``.
         - ``"sum"``   — value ``= Σxᵢ``;        variance ``= ΣVar(xᵢ)``.
-        - ``"median"``— value ``= median(xᵢ)``; variance ``≈ (π/2)·ΣVar(xᵢ)/N²`` for ``N ≥ 3`` (a
-          large-N approximation valid for i.i.d. normal samples with a common variance; a warning
-          is emitted, and for strongly heterogeneous per-frame variances it is only a rough
-          estimate). For ``N ≤ 2`` the median equals the mean, so the exact ``Var(mean)`` is used.
-          Integer input is promoted to float.
+        - ``"median"``— value ``= median(xᵢ)`` (exact). Variance: for ``N ≤ 2`` the median equals
+          the mean, so the exact ``Var(mean)`` is used; for ``N ≥ 3`` the sample-median variance of a
+          few heterogeneous frames has no reliable closed form, so it is reported as ``NaN``
+          (unavailable) with a warning rather than a misleading estimate. Integer input is promoted
+          to float.
     tof_dim : str, optional
         Name of the TOF dimension. Default ``"tof"``.
 
@@ -191,17 +194,18 @@ def reduce_tof_bins(
     ranges, tof_edges = _validate_bins(data, bins, tof_dim)
 
     has_variances = data.variances is not None
-    approximated_median = False
+    median_variance_unavailable = False
     reduced_frames = []
     for start, stop in ranges:
-        frame, approximated = _reduce_one_bin(data[tof_dim, start:stop], reduction, tof_dim, has_variances)
-        approximated_median = approximated_median or approximated
+        frame, unavailable = _reduce_one_bin(data[tof_dim, start:stop], reduction, tof_dim, has_variances)
+        median_variance_unavailable = median_variance_unavailable or unavailable
         reduced_frames.append(frame)
 
-    if approximated_median:
+    if median_variance_unavailable:
         logger.warning(
-            "MEDIAN rebinning: propagated variance uses the large-N approximation "
-            "Var(median) ≈ (π/2)·Var(mean); treat median uncertainties as approximate."
+            "MEDIAN rebinning: the sample-median variance of a 3+-frame bin has no reliable estimate "
+            "for heterogeneous TOF frames, so those bins' variance is reported as NaN (unavailable). "
+            "The median values are exact."
         )
 
     result = sc.concat(reduced_frames, tof_dim)
@@ -289,8 +293,11 @@ def rebin_tof_by_list(
     after the last bin are simply excluded (the axis spans the first ``start`` to the last
     ``stop``); only interior gaps become masked bins.
 
-    Within a single bin no frames can be skipped: each ``[start, stop)`` is contiguous by
-    construction, satisfying the "no in-bin skipping" rule.
+    Reconciling with the design rule "do not provide the option to skip images": that rule forbids
+    skipping frames *within* a bin (a bin like ``0, 1, 5, 8`` that is not a contiguous run), which is
+    impossible here — each ``[start, stop)`` is a contiguous range by construction. Dropping frames
+    *between* bins is a different, deliberate operation (excluding unwanted data), and those dropped
+    frames are explicitly recorded as missing (the gap bin above), not silently discarded.
 
     Parameters
     ----------
