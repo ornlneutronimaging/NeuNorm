@@ -259,6 +259,33 @@ def test_get_energy_histogram_from_tof():
     assert hist_energy.values[-1, 0, 0] == hist_tof.values[0, 0, 0]
 
 
+def test_get_energy_histogram_reverses_tof_dependent_coords_and_masks():
+    """A tof-dependent point coord (spectra_tof) and a tof mask are reversed together with the data,
+    so each energy bin keeps its OWN frame's provenance — not the mirror-image bin's. Regression for
+    the flexible-rebin spectra_tof coord (#192)."""
+    from neunorm.tof.binning import get_energy_histogram
+
+    n = 4
+    tof_edges = sc.linspace("tof", 1e5, 5e5, num=n + 1, unit="ns")
+    data_values = np.zeros((n, 2, 2))
+    for i in range(n):
+        data_values[i] = i  # frame i has data value i everywhere; spectra_tof[i] = 10*i
+    hist_tof = sc.DataArray(
+        data=sc.array(dims=["tof", "x", "y"], values=data_values, unit="counts"),
+        coords={
+            "tof": tof_edges,
+            "spectra_tof": sc.array(dims=["tof"], values=np.array([0.0, 10.0, 20.0, 30.0]), unit="ns"),
+        },
+        masks={"dropped": sc.array(dims=["tof"], values=[False, True, False, False])},
+    )
+    he = get_energy_histogram(hist_tof, sc.scalar(25.0, unit="m"))
+    np.testing.assert_array_equal(he.values[:, 0, 0], [3, 2, 1, 0])  # data reversed
+    np.testing.assert_array_equal(he.coords["spectra_tof"].values, [30.0, 20.0, 10.0, 0.0])  # coord reversed
+    np.testing.assert_array_equal(he.masks["dropped"].values, [False, False, True, False])  # mask reversed
+    # alignment invariant: each energy bin's data (i) still pairs with its own frame's time (10*i)
+    np.testing.assert_array_equal(he.coords["spectra_tof"].values, he.values[:, 0, 0] * 10.0)
+
+
 def test_get_wavelength_histogram_from_tof():
     """Test converting TOF histogram to wavelength histogram"""
     from neunorm.tof.binning import get_wavelength_histogram

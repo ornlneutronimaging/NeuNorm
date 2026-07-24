@@ -9,8 +9,16 @@ such as ``[[0, 4], [5, 30]]`` grouping frames into non-uniform bins).
 This module has two entry points: :func:`reduce_tof_bins`, the low-level reducer over
 already-canonical, contiguous ``(start, stop)`` index ranges, and :func:`rebin_tof_by_list`,
 the user-facing entry that parses the ``[[start, stop], ...]`` list, validates it, and
-represents dropped-frame gaps as missing data. The per-bin mean-time spectra provenance is
-layered on separately (a later task).
+represents dropped-frame gaps as missing data. Both attach a ``spectra_tof`` point coordinate
+giving each bin's representative time (the mean of its member frames' left-edge times), so the
+spectra can be updated on export.
+
+``spectra_tof`` is a TOF-frame provenance coordinate. The pipeline path (rebin -> normalize ->
+``convert_tof_to_energy`` coordinate labelling -> export) carries it unchanged. Two TOF-axis
+transforms handle it specially: :func:`neunorm.tof.binning.get_energy_histogram` reverses it (and
+any ``tof``-dependent mask) together with the data, and a second
+:func:`neunorm.tof.histogram_rebinner.rebin_tof` drops it — its per-bin mean time cannot be
+recomputed from combined bins without the original frame times.
 """
 
 from typing import Literal, Sequence
