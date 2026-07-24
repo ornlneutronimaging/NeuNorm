@@ -13,6 +13,8 @@ from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.tof.flexible_rebinner import (
     DROPPED_FRAMES_MASK,
     SPECTRA_TOF_COORD,
+    linear_bin_list,
+    log_bin_list,
     rebin_tof_by_list,
     reduce_tof_bins,
 )
@@ -449,3 +451,72 @@ def test_spectra_tof_round_trips_through_hdf5():
             np.testing.assert_allclose(st[2], 0.35)
             assert hf["/spectra_tof"].attrs.get("units") == "s"
             np.testing.assert_allclose(hf["/tof"][()], [0.0, 0.2, 0.3, 0.5])
+
+
+# --------------------------------------------------------------------------------------------
+# iBeatles parity: linear / log frame-index bin-list generators (Task 5)
+# --------------------------------------------------------------------------------------------
+
+
+def test_linear_bin_list_uniform():
+    assert linear_bin_list(10, 2) == [(0, 2), (2, 4), (4, 6), (6, 8), (8, 10)]
+
+
+def test_linear_bin_list_truncates_last_bin():
+    assert linear_bin_list(10, 3) == [(0, 3), (3, 6), (6, 9), (9, 10)]
+
+
+def test_linear_bin_list_step_one_is_per_frame():
+    assert linear_bin_list(3, 1) == [(0, 1), (1, 2), (2, 3)]
+
+
+def test_linear_bin_list_validation():
+    with pytest.raises(ValueError, match="n_frames"):
+        linear_bin_list(0, 2)
+    with pytest.raises(ValueError, match="step"):
+        linear_bin_list(10, 0)
+
+
+def test_log_bin_list_zero_start_terminates_and_covers_frames():
+    """The zero-start case must terminate (iBeatles infinite-loop guard) and give >=1 frame/bin.
+
+    Independently derived edges for factor 0.5 with Python's round-half-to-even:
+    0 ->1 ->2 ->3 ->4 ->6 ->9 ->10.
+    """
+    bins = log_bin_list(10, 0.5)
+    assert bins == [(0, 1), (1, 2), (2, 3), (3, 4), (4, 6), (6, 9), (9, 10)]
+
+
+def test_log_bin_list_properties_various():
+    """Across factors/sizes: contiguous, strictly increasing, >=1 frame/bin, covering [0, n)."""
+    for n in (1, 5, 32, 100):
+        for factor in (0.01, 0.5, 2.0):
+            bins = log_bin_list(n, factor)
+            assert bins[0][0] == 0
+            assert bins[-1][1] == n
+            assert all(stop > start for start, stop in bins)  # >= 1 frame each
+            assert all(bins[i][1] == bins[i + 1][0] for i in range(len(bins) - 1))  # contiguous
+
+
+def test_log_bin_list_validation():
+    with pytest.raises(ValueError, match="n_frames"):
+        log_bin_list(0, 0.5)
+    with pytest.raises(ValueError, match="factor"):
+        log_bin_list(10, 0)
+
+
+def test_generators_compose_with_rebin_tof_by_list():
+    """linear/log generators feed rebin_tof_by_list end-to-end (mean) with a valid bin-edge axis."""
+    data = _stack([10, 20, 30, 40, 50, 60], variances=[4, 4, 4, 4, 4, 4])
+
+    lin = rebin_tof_by_list(data, linear_bin_list(6, 2), reduction="mean")
+    assert lin.sizes["tof"] == 3
+    np.testing.assert_allclose(lin.values[0], 15)  # mean(10, 20)
+    assert lin.coords["tof"].sizes["tof"] == lin.sizes["tof"] + 1  # bin-edge axis (N+1)
+    assert SPECTRA_TOF_COORD in lin.coords
+
+    log_bins = log_bin_list(6, 0.5)
+    log = rebin_tof_by_list(data, log_bins, reduction="mean")
+    assert log.sizes["tof"] == len(log_bins)
+    assert log.coords["tof"].sizes["tof"] == log.sizes["tof"] + 1
+    assert SPECTRA_TOF_COORD in log.coords

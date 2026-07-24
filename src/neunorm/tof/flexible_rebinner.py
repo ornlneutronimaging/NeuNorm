@@ -345,3 +345,56 @@ def rebin_tof_by_list(
         result.masks[DROPPED_FRAMES_MASK] = sc.array(dims=[tof_dim], values=gap)
 
     return result
+
+
+def linear_bin_list(n_frames: int, step: int) -> list[tuple[int, int]]:
+    """Uniform frame-count bins for :func:`rebin_tof_by_list`.
+
+    Returns contiguous ``(start, stop)`` ranges ``[(0, step), (step, 2*step), ...]`` covering
+    ``n_frames`` frames; the final bin is truncated when ``n_frames`` is not a multiple of ``step``.
+    This is the mean/median-capable analogue of iBeatles' linear-by-file-index binning (and of
+    ``rebin_tof(unit="bins")``, which sums): pair it with :func:`rebin_tof_by_list` to average or
+    take the median of every ``step`` frames.
+
+    Parameters
+    ----------
+    n_frames : int
+        Number of TOF frames to bin (``data.sizes["tof"]``).
+    step : int
+        Frames per bin (> 0).
+    """
+    if n_frames <= 0:
+        raise ValueError(f"n_frames must be positive; got {n_frames}")
+    if step <= 0:
+        raise ValueError(f"step (frames per bin) must be positive; got {step}")
+    return [(start, min(start + step, n_frames)) for start in range(0, n_frames, step)]
+
+
+def log_bin_list(n_frames: int, factor: float) -> list[tuple[int, int]]:
+    """Geometric (logarithmic) frame-index bins for :func:`rebin_tof_by_list`.
+
+    Bin edges grow by roughly ``(1 + factor)`` along the frame index — fine bins early, coarser
+    bins later — the frame-index logarithmic mode that
+    :func:`neunorm.tof.histogram_rebinner.rebin_tof` does not offer (it rejects ``logarithmic`` for
+    ``unit="bins"``). Edges are forced to strictly increasing integers (at least one frame per bin),
+    which also avoids the zero-start infinite loop in the original iBeatles implementation
+    (``edge += edge * factor`` never advances from ``0``). The final bin is truncated to ``n_frames``.
+
+    Parameters
+    ----------
+    n_frames : int
+        Number of TOF frames to bin.
+    factor : float
+        Geometric growth factor per edge (> 0); a larger ``factor`` gives fewer, wider late bins.
+    """
+    if n_frames <= 0:
+        raise ValueError(f"n_frames must be positive; got {n_frames}")
+    if factor <= 0:
+        raise ValueError(f"factor must be positive; got {factor}")
+    edges = [0]
+    while edges[-1] < n_frames:
+        grown = int(round(edges[-1] * (1.0 + factor)))
+        # Force progress by at least one frame: handles the edge==0 start (0*(1+f)=0) and any
+        # rounding that would repeat an edge, so every bin has >= 1 frame and the loop terminates.
+        edges.append(min(max(grown, edges[-1] + 1), n_frames))
+    return [(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
