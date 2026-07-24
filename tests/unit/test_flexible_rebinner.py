@@ -470,11 +470,21 @@ def test_linear_bin_list_step_one_is_per_frame():
     assert linear_bin_list(3, 1) == [(0, 1), (1, 2), (2, 3)]
 
 
+def test_linear_bin_list_boundary_cases():
+    assert linear_bin_list(1, 1) == [(0, 1)]  # single frame
+    assert linear_bin_list(5, 10) == [(0, 5)]  # step > n_frames -> one truncated bin
+    assert linear_bin_list(1, 3) == [(0, 1)]  # step > n_frames == 1
+
+
 def test_linear_bin_list_validation():
     with pytest.raises(ValueError, match="n_frames"):
         linear_bin_list(0, 2)
     with pytest.raises(ValueError, match="step"):
         linear_bin_list(10, 0)
+    with pytest.raises(ValueError, match="integer"):
+        linear_bin_list(1.5, 2)  # non-integer n_frames
+    with pytest.raises(ValueError, match="integer"):
+        linear_bin_list(10, 1.5)  # non-integer step
 
 
 def test_log_bin_list_zero_start_terminates_and_covers_frames():
@@ -490,7 +500,7 @@ def test_log_bin_list_zero_start_terminates_and_covers_frames():
 def test_log_bin_list_properties_various():
     """Across factors/sizes: contiguous, strictly increasing, >=1 frame/bin, covering [0, n)."""
     for n in (1, 5, 32, 100):
-        for factor in (0.01, 0.5, 2.0):
+        for factor in (0.001, 0.01, 0.5, 2.0, 100.0):  # very small .. very large
             bins = log_bin_list(n, factor)
             assert bins[0][0] == 0
             assert bins[-1][1] == n
@@ -503,6 +513,12 @@ def test_log_bin_list_validation():
         log_bin_list(0, 0.5)
     with pytest.raises(ValueError, match="factor"):
         log_bin_list(10, 0)
+    with pytest.raises(ValueError, match="integer"):
+        log_bin_list(1.5, 0.5)  # non-integer n_frames
+    with pytest.raises(ValueError, match="finite"):
+        log_bin_list(10, float("nan"))  # non-finite factor
+    with pytest.raises(ValueError, match="finite"):
+        log_bin_list(10, float("inf"))  # non-finite factor
 
 
 def test_generators_compose_with_rebin_tof_by_list():

@@ -49,6 +49,12 @@ def _is_integer_index(value: object) -> bool:
     return not isinstance(value, bool) and isinstance(value, (int, np.integer))
 
 
+def _require_positive_int(value: object, name: str) -> None:
+    """Raise ``ValueError`` unless ``value`` is a positive integer (int / NumPy integer, not bool)."""
+    if not _is_integer_index(value) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer; got {value!r}")
+
+
 def _coerce_int_ranges(bins: Sequence[Sequence[int]]) -> list[tuple[int, int]]:
     """Coerce ``(start, stop)`` pairs to plain ints, rejecting non-integer / bool indices."""
     ranges = []
@@ -363,10 +369,8 @@ def linear_bin_list(n_frames: int, step: int) -> list[tuple[int, int]]:
     step : int
         Frames per bin (> 0).
     """
-    if n_frames <= 0:
-        raise ValueError(f"n_frames must be positive; got {n_frames}")
-    if step <= 0:
-        raise ValueError(f"step (frames per bin) must be positive; got {step}")
+    _require_positive_int(n_frames, "n_frames")
+    _require_positive_int(step, "step (frames per bin)")
     return [(start, min(start + step, n_frames)) for start in range(0, n_frames, step)]
 
 
@@ -387,10 +391,14 @@ def log_bin_list(n_frames: int, factor: float) -> list[tuple[int, int]]:
     factor : float
         Geometric growth factor per edge (> 0); a larger ``factor`` gives fewer, wider late bins.
     """
-    if n_frames <= 0:
-        raise ValueError(f"n_frames must be positive; got {n_frames}")
-    if factor <= 0:
-        raise ValueError(f"factor must be positive; got {factor}")
+    _require_positive_int(n_frames, "n_frames")
+    if (
+        isinstance(factor, bool)
+        or not isinstance(factor, (int, float, np.integer, np.floating))
+        or not np.isfinite(factor)
+        or factor <= 0
+    ):
+        raise ValueError(f"factor must be a positive, finite number; got {factor!r}")
     edges = [0]
     while edges[-1] < n_frames:
         grown = int(round(edges[-1] * (1.0 + factor)))
