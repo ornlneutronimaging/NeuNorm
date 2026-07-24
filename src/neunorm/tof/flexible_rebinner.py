@@ -21,11 +21,13 @@ any ``tof``-dependent mask) together with the data, and a second
 recomputed from combined bins without the original frame times.
 """
 
-from typing import Literal, Sequence
+from typing import Literal, Optional, Sequence
 
 import numpy as np
 import scipp as sc
 from loguru import logger
+
+from neunorm.tof.histogram_rebinner import rebin_tof
 
 #: Reductions understood by :func:`reduce_tof_bins`.
 ReductionMode = Literal["mean", "sum", "median"]
@@ -406,3 +408,50 @@ def log_bin_list(n_frames: int, factor: float) -> list[tuple[int, int]]:
         # rounding that would repeat an edge, so every bin has >= 1 frame and the loop terminates.
         edges.append(min(max(grown, edges[-1] + 1), n_frames))
     return [(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
+
+
+def apply_tof_rebin(
+    data: sc.DataArray,
+    spec: "int | Sequence[Sequence[int]]",
+    reduction: Optional[ReductionMode] = None,
+    tof_dim: str = "tof",
+) -> sc.DataArray:
+    """Dispatch a pipeline ``rebin_by_tof`` request to the appropriate rebinner.
+
+    ``spec`` is a resolved rebin specification — an integer uniform factor (a ``True`` auto-request
+    must be resolved to a factor by the caller via ``analyze_statistics``) or an explicit
+    ``[[start, stop], ...]`` bin list. ``reduction`` selects how frames combine:
+
+    - ``None`` — preserves existing behavior: an integer factor **sums** (via
+      :func:`neunorm.tof.histogram_rebinner.rebin_tof`), a bin list takes the **mean**.
+    - ``"sum"`` / ``"mean"`` / ``"median"`` — applied to either spec. An integer factor with a
+      mean/median reduction is expanded to uniform bins via :func:`linear_bin_list` and reduced by
+      :func:`rebin_tof_by_list`.
+
+    Parameters
+    ----------
+    data : scipp.DataArray
+        Histogram stack with a bin-edge ``tof_dim`` coordinate.
+    spec : int or sequence of [start, stop]
+        Uniform factor (frames per bin) or an explicit half-open frame-index bin list.
+    reduction : {"mean", "sum", "median"}, optional
+        See above; ``None`` picks sum for a factor and mean for a bin list.
+    tof_dim : str, optional
+        Name of the TOF dimension. Default ``"tof"``.
+
+    Raises
+    ------
+    ValueError
+        If ``spec`` is a bool (resolve it to a factor first) or is neither an int nor a bin list.
+    """
+    if isinstance(spec, bool):
+        raise ValueError("resolve a boolean rebin_by_tof to an integer factor before calling apply_tof_rebin")
+    if isinstance(spec, (int, np.integer)):
+        if reduction is None or reduction == "sum":
+            return rebin_tof(data, int(spec))
+        return rebin_tof_by_list(
+            data, linear_bin_list(data.sizes[tof_dim], int(spec)), reduction=reduction, tof_dim=tof_dim
+        )
+    if isinstance(spec, (list, tuple)):
+        return rebin_tof_by_list(data, spec, reduction=(reduction or "mean"), tof_dim=tof_dim)
+    raise ValueError(f"rebin_by_tof must be a bool, an int factor, or a list of [start, stop] pairs; got {spec!r}")

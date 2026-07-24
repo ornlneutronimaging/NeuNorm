@@ -13,6 +13,7 @@ from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.tof.flexible_rebinner import (
     DROPPED_FRAMES_MASK,
     SPECTRA_TOF_COORD,
+    apply_tof_rebin,
     linear_bin_list,
     log_bin_list,
     rebin_tof_by_list,
@@ -536,3 +537,55 @@ def test_generators_compose_with_rebin_tof_by_list():
     assert log.sizes["tof"] == len(log_bins)
     assert log.coords["tof"].sizes["tof"] == log.sizes["tof"] + 1
     assert SPECTRA_TOF_COORD in log.coords
+
+
+# --------------------------------------------------------------------------------------------
+# apply_tof_rebin — pipeline dispatch helper (Task 6)
+# --------------------------------------------------------------------------------------------
+
+
+def test_apply_tof_rebin_int_default_is_sum():
+    """An integer factor with reduction=None sums (existing rebin_tof behavior; no spectra_tof)."""
+    data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
+    out = apply_tof_rebin(data, 2)
+    assert out.sizes["tof"] == 2
+    np.testing.assert_allclose(out.values[:, 0, 0], [30, 70])  # summed pairs
+    assert SPECTRA_TOF_COORD not in out.coords  # sum path uses rebin_tof, no spectra_tof
+
+
+def test_apply_tof_rebin_int_sum_explicit_matches_default():
+    data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
+    np.testing.assert_allclose(apply_tof_rebin(data, 2, reduction="sum").values, apply_tof_rebin(data, 2).values)
+
+
+def test_apply_tof_rebin_int_mean_uses_linear_bins():
+    """An integer factor with reduction='mean' averages via linear_bin_list + rebin_tof_by_list."""
+    data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
+    out = apply_tof_rebin(data, 2, reduction="mean")
+    assert out.sizes["tof"] == 2
+    np.testing.assert_allclose(out.values[:, 0, 0], [15, 35])  # averaged pairs
+    assert SPECTRA_TOF_COORD in out.coords
+
+
+def test_apply_tof_rebin_list_default_is_mean_with_gap():
+    data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
+    out = apply_tof_rebin(data, [[0, 2], [3, 5]])  # frame 2 dropped
+    assert out.sizes["tof"] == 3
+    np.testing.assert_allclose(out.values[0, 0, 0], 15)  # mean(10, 20)
+    assert np.isnan(out.values[1]).all()  # gap
+    assert DROPPED_FRAMES_MASK in out.masks
+    assert SPECTRA_TOF_COORD in out.coords
+
+
+def test_apply_tof_rebin_list_sum_reduction():
+    data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
+    out = apply_tof_rebin(data, [[0, 2], [2, 4]], reduction="sum")
+    np.testing.assert_allclose(out.values[:, 0, 0], [30, 70])
+
+
+def test_apply_tof_rebin_rejects_bool_and_bad_spec():
+    data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
+    with pytest.raises(ValueError, match="boolean"):
+        apply_tof_rebin(data, True)
+    with pytest.raises(ValueError, match="bool.*int.*list|int factor"):
+        apply_tof_rebin(data, "2")
