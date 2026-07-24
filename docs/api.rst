@@ -75,6 +75,9 @@ Time-of-flight
 .. automodule:: neunorm.tof.histogram_rebinner
    :members:
 
+.. automodule:: neunorm.tof.flexible_rebinner
+   :members:
+
 .. automodule:: neunorm.tof.pixel_detector
    :members:
 

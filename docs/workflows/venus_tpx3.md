@@ -938,14 +938,23 @@ In histogram mode, rebinning is constrained because events have already been bin
 
 | Operation | Supported | Notes |
 |-----------|-----------|-------|
-| Combine N adjacent TOF bins | Yes | Sum counts, merge bin edges |
-| Arbitrary TOF bin edges | No | Would require re-processing events |
-| Heterogeneous bin widths | No | Cannot split or recombine non-adjacent bins |
+| Combine N adjacent TOF bins | Yes | `rebin_tof` — sum counts, merge bin edges |
+| Sub-frame (arbitrary) TOF edges | No | Would require re-processing events; edges only on whole frames |
+| Heterogeneous (variable-width) bins | Yes (whole frames) | `rebin_by_tof=[[start, stop], ...]` groups whole frames into variable-width bins |
+| Mean / median reduction | Yes | `rebin_reduction` on the bin-list path (adjacent-bin `rebin_tof` sums only) |
+| Drop frames (gaps) | Yes | Interior gaps become a `dropped_frames`-masked, `NaN` missing-data bin |
 | Spatial NxN binning | Yes | Sum counts over pixel groups |
 
+Flexible bin-list rebinning (`rebin_by_tof=[[start, stop], ...]`, half-open frame-index ranges) works
+on the histogrammed stack in **both** event mode (applied after event histogramming) and histogram
+mode. Each output bin gains a `spectra_tof` coordinate (mean of its member frames' times). See the
+TPX1 guide's "Rebinning Constraints" for the full description; the API is
+`neunorm.tof.flexible_rebinner` (`rebin_tof_by_list`, `linear_bin_list`, `log_bin_list`).
+
 **Comparison with Event Mode**:
-- Event mode: Full flexibility (any bin scheme from raw events)
-- Histogram mode: Limited to combining existing bins
+- Event mode: Full flexibility (any bin scheme, incl. sub-frame edges, from raw events)
+- Histogram mode: Combine / regroup existing bins (adjacent sum, or variable-width mean/sum/median
+  via the bin list) — no sub-frame edges
 
 ---
 
@@ -958,6 +967,8 @@ In histogram mode, rebinning is constrained because events have already been bin
 | TOF Bin Edges | (N_bins+1,) | float64 | Time-of-flight boundaries (μs) |
 | Dead Pixel Mask | (y, x) | bool | True = dead pixel |
 | Hot Pixel Mask | (y, x) | bool | True = hot pixel |
+| Dropped-frame Mask | (TOF,) | bool | True = missing/gap bin (flexible bin-list rebin only) |
+| Per-bin TOF (`spectra_tof`) | (N_bins,) | float64 | Mean time of each bin's frames (bin-list / mean / median rebin only) |
 | Metadata | dict | - | Processing provenance |
 
 **Metadata contents**:

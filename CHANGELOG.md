@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Flexible TOF rebinning** — variable-width, list-defined bins with a choice of reduction
+  ([#192](https://github.com/ornlneutronimaging/NeuNorm/issues/192)). The VENUS TOF pipelines
+  (`venus_tpx1`, `venus_tpx3_histogram`, `venus_tpx3_event`) now accept an explicit
+  `rebin_by_tof=[[start, stop], ...]` list of **half-open frame-index ranges** (Python convention)
+  in addition to the existing `bool`/`int` factor, plus a new `rebin_reduction` parameter selecting
+  how frames combine per bin — `"mean"` (default for a bin list), `"sum"`, or `"median"` — with
+  scipp variance propagation (mean `ΣVar/N²`, sum `ΣVar`, median `≈ (π/2)·ΣVar/N²` for N≥3, exact for
+  N≤2, warned). Existing `rebin_by_tof=int`/`True` behavior is unchanged (still sums; `rebin_reduction`
+  defaults to that). Interior **gaps** are allowed — dropped frames become an explicit bin flagged as
+  missing data (a `dropped_frames` mask along `tof` plus `NaN` values), keeping a contiguous bin-edge
+  `tof` axis; frames before the first/after the last bin are excluded. Each rebinned bin carries a
+  `spectra_tof` point coordinate (the mean of its member frames' times), persisted to the HDF5/TIFF
+  output. The core API lives in `neunorm.tof.flexible_rebinner`: `reduce_tof_bins`, `rebin_tof_by_list`,
+  and the `linear_bin_list` / `log_bin_list` bin-list generators (uniform and geometric frame-index
+  bins, the latter porting iBeatles' logarithmic mode without its zero-start infinite loop). The
+  existing adjacent-bin, sum-only `rebin_tof` (integer/time/wavelength, edge-snapping) is unchanged.
 - **Arbitrary-shape (mask-based) ROI regions** — `MaskROI`
   ([#180](https://github.com/ornlneutronimaging/NeuNorm/issues/180)). A pixel **selection** mask
   (same `(y, x)` size as the image; 1/nonzero = pixel *in* the region — the opposite polarity of

@@ -383,12 +383,27 @@ where:
 
 TPX1 histogram data has fixed TOF bins determined at acquisition. Rebinning options:
 
-**TOF Rebinning** (`rebin_tof`, `unit` selects the mode):
+**TOF Rebinning** (`rebin_tof`, `unit` selects the mode) — sum-only, edge-snapping:
 - `bins` (default): combine N adjacent bins; new edges = `original_edges[::N]`,
   with the final original edge appended if `[::N]` did not already include it
 - `manual` / `time` / `wavelength`: request edges by explicit list, time width, or
   wavelength width — requested edges are **snapped to the nearest original edge**
   (bins are never split), so the result still only combines adjacent original bins
+
+**Flexible bin-list rebinning** (`rebin_by_tof=[[start, stop], ...]` with `rebin_reduction`):
+- Group frames into arbitrary, variable-width bins via an explicit list of **half-open**
+  frame-index ranges (Python convention: `[0, 4]` = frames 0–3). Combine each bin by
+  `rebin_reduction` — `"mean"` (default for a list), `"sum"`, or `"median"` — instead of the
+  sum-only adjacent-bin `rebin_tof`. Variances propagate accordingly (mean `ΣVar/N²`, sum `ΣVar`,
+  median a large-N approximation).
+- **Interior gaps are allowed**: dropped frames (e.g. `[[0, 4], [5, 30]]` drops frame 4) become an
+  explicit bin flagged as missing data — a `dropped_frames` mask along `tof` plus `NaN` values — so
+  the output keeps a contiguous bin-edge `tof` axis. Frames before the first / after the last bin
+  are excluded. Skipping frames *within* a range is impossible by construction; overlapping,
+  out-of-bounds, or unordered lists are rejected with a clear error.
+- Each output bin carries a `spectra_tof` coordinate = the mean of its member frames' times,
+  written to the output file. `neunorm.tof.flexible_rebinner.linear_bin_list` / `log_bin_list`
+  generate uniform / geometric frame-index bin lists to feed this path.
 
 **Spatial Rebinning**:
 - Combine NxN pixel blocks
@@ -398,9 +413,9 @@ TPX1 histogram data has fixed TOF bins determined at acquisition. Rebinning opti
 **Cannot do**:
 - Split an existing bin or place an edge inside one (sub-original-bin resolution)
   — requested edges that fall mid-bin are snapped to the nearest original edge
-- Heterogeneous (variable-width) edges are allowed via `manual`/`time`/`wavelength`,
-  but only on the original boundaries; finer-than-acquisition binning requires
-  event-mode data (TPX3)
+- Heterogeneous (variable-width) bins and mean/median reduction ARE available via the flexible
+  bin-list path above, but still only on whole original frames; finer-than-acquisition binning
+  requires event-mode data (TPX3)
 
 ---
 
