@@ -154,6 +154,28 @@ def _pooled_regions_overlap(rois_bounds, ny: int, nx: int) -> bool:
     return bool((coverage > 1).any())
 
 
+def _require_positive_finite_coefficient(coeff: sc.Variable, data: sc.DataArray, name: str, region_arg: str) -> None:
+    """Raise unless every non-missing pooled-coefficient bin is strictly positive and finite.
+
+    Bins flagged by a coeff-aligned mask on ``data`` (e.g. the ``dropped_frames`` gaps of a bin-list
+    rebin, whose values are NaN by construction) are legitimately non-finite and are excluded from
+    the guard, so a gapped rebin can still be air/background corrected. ``sc.sum(...).data`` upstream
+    dropped the mask, so it is read back from ``data.masks`` here.
+    """
+    checked = np.atleast_1d(coeff.values).astype(float)
+    gap = np.zeros(checked.shape, dtype=bool)
+    for mask in data.masks.values():
+        if mask.dims == coeff.dims:
+            gap |= np.atleast_1d(mask.values)
+    checked = checked[~gap]
+    if checked.size == 0 or not np.all(np.isfinite(checked)) or float(np.min(checked)) <= 0:
+        worst = float(np.min(checked)) if checked.size else float("nan")
+        raise ValueError(
+            f"{region_arg} {name} pooled mean must be strictly positive and finite "
+            f"(min={worst}); the ROI(s) must contain positive counts in every image"
+        )
+
+
 def _pooled_roi_coefficient(
     data: sc.DataArray,
     rois_bounds: list,
@@ -225,11 +247,8 @@ def _pooled_roi_coefficient(
             n_unmasked = _masked_ones_count(region)
 
     coeff = total / n_unmasked
-    if strict and (not bool(sc.all(sc.isfinite(coeff)).value) or sc.min(coeff).value <= 0):
-        raise ValueError(
-            f"{region_arg} {name} pooled mean must be strictly positive and finite "
-            f"(min={sc.min(coeff).value}); the ROI(s) must contain positive counts in every image"
-        )
+    if strict:
+        _require_positive_finite_coefficient(coeff, data, name, region_arg)
     return coeff
 
 

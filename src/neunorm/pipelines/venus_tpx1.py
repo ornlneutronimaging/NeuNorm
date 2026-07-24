@@ -224,7 +224,9 @@ def run_venus_tpx1_pipeline(  # noqa: C901
     # TOF rebinning (optional): an integer factor, ``True`` for the statistics-based recommended
     # factor, or an explicit ``[[start, stop], ...]`` bin list. ``rebin_reduction`` selects how
     # frames combine (default: sum for a factor, mean for a bin list); see ``apply_tof_rebin``.
-    if rebin_by_tof:
+    # A bin list (even empty) is an explicit rebin request; an empty one must surface as an error
+    # from apply_tof_rebin rather than be silently skipped by the plain falsy check.
+    if rebin_by_tof or isinstance(rebin_by_tof, list):
         spec = rebin_by_tof
         if spec is True:
             spec = analyze_statistics(ob).recommended_rebinning

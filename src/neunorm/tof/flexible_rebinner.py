@@ -453,5 +453,7 @@ def apply_tof_rebin(
             data, linear_bin_list(data.sizes[tof_dim], int(spec)), reduction=reduction, tof_dim=tof_dim
         )
     if isinstance(spec, (list, tuple)):
-        return rebin_tof_by_list(data, spec, reduction=(reduction or "mean"), tof_dim=tof_dim)
+        # Default to mean for a bin list only when reduction is genuinely omitted (None); a falsy
+        # but invalid value like "" must still reach rebin_tof_by_list's validation, not be masked.
+        return rebin_tof_by_list(data, spec, reduction=("mean" if reduction is None else reduction), tof_dim=tof_dim)
     raise ValueError(f"rebin_by_tof must be a bool, an int factor, or a list of [start, stop] pairs; got {spec!r}")

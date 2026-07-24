@@ -541,6 +541,41 @@ class TestVenusTPX1Pipeline:
             )
             assert output_path.exists()  # scitiff write succeeded with the broadcast mask
 
+    def test_venus_tpx1_pipeline_empty_rebin_list_raises(self):
+        """An explicit but empty bin list is invalid input, not a silent no-op rebin."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            with pytest.raises(ValueError, match="at least one"):
+                run_venus_tpx1_pipeline(
+                    sample_tiff_paths=[self.sample_tiff_paths],
+                    ob_tiff_paths=[self.ob_tiff_paths],
+                    sample_hdf5_paths=[self.sample_nexus_path],
+                    ob_hdf5_paths=[self.ob_nexus_path],
+                    output_path=output_path,
+                    rebin_by_tof=[],  # empty list -> invalid, must raise (not skipped)
+                )
+
+    def test_venus_tpx1_pipeline_rebin_by_tof_list_gap_with_air_roi(self):
+        """A gapped bin-list rebin combined with air_roi must not crash: the NaN gap bin is excluded
+        from the air-correction strict-finiteness guard (regression for the gap + air_roi P0)."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 2], [3, 5]],  # frame 2 dropped -> gap bin (NaN)
+                air_roi=(0, 0, 10, 10),
+            )
+            assert transmission.shape == (3, 32, 32)
+            np.testing.assert_array_equal(transmission.masks["dropped_frames"].values, [False, True, False])
+            # real bins air-corrected to ~1.0 (spatially uniform); the gap bin stays NaN
+            np.testing.assert_allclose(transmission.values[0], 1.0, rtol=1e-5)
+            np.testing.assert_allclose(transmission.values[2], 1.0, rtol=1e-5)
+            assert np.isnan(transmission.values[1]).all()
+
     def test_venus_tpx1_pipeline_invalid_output_format(self):
         """Check error for unsupported output file format."""
         with tempfile.NamedTemporaryFile(suffix=".bmp", delete=True) as f:

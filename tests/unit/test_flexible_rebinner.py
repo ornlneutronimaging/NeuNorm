@@ -589,3 +589,10 @@ def test_apply_tof_rebin_rejects_bool_and_bad_spec():
         apply_tof_rebin(data, True)
     with pytest.raises(ValueError, match="bool.*int.*list|int factor"):
         apply_tof_rebin(data, "2")
+
+
+def test_apply_tof_rebin_list_rejects_invalid_reduction():
+    """A falsy-but-invalid reduction ("") must be rejected, not silently coerced to mean."""
+    data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
+    with pytest.raises(ValueError, match="reduction"):
+        apply_tof_rebin(data, [[0, 2], [2, 4]], reduction="")

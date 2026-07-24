@@ -103,7 +103,9 @@ def write_hdf5(  # noqa: C901
         /uncertainty      # (θ, [TOF,] y, x) float32 (only if variances are present)
         /masks/dead       # (y, x) bool (only if the named dead-pixel mask exists)
         /masks/hot        # (y, x) bool (only if the named hot-pixel mask exists)
+        /masks/<name>     # any other mask under its own name (e.g. dropped_frames, a 1-D TOF mask)
         /tof              # (N+1,) float64 (only if the data carries a "tof" coordinate)
+        /spectra_tof      # (N,) float64 per-bin mean time (only for bin-list / mean / median rebins)
         /metadata/        # processing provenance (only when metadata is supplied)
 
     Metadata values are stored as native datasets (strings, scalars, flat arrays).
@@ -171,7 +173,11 @@ def write_hdf5(  # noqa: C901
         for mask_name in transmission.masks:
             if mask_name in (dead_pixel_mask, hot_pixel_mask):
                 continue
-            f.create_dataset(f"masks/{mask_name}", data=transmission.masks[mask_name].values)
+            path = f"masks/{mask_name}"
+            if path in f:  # a mask literally named 'dead'/'hot' would collide with the canonical path
+                logger.warning(f"Skipping mask '{mask_name}': HDF5 path '{path}' already written")
+                continue
+            f.create_dataset(path, data=transmission.masks[mask_name].values)
 
         # Write metadata. Provenance is best-effort: a single un-writable key — a bad value
         # (ragged/unserializable) or a malformed/colliding name — must never abort the write or
