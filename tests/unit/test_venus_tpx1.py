@@ -474,7 +474,7 @@ class TestVenusTPX1Pipeline:
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
 
-            with pytest.raises(ValueError, match=r"Invalid value for rebin_by_tof: invalid. Must be bool or int."):
+            with pytest.raises(ValueError, match=r"bool, an int factor, or a list"):
                 run_venus_tpx1_pipeline(
                     sample_tiff_paths=[self.sample_tiff_paths],
                     ob_tiff_paths=[self.ob_tiff_paths],
@@ -483,6 +483,63 @@ class TestVenusTPX1Pipeline:
                     output_path=output_path,
                     rebin_by_tof="invalid",  # invalid value should trigger error
                 )
+
+    def test_venus_tpx1_pipeline_rebin_by_tof_list_mean(self):
+        """A bin-list rebin_by_tof mean-reduces the 5-frame TOF stack and carries spectra_tof out."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 2], [2, 5]],  # 5 frames -> 2 mean bins
+            )
+            assert transmission.shape == (2, 32, 32)
+            assert transmission.coords["tof"].sizes["tof"] == 3  # bin-edge axis for 2 bins
+            assert "spectra_tof" in transmission.coords
+            # mean-reduced: bin0 = mean(81,82)/mean(99,100)*2, bin1 = mean(83,84,85)/mean(101,102,103)*2
+            np.testing.assert_allclose(transmission.values[0], 81.5 / 99.5 * 2, rtol=1e-5)
+            np.testing.assert_allclose(transmission.values[1], 84.0 / 102.0 * 2, rtol=1e-5)
+            with h5py.File(output_path, "r") as hf:
+                assert "spectra_tof" in hf  # per-bin mean-time exported
+
+    def test_venus_tpx1_pipeline_rebin_by_tof_list_gap(self):
+        """A gap in the bin list flags the dropped frame as missing data through to the output."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 2], [3, 5]],  # frame 2 dropped -> gap bin
+            )
+            assert transmission.shape == (3, 32, 32)  # real, gap, real
+            assert "dropped_frames" in transmission.masks
+            np.testing.assert_array_equal(transmission.masks["dropped_frames"].values, [False, True, False])
+            # the missing-data flag + per-bin mean-time must persist to the HDF5 output
+            with h5py.File(output_path, "r") as hf:
+                assert "masks/dropped_frames" in hf
+                np.testing.assert_array_equal(hf["masks/dropped_frames"][()], [False, True, False])
+                assert "spectra_tof" in hf
+
+    def test_venus_tpx1_pipeline_rebin_by_tof_list_gap_tiff(self):
+        """A gapped bin-list rebin must also export to TIFF: the 1-D dropped_frames mask has to
+        broadcast to the full (t, y, x) stack for scitiff (regression for the mask-combining path)."""
+        with tempfile.NamedTemporaryFile(suffix=".tiff", delete=True) as f:
+            output_path = Path(f.name)
+            run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 2], [3, 5]],  # gap -> 1-D dropped_frames mask
+            )
+            assert output_path.exists()  # scitiff write succeeded with the broadcast mask
 
     def test_venus_tpx1_pipeline_invalid_output_format(self):
         """Check error for unsupported output file format."""

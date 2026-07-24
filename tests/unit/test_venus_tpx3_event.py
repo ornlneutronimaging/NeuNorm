@@ -416,6 +416,23 @@ class TestVenusTPX3EventPipeline:
         np.testing.assert_allclose(transmission.values, 1)
         np.testing.assert_allclose(transmission.variances, 0.244, rtol=0.25)
 
+    def test_venus_tpx3_event_pipeline_rebin_by_tof_list(self):
+        """A bin-list rebin_by_tof applies to the histogrammed event stack (event-mode parity):
+        it mean-reduces the bins and carries spectra_tof + the dropped_frames mask to the output."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx3_event_pipeline(
+                sample_paths=[self.sample],
+                ob_paths=[self.ob],
+                binning=self.binning,
+                output_path=output_path,
+                detector_shape=(32, 32),
+                rebin_by_tof=[[0, 2], [3, 5]],  # 5 histogram bins, bin 2 dropped -> 3 bins
+            )
+            assert transmission.shape == (3, 32, 32)
+            assert "spectra_tof" in transmission.coords
+            np.testing.assert_array_equal(transmission.masks["dropped_frames"].values, [False, True, False])
+
     def test_venus_tpx3_event_pipeline_mask_air_roi(self):
         """A non-rectangular MaskROI air_roi flows through the TPX3 event pipeline over a bin-edge
         tof coord: air-region mean -> 1.0 per tof bin, the N+1 bin-edge tof axis survives, variance

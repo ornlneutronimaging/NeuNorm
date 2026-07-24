@@ -161,11 +161,17 @@ def write_hdf5(  # noqa: C901
             except TypeError as e:
                 logger.warning(f"Could not write coordinate '{coord}' to HDF5: {e}")
 
-        # Write masks
+        # Write masks. The dead/hot masks keep their canonical /masks/dead and /masks/hot names;
+        # any other mask (e.g. the 1-D dropped_frames flag from a gapped bin-list rebin) is written
+        # under its own name so that missing-data provenance is not lost.
         if dead_pixel_mask in transmission.masks:
             f.create_dataset("masks/dead", data=transmission.masks[dead_pixel_mask].values)
         if hot_pixel_mask in transmission.masks:
             f.create_dataset("masks/hot", data=transmission.masks[hot_pixel_mask].values)
+        for mask_name in transmission.masks:
+            if mask_name in (dead_pixel_mask, hot_pixel_mask):
+                continue
+            f.create_dataset(f"masks/{mask_name}", data=transmission.masks[mask_name].values)
 
         # Write metadata. Provenance is best-effort: a single un-writable key — a bad value
         # (ragged/unserializable) or a malformed/colliding name — must never abort the write or

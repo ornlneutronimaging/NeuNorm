@@ -4,7 +4,7 @@ VENUS TPX3 histogram pipeline.
 
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Literal, Optional, Sequence
 
 import numpy as np
 import scipp as sc
@@ -28,7 +28,7 @@ from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.run_combiner import combine_runs
 from neunorm.processing.spatial_rebinner import rebin_spatial
 from neunorm.tof.coordinate_converter import convert_tof_to_energy, convert_tof_to_wavelength
-from neunorm.tof.histogram_rebinner import rebin_tof
+from neunorm.tof.flexible_rebinner import apply_tof_rebin
 from neunorm.tof.pixel_detector import detect_dead_pixels, detect_hot_pixels
 from neunorm.tof.statistics_analyzer import analyze_statistics
 from neunorm.utils.constants import VENUS_FLIGHT_PATH_M
@@ -42,7 +42,8 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
     output_path: Path,
     roi: Optional[ROILike] = None,
     air_roi: Optional[RegionLike] = None,
-    rebin_by_tof: Optional[bool | int] = False,
+    rebin_by_tof: Optional[bool | int | list] = False,
+    rebin_reduction: Optional[Literal["mean", "sum", "median"]] = None,
     rebin_by_spatial: Optional[int | tuple[int, int]] = None,
     flight_path: sc.Variable = sc.scalar(VENUS_FLIGHT_PATH_M, unit="m"),
 ) -> sc.DataArray:
@@ -84,9 +85,15 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
     air_roi : ROI, MaskROI, or tuple, optional
         Region of interest for air correction — an ``ROI``, a bare ``(x0, y0, x1, y1)`` tuple, or an
         arbitrary-shape ``MaskROI`` selection. If None, air correction is not applied.
-    rebin_by_tof : Optional[Union[bool,int]]
-        Whether to apply TOF rebinning based on statistics analysis. If an integer is provided,
-        it will be used as the rebinning factor instead of the recommended one.
+    rebin_by_tof : bool, int, or list of [start, stop], optional
+        TOF rebinning. ``True`` uses the statistics-based recommended factor; an ``int`` is a uniform
+        factor (frames per bin); a ``[[start, stop], ...]`` list defines explicit half-open
+        frame-index bins (variable width, interior gaps allowed and flagged as missing data).
+    rebin_reduction : {"mean", "sum", "median"}, optional
+        How frames combine within each TOF bin. ``None`` (default) preserves existing behavior — a
+        uniform factor **sums**, a bin list takes the **mean** — while an explicit value applies to
+        either. A bin list or a mean/median reduction also attaches a ``spectra_tof`` per-bin
+        mean-time coordinate.
     rebin_by_spatial : Optional[int | tuple[int, int]]
         Whether to apply spatial rebinning. If a single integer is provided, it is used as the
         rebinning factor for both spatial axes. A ``(x, y)`` tuple selects per-axis
@@ -210,20 +217,16 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
         sample.masks["dead_pixels"] = detect_dead_pixels(sample)
         sample.masks["hot_pixels"] = detect_hot_pixels(sample)
 
-    # TOF rebinning (optional)
+    # TOF rebinning (optional): an integer factor, ``True`` for the statistics-based recommended
+    # factor, or an explicit ``[[start, stop], ...]`` bin list. ``rebin_reduction`` selects how
+    # frames combine (default: sum for a factor, mean for a bin list); see ``apply_tof_rebin``.
     if rebin_by_tof:
-        if rebin_by_tof is True:
-            # Analyze statistics to get recommended rebinning factor
-            recommended_factor = analyze_statistics(ob)
-            logger.info(f"Recommended TOF rebinning factor based on statistics analysis: {recommended_factor}")
-            sample = rebin_tof(sample, recommended_factor.recommended_rebinning)
-            ob = rebin_tof(ob, recommended_factor.recommended_rebinning)
-        elif isinstance(rebin_by_tof, int):
-            logger.info(f"Applying TOF rebinning with user-specified factor: {rebin_by_tof}")
-            sample = rebin_tof(sample, rebin_by_tof)
-            ob = rebin_tof(ob, rebin_by_tof)
-        else:
-            raise ValueError(f"Invalid value for rebin_by_tof: {rebin_by_tof}. Must be bool or int.")
+        spec = rebin_by_tof
+        if spec is True:
+            spec = analyze_statistics(ob).recommended_rebinning
+            logger.info(f"Recommended TOF rebinning factor based on statistics analysis: {spec}")
+        sample = apply_tof_rebin(sample, spec, reduction=rebin_reduction)
+        ob = apply_tof_rebin(ob, spec, reduction=rebin_reduction)
 
     # Normalization
     transmission = normalize_transmission(
@@ -291,7 +294,8 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
         if transmission.masks:
             combined_mask = np.zeros_like(transmission.values, dtype=bool)
             for mask in transmission.masks.values():
-                combined_mask |= mask.values
+                # dim-aware broadcast: a (y, x) mask and a 1-D per-frame (t) mask both expand to (t, y, x)
+                combined_mask |= sc.broadcast(mask, sizes=transmission.sizes).values
 
             # remove other masks
             transmission.masks.clear()

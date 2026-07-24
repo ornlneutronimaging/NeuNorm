@@ -325,6 +325,26 @@ class TestVenusTPX3HistogramPipeline:
         np.testing.assert_allclose(transmission.values, 1)
         np.testing.assert_allclose(transmission.variances, 0.0227, rtol=0.1)
 
+    def test_venus_tpx3_histogram_pipeline_rebin_by_tof_list(self):
+        """A bin-list rebin_by_tof mean-reduces the TPX3 histogram stack, carrying spectra_tof and
+        (with a gap) the dropped_frames missing-data mask through to the HDF5 output."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx3_histogram_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 2], [3, 5]],  # 5 frames, frame 2 dropped -> 3 bins (real, gap, real)
+            )
+            assert transmission.shape == (3, 32, 32)
+            assert "spectra_tof" in transmission.coords
+            np.testing.assert_array_equal(transmission.masks["dropped_frames"].values, [False, True, False])
+            with h5py.File(output_path, "r") as hf:
+                assert "spectra_tof" in hf
+                assert "masks/dropped_frames" in hf
+
     def test_venus_tpx3_histogram_pipeline_mask_air_roi(self):
         """A non-rectangular MaskROI air_roi flows through the TPX3 histogram pipeline over a
         bin-edge tof coord: air-region mean -> 1.0 per tof bin, the N+1 bin-edge tof axis survives,
@@ -394,7 +414,7 @@ class TestVenusTPX3HistogramPipeline:
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
 
-            with pytest.raises(ValueError, match=r"Invalid value for rebin_by_tof: invalid. Must be bool or int."):
+            with pytest.raises(ValueError, match=r"bool, an int factor, or a list"):
                 run_venus_tpx3_histogram_pipeline(
                     sample_tiff_paths=[self.sample_tiff_paths],
                     ob_tiff_paths=[self.ob_tiff_paths],
