@@ -522,8 +522,9 @@ class TestVenusTPX1Pipeline:
             np.testing.assert_allclose(transmission.values[0], 81.5 / 99.5 * 2, rtol=1e-5)
 
     def test_venus_tpx1_pipeline_rebin_by_tof_median(self):
-        """rebin_reduction='median' end-to-end: median values are produced; the >=3-frame bin's
-        uncertainty is NaN (unavailable), the 2-frame bin's is finite. (Coverage the review flagged.)"""
+        """rebin_reduction='median' end-to-end: median values are produced and BOTH bins carry a
+        finite uncertainty — the 3-frame bin via NeuNorm's (pi/(2n))*mean(Var) approximation, the
+        2-frame bin exactly (median == mean there)."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
             transmission = run_venus_tpx1_pipeline(
@@ -532,20 +533,20 @@ class TestVenusTPX1Pipeline:
                 sample_hdf5_paths=[self.sample_nexus_path],
                 ob_hdf5_paths=[self.ob_nexus_path],
                 output_path=output_path,
-                rebin_by_tof=[[0, 3], [3, 5]],  # N=3 bin (NaN variance) + N=2 bin (exact variance)
+                rebin_by_tof=[[0, 3], [3, 5]],  # n=3 bin (approximated variance) + n=2 bin (exact)
                 rebin_reduction="median",
             )
             assert transmission.shape == (2, 32, 32)
             assert np.all(np.isfinite(transmission.values))  # median values are exact/finite
-            assert np.isnan(transmission.variances[0]).all()  # N=3 median: uncertainty unavailable
-            assert np.all(np.isfinite(transmission.variances[1]))  # N=2 median == mean: exact
+            # both bins carry a usable uncertainty: n=3 approximated, n=2 exact -- never NaN
+            assert np.all(np.isfinite(transmission.variances))
+            assert np.all(transmission.variances > 0)
 
     def test_venus_tpx1_pipeline_rebin_by_tof_median_air_roi_hdf5(self):
-        """A median-reduced (N>=3 -> NaN-variance) bin flows through air correction and HDF5 export
-        without tripping the strict positive/finite guard or corrupting the other bin, and its NaN
-        uncertainty survives to disk. The N=3 bin is *unmasked* with a finite value + NaN variance --
-        a path distinct from a masked gap bin (NaN value): the guard checks VALUES, not variances, so
-        it must pass. (Coverage the review flagged: air guard + on-disk uncertainty for median NaN.)"""
+        """A median-reduced (n>=3, approximated-variance) bin flows through air correction and HDF5
+        export without tripping the strict positive/finite guard or corrupting the other bin, and its
+        uncertainty survives to disk. Both bins are *unmasked* real bins -- a path distinct from a
+        masked gap bin (NaN value) -- so the guard, which checks VALUES, must pass."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
             transmission = run_venus_tpx1_pipeline(
@@ -554,26 +555,24 @@ class TestVenusTPX1Pipeline:
                 sample_hdf5_paths=[self.sample_nexus_path],
                 ob_hdf5_paths=[self.ob_nexus_path],
                 output_path=output_path,
-                rebin_by_tof=[[0, 3], [3, 5]],  # N=3 bin (NaN variance) + N=2 bin (exact variance)
+                rebin_by_tof=[[0, 3], [3, 5]],  # n=3 bin (approximated variance) + n=2 bin (exact)
                 rebin_reduction="median",
                 air_roi=(0, 0, 10, 10),
             )
             assert transmission.shape == (2, 32, 32)
             assert "dropped_frames" not in transmission.masks  # both bins are real, not gaps
-            # air correction of the spatially-uniform stack -> ~1.0 for BOTH bins; the N=3 bin's
-            # NaN variance neither trips the guard nor corrupts the N=2 bin's finite uncertainty
+            # air correction of the spatially-uniform stack -> ~1.0 for BOTH bins, and the median
+            # uncertainties stay finite and positive through the correction
             np.testing.assert_allclose(transmission.values, 1.0, rtol=1e-5)
-            assert np.isnan(transmission.variances[0]).all()  # N=3 median: uncertainty unavailable
-            assert np.all(np.isfinite(transmission.variances[1]))  # N=2 median == mean: exact
-            # NaN uncertainty round-trips to disk (stored as sqrt(variance)); N=2 bin stays finite
+            assert np.all(np.isfinite(transmission.variances))
+            assert np.all(transmission.variances > 0)
+            # the uncertainty round-trips to disk (stored as sqrt(variance)) for both bins
             with h5py.File(output_path, "r") as hf:
                 assert hf["uncertainty"].shape == (2, 32, 32)
-                assert np.isnan(hf["uncertainty"][0]).all()
-                assert np.all(np.isfinite(hf["uncertainty"][1]))
+                assert np.all(np.isfinite(hf["uncertainty"][()]))
 
     def test_venus_tpx1_pipeline_rebin_by_tof_median_tiff(self):
-        """A median-reduced (N>=3 -> NaN-variance) stack must also serialize to TIFF without error
-        (scitiff write of a finite-value/NaN-variance stack)."""
+        """A median-reduced (n>=3, approximated-variance) stack must also serialize to TIFF."""
         with tempfile.NamedTemporaryFile(suffix=".tiff", delete=True) as f:
             output_path = Path(f.name)
             run_venus_tpx1_pipeline(
@@ -582,10 +581,10 @@ class TestVenusTPX1Pipeline:
                 sample_hdf5_paths=[self.sample_nexus_path],
                 ob_hdf5_paths=[self.ob_nexus_path],
                 output_path=output_path,
-                rebin_by_tof=[[0, 3], [3, 5]],  # N=3 -> NaN variance
+                rebin_by_tof=[[0, 3], [3, 5]],  # n=3 -> approximated variance
                 rebin_reduction="median",
             )
-            assert output_path.exists()  # scitiff write succeeded with the NaN-variance stack
+            assert output_path.exists()  # scitiff write succeeded for the median-reduced stack
 
     def test_venus_tpx1_pipeline_rebin_by_tof_list_gap(self):
         """A gap in the bin list flags the dropped frame as missing data through to the output."""

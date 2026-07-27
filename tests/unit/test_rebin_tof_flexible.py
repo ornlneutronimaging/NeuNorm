@@ -107,10 +107,12 @@ def test_median_two_frame_bin_variance_is_exact_no_warning():
     assert not any("median" in m.lower() and "approxim" in m.lower() for m in messages)
 
 
-def test_median_large_bin_variance_is_nan_unavailable_with_warning():
-    """For N>=3 the sample-median variance of heterogeneous frames has no reliable closed form, so
-    it is reported as NaN (unavailable) with a warning — never a fabricated value. The median VALUE
-    is still exact (the middle of three sorted values)."""
+def test_median_large_bin_variance_uses_approximation_with_warning():
+    """For n>=3 the median variance is NeuNorm's standard approximation, (pi/(2n))*mean(Var), with a
+    warning that it is an estimate. The median VALUE is exact (middle of three sorted values).
+
+    Independent oracle: n=3, all frame variances 4 -> mean(Var)=4 -> (pi/6)*4 = 2.0944, matching
+    processing.reference_preparer.median_with_variance's rule for the same input."""
     data = _stack([10, 20, 30, 40, 50, 60], variances=[4, 4, 4, 4, 4, 4])
     messages, remove = _capture_warnings()
     try:
@@ -119,8 +121,21 @@ def test_median_large_bin_variance_is_nan_unavailable_with_warning():
         remove()
     np.testing.assert_allclose(out.values[0], 20)  # median(10, 20, 30) — exact
     np.testing.assert_allclose(out.values[1], 50)  # median(40, 50, 60) — exact
-    assert np.isnan(out.variances).all()  # uncertainty unavailable, not a bogus number
-    assert any("median" in m.lower() and "nan" in m.lower() for m in messages)
+    np.testing.assert_allclose(out.variances, np.pi / 6 * 4)  # (pi/(2*3))*mean(Var)
+    assert np.all(np.isfinite(out.variances))  # an estimate is reported, not NaN
+    assert any("median" in m.lower() and "approximate" in m.lower() for m in messages)
+
+
+def test_median_variance_matches_reference_preparer_convention():
+    """The rebinner's n>=3 median variance must agree with NeuNorm's other median reduction
+    (processing.reference_preparer.median_with_variance) for the same frames — one house rule."""
+    from neunorm.processing.reference_preparer import median_with_variance
+
+    data = _stack([10, 20, 30, 40], variances=[4, 9, 16, 25])  # heterogeneous variances
+    out = reduce_tof_bins(data, [(0, 4)], reduction="median")
+    expected = median_with_variance(data.rename_dims({"tof": "frame"}), "frame")
+    np.testing.assert_allclose(out.values[0], expected.values)
+    np.testing.assert_allclose(out.variances[0], expected.variances)
 
 
 def test_median_single_frame_bin_variance_is_exact_no_warning():

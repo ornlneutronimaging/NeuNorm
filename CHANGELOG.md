@@ -16,9 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in addition to the existing `bool`/`int` factor, plus a new `rebin_reduction` parameter selecting
   how frames combine per bin — `"mean"` (default for a bin list), `"sum"`, or `"median"` — with
   scipp variance propagation: mean `ΣVar/N²`, sum `ΣVar`; the median value is exact and, for a bin of
-  three or more frames, its uncertainty is reported as `NaN` (unavailable, with a warning) because the
-  sample-median variance of a few heterogeneous TOF frames has no reliable closed form — while a
-  one/two-frame bin uses the exact `Var(mean)`. Existing `rebin_by_tof=int`/`True` behavior is
+  three or more frames, its uncertainty uses NeuNorm's standard median-variance approximation
+  `Var(median) ≈ (π / (2n)) · mean(Var)` (with a warning that it is an estimate) — the same rule as
+  `processing.reference_preparer.median_with_variance` and the gamma filter, so median uncertainties
+  are consistent across the package. A one/two-frame bin uses the exact `Var(mean)`, since the median
+  equals the mean there. An exact small-sample median variance would require per-pixel resampling
+  (bootstrap): sound in principle, but impractical at detector scale, so it is deliberately not used. Existing `rebin_by_tof=int`/`True` behavior is
   unchanged (still sums; `rebin_reduction` defaults to that). Interior **gaps** are allowed — dropped frames become an explicit bin flagged as
   missing data (a `dropped_frames` mask along `tof` plus `NaN` values), keeping a contiguous bin-edge
   `tof` axis; frames before the first/after the last bin are excluded. Each rebinned bin carries a

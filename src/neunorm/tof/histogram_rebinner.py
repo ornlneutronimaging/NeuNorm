@@ -156,7 +156,7 @@ def _reduce_one_bin(
 ) -> tuple[sc.DataArray, bool]:
     """Collapse one contiguous chunk of frames to a single frame.
 
-    Returns the reduced frame and whether the median variance was reported as unavailable (NaN).
+    Returns the reduced frame and whether the median variance used the approximation (n >= 3).
     """
     if reduction == "sum":
         return sc.sum(chunk, tof_dim), False
@@ -168,16 +168,26 @@ def _reduce_one_bin(
     frame = sc.median(sc.values(chunk) if has_variances else chunk, tof_dim)
     if not has_variances:
         return frame, False
-    # Median uncertainty. For N <= 2 the sample median equals the arithmetic mean exactly (N=1: the
-    # frame; N=2: the average of the two frames), so its variance is exactly Var(mean). For N >= 3
-    # the variance of the sample median of a few HETEROGENEOUS frames (different per-frame means /
-    # Poisson variances, as TOF frames generally are) has no reliable closed form — the large-N
-    # i.i.d.-normal (π/2)·Var(mean) result materially misstates it — so the uncertainty is reported
-    # as NaN (unavailable) rather than a misleading number. The median VALUE itself is exact.
+    # Median uncertainty. For n <= 2 the sample median equals the arithmetic mean exactly (n=1: the
+    # frame; n=2: the average of the two frames), so the exact Var(mean) is used — the approximation
+    # below would overstate it by pi/2 there.
     if chunk.sizes[tof_dim] <= 2:
         frame.variances = sc.variances(sc.mean(chunk, tof_dim)).values
         return frame, False
-    frame.variances = np.full(frame.shape, np.nan)
+    # n >= 3: NeuNorm's standard median-variance approximation, the same rule used by
+    # `processing.reference_preparer.median_with_variance` and `filters.gamma_filter`:
+    #
+    #     Var(median) ~= (pi / (2n)) * mean(Var)   [ == (pi/2) * Var(mean) ]
+    #
+    # This is a deliberate engineering choice, not an oversight. The exact sampling variance of a
+    # median has no closed form for small, heterogeneous samples; obtaining it requires resampling
+    # (bootstrap) per pixel per bin, which is mathematically sound but computationally impractical
+    # for real detector stacks (millions of pixels x every TOF bin) and so cannot run in a
+    # production reduction pipeline. The asymptotic factor above is therefore used consistently
+    # across NeuNorm, and a warning records that the value is an estimate.
+    n = chunk.sizes[tof_dim]
+    mean_variance = chunk.variances.mean(axis=chunk.dims.index(tof_dim))
+    frame.variances = (np.pi / (2 * n)) * mean_variance
     return frame, True
 
 
@@ -214,11 +224,16 @@ def reduce_tof_bins(
 
         - ``"mean"``  — value ``= (1/N)·Σxᵢ``; variance ``= ΣVar(xᵢ)/N²``.
         - ``"sum"``   — value ``= Σxᵢ``;        variance ``= ΣVar(xᵢ)``.
-        - ``"median"``— value ``= median(xᵢ)`` (exact). Variance: for ``N ≤ 2`` the median equals
-          the mean, so the exact ``Var(mean)`` is used; for ``N ≥ 3`` the sample-median variance of a
-          few heterogeneous frames has no reliable closed form, so it is reported as ``NaN``
-          (unavailable) with a warning rather than a misleading estimate. Integer input is promoted
-          to float.
+        - ``"median"``— value ``= median(xᵢ)`` (exact). Variance: for ``n ≤ 2`` the median equals
+          the mean, so the exact ``Var(mean)`` is used; for ``n ≥ 3`` NeuNorm's standard
+          median-variance approximation ``Var(median) ≈ (π / (2n)) · mean(Var)`` (equivalently
+          ``(π/2)·Var(mean)``) is applied and a warning records that the uncertainty is an estimate.
+          The same approximation is used by
+          :func:`neunorm.processing.reference_preparer.median_with_variance` and the gamma filter, so
+          median uncertainties are consistent across NeuNorm. An exact small-sample median variance
+          would require per-pixel resampling (bootstrap), which is mathematically sound but
+          computationally impractical at detector scale and therefore not used in the pipeline.
+          Integer input is promoted to float.
     tof_dim : str, optional
         Name of the TOF dimension. Default ``"tof"``.
 
@@ -241,18 +256,19 @@ def reduce_tof_bins(
     ranges, tof_edges = _validate_bins(data, bins, tof_dim)
 
     has_variances = data.variances is not None
-    median_variance_unavailable = False
+    median_variance_approximated = False
     reduced_frames = []
     for start, stop in ranges:
-        frame, unavailable = _reduce_one_bin(data[tof_dim, start:stop], reduction, tof_dim, has_variances)
-        median_variance_unavailable = median_variance_unavailable or unavailable
+        frame, approximated = _reduce_one_bin(data[tof_dim, start:stop], reduction, tof_dim, has_variances)
+        median_variance_approximated = median_variance_approximated or approximated
         reduced_frames.append(frame)
 
-    if median_variance_unavailable:
+    if median_variance_approximated:
         logger.warning(
-            "MEDIAN rebinning: the sample-median variance of a 3+-frame bin has no reliable estimate "
-            "for heterogeneous TOF frames, so those bins' variance is reported as NaN (unavailable). "
-            "The median values are exact."
+            "MEDIAN rebinning: bins of 3+ frames report an APPROXIMATE uncertainty, "
+            "Var(median) ~= (pi/(2n))*mean(Var) — NeuNorm's standard median-variance approximation "
+            "(an exact value would require per-pixel resampling, which is impractical at detector "
+            "scale). The median values themselves are exact; bins of 1-2 frames use the exact variance."
         )
 
     result = sc.concat(reduced_frames, tof_dim)

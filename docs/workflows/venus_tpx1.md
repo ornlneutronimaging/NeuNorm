@@ -394,9 +394,14 @@ TPX1 histogram data has fixed TOF bins determined at acquisition. Rebinning opti
 - Group frames into arbitrary, variable-width bins via an explicit list of **half-open**
   frame-index ranges (Python convention: `[0, 4]` = frames 0–3). Combine each bin by
   `rebin_reduction` — `"mean"` (default for a list), `"sum"`, or `"median"` — instead of the
-  sum-only adjacent-bin `rebin_tof`. Variances propagate accordingly (mean `ΣVar/N²`, sum `ΣVar`);
-  the median value is exact but its uncertainty is reported as `NaN` (unavailable) for bins of 3+
-  frames, since the sample-median variance of a few heterogeneous frames has no reliable estimate.
+  sum-only adjacent-bin summing. Variances propagate accordingly (mean `ΣVar/N²`, sum `ΣVar`); the
+  median value is exact, and for bins of 3+ frames its uncertainty uses NeuNorm's standard
+  median-variance approximation `Var(median) ≈ (π / (2n)) · mean(Var)`, logged with a warning that it
+  is an estimate. Bins of 1–2 frames use the exact `Var(mean)` (the median equals the mean there).
+  This is the same approximation NeuNorm applies in `reference_preparer.median_with_variance` and the
+  gamma filter, so median uncertainties are consistent package-wide. Computing an exact small-sample
+  median variance would require per-pixel resampling (bootstrap) — sound in theory, but not tractable
+  for detector-scale stacks, so the approximation is the deliberate production choice.
 - **Interior gaps are allowed**: dropped frames (e.g. `[[0, 4], [5, 30]]` drops frame 4) become an
   explicit bin flagged as missing data — a `dropped_frames` mask along `tof` plus `NaN` values — so
   the output keeps a contiguous bin-edge `tof` axis. Frames before the first / after the last bin
