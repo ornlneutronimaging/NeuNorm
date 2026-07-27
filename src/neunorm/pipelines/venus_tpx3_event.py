@@ -43,7 +43,7 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     output_path: Path,
     roi: Optional[ROILike] = None,
     air_roi: Optional[RegionLike] = None,
-    rebin_by_tof: Optional[bool | int | list] = False,
+    rebin_by_tof: Optional[bool | int | list | tuple] = False,
     rebin_reduction: Optional[Literal["mean", "sum", "median"]] = None,
     rebin_by_spatial: Optional[int | tuple[int, int]] = None,
     detector_shape: tuple[int, int] = (514, 514),
@@ -84,7 +84,7 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     air_roi : ROI, MaskROI, or tuple, optional
         Region of interest for air correction — an ``ROI``, a bare ``(x0, y0, x1, y1)`` tuple, or an
         arbitrary-shape ``MaskROI`` selection. If None, air correction is not applied.
-    rebin_by_tof : bool, int, or list of [start, stop], optional
+    rebin_by_tof : bool, int, or list/tuple of [start, stop], optional
         TOF rebinning applied to the histogrammed event stack (so the bin list indexes the TOF
         histogram bins, exactly as in the histogram pipeline). ``True`` uses the statistics-based
         recommended factor; an ``int`` is a uniform factor; a ``[[start, stop], ...]`` list defines
@@ -206,16 +206,16 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     # TOF rebinning (optional): applied to the histogrammed event stack. An integer factor, ``True``
     # for the statistics-based recommended factor, or an explicit ``[[start, stop], ...]`` bin list.
     # ``rebin_reduction`` selects how frames combine (default: sum for a factor, mean for a bin list).
-    # A bin list (even empty) is an explicit rebin request; an empty one must surface as an error
+    # A bin list/tuple (even empty) is an explicit rebin request; an empty one must surface as an error
     # from ``rebin_tof`` rather than be silently skipped by the plain falsy check.
-    if rebin_by_tof or isinstance(rebin_by_tof, list):
+    if rebin_by_tof or isinstance(rebin_by_tof, (list, tuple)):
         spec = rebin_by_tof
         if spec is True:
             spec = analyze_statistics(ob).recommended_rebinning
             logger.info(f"Recommended TOF rebinning factor based on statistics analysis: {spec}")
         if isinstance(spec, bool) or not isinstance(spec, (int, np.integer, list, tuple)):
             raise ValueError(
-                f"rebin_by_tof must be a bool, an int factor, or a list of [start, stop] pairs; got {spec!r}"
+                f"rebin_by_tof must be a bool, an int factor, or a list/tuple of [start, stop] pairs; got {spec!r}"
             )
         sample = rebin_tof(sample, spec, reduction=rebin_reduction)
         ob = rebin_tof(ob, spec, reduction=rebin_reduction)

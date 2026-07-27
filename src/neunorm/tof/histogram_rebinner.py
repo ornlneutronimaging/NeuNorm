@@ -468,7 +468,7 @@ def _rebin_tof_uniform_reduced(
 
 def rebin_tof(  # noqa: C901
     data: sc.DataArray,
-    width: Union[int, float, sc.Variable, list],
+    width: Union[int, float, sc.Variable, list, tuple],
     unit: str = "bins",
     logarithmic: bool = False,
     tof_dim: str = "tof",
@@ -509,10 +509,10 @@ def rebin_tof(  # noqa: C901
     ----------
     data : sc.DataArray
         Input data with TOF dimension.
-    width : int, float, sc.Variable, or list of [start, stop]
+    width : int, float, sc.Variable, or list/tuple of [start, stop]
         Sum mode: the new bin width in terms of ``unit`` (positive), or a ``sc.Variable`` of desired
         edges when ``unit="manual"``. Reduction mode: an integer number of frames per uniform bin,
-        or an explicit ``[[start, stop], ...]`` list of half-open frame-index ranges.
+        or an explicit ``[[start, stop], ...]`` list (or tuple) of half-open frame-index ranges.
     unit : str
         Unit by which the new bin width is specified (sum mode). Must be one of `time`, `wavelength`,
         `bins`, or `manual`. Default is `bins`.
@@ -551,7 +551,10 @@ def rebin_tof(  # noqa: C901
 
     # A NumPy-integer factor is a valid integer factor: normalize it to a Python int so both the sum
     # path (which checks `isinstance(width, int)`, and np.int64 is not a Python int) and the reduction
-    # path accept it. bool is excluded (np.bool_ is not np.integer, and Python bool is handled below).
+    # path accept it. Booleans are deliberately NOT coerced here: ``np.bool_`` is not an ``np.integer``
+    # and is rejected downstream, while a Python ``bool`` subclasses ``int`` and so is treated as an
+    # integer factor by the sum path (``True`` acts as width 1, i.e. a no-op) and rejected by the
+    # reduction path. Callers resolve a boolean rebin request to a factor before calling.
     if isinstance(width, np.integer):
         width = int(width)
 

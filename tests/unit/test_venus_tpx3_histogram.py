@@ -345,6 +345,33 @@ class TestVenusTPX3HistogramPipeline:
                 assert "spectra_tof" in hf
                 assert "masks/dropped_frames" in hf
 
+    def test_venus_tpx3_histogram_pipeline_rebin_by_tof_tuple(self):
+        """A gapped TUPLE-of-pairs spec behaves exactly like the list form, and an empty tuple is an
+        explicit-but-invalid request that raises rather than silently skipping the rebin."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx3_histogram_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=((0, 2), (3, 5)),  # tuple of pairs, frame 2 dropped -> real, gap, real
+            )
+            assert transmission.shape == (3, 32, 32)
+            np.testing.assert_array_equal(transmission.masks["dropped_frames"].values, [False, True, False])
+
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            with pytest.raises(ValueError, match="at least one"):
+                run_venus_tpx3_histogram_pipeline(
+                    sample_tiff_paths=[self.sample_tiff_paths],
+                    ob_tiff_paths=[self.ob_tiff_paths],
+                    sample_hdf5_paths=[self.sample_nexus_path],
+                    ob_hdf5_paths=[self.ob_nexus_path],
+                    output_path=Path(f.name),
+                    rebin_by_tof=(),  # empty tuple -> must raise, never a silent no-rebin
+                )
+
     def test_venus_tpx3_histogram_pipeline_mask_air_roi(self):
         """A non-rectangular MaskROI air_roi flows through the TPX3 histogram pipeline over a
         bin-edge tof coord: air-region mean -> 1.0 per tof bin, the N+1 bin-edge tof axis survives,

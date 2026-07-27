@@ -1,6 +1,7 @@
 """Unit tests for the flexible reduction path of neunorm.tof.histogram_rebinner.rebin_tof
 (reduce_tof_bins, the list/int reduction dispatch, and the linear/log bin-list generators)."""
 
+import inspect
 import tempfile
 from pathlib import Path
 
@@ -629,8 +630,22 @@ def test_rebin_tof_preserves_legacy_positional_signature():
     adding the keyword-only `reduction` parameter — i.e. `reduction` was NOT inserted before
     `logarithmic` (regression: it had been, so a bool `logarithmic` bound to `reduction` and raised)."""
     data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
-    out = rebin_tof(data, 2, "bins", False, "tof")  # unit, logarithmic, tof_dim passed positionally
+    # all SEVEN released positional parameters, in order:
+    # data, width, unit, logarithmic, tof_dim, l_source_to_detector, detector_time_offset
+    out = rebin_tof(data, 2, "bins", False, "tof", 25.0, 5000.0)
     np.testing.assert_allclose(out.values[:, 0, 0], [30, 70])  # adjacent-pair sum, unchanged
+    # and `reduction` must be keyword-only AND last, so it cannot absorb a positional argument
+    params = list(inspect.signature(rebin_tof).parameters.items())
+    assert [n for n, p in params if p.kind is not p.KEYWORD_ONLY] == [
+        "data",
+        "width",
+        "unit",
+        "logarithmic",
+        "tof_dim",
+        "l_source_to_detector",
+        "detector_time_offset",
+    ]
+    assert params[-1][0] == "reduction" and params[-1][1].kind is params[-1][1].KEYWORD_ONLY
 
 
 def test_rebin_tof_accepts_tuple_bin_list():

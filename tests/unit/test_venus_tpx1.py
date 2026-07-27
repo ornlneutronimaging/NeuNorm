@@ -637,6 +637,21 @@ class TestVenusTPX1Pipeline:
                     rebin_by_tof=[],  # empty list -> invalid, must raise (not skipped)
                 )
 
+    def test_venus_tpx1_pipeline_empty_rebin_tuple_raises(self):
+        """An empty TUPLE must behave like an empty list: an explicit-but-invalid rebin request that
+        raises, never a silent no-rebin. `()` is falsy, so the entry check has to admit tuples too."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            with pytest.raises(ValueError, match="at least one"):
+                run_venus_tpx1_pipeline(
+                    sample_tiff_paths=[self.sample_tiff_paths],
+                    ob_tiff_paths=[self.ob_tiff_paths],
+                    sample_hdf5_paths=[self.sample_nexus_path],
+                    ob_hdf5_paths=[self.ob_nexus_path],
+                    output_path=output_path,
+                    rebin_by_tof=(),  # empty tuple -> invalid, must raise (not silently skipped)
+                )
+
     def test_venus_tpx1_pipeline_rebin_by_tof_list_gap_with_air_roi(self):
         """A gapped bin-list rebin combined with air_roi must not crash: the NaN gap bin is excluded
         from the air-correction strict-finiteness guard (regression for the gap + air_roi P0)."""

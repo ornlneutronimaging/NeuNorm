@@ -4,6 +4,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import pytest
 import scipp as sc
 from scitiff.io import load_scitiff
 
@@ -432,6 +433,32 @@ class TestVenusTPX3EventPipeline:
             assert transmission.shape == (3, 32, 32)
             assert "spectra_tof" in transmission.coords
             np.testing.assert_array_equal(transmission.masks["dropped_frames"].values, [False, True, False])
+
+    def test_venus_tpx3_event_pipeline_rebin_by_tof_tuple(self):
+        """A gapped TUPLE-of-pairs spec behaves exactly like the list form, and an empty tuple is an
+        explicit-but-invalid request that raises rather than silently skipping the rebin."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            transmission = run_venus_tpx3_event_pipeline(
+                sample_paths=[self.sample],
+                ob_paths=[self.ob],
+                binning=self.binning,
+                output_path=Path(f.name),
+                detector_shape=(32, 32),
+                rebin_by_tof=((0, 2), (3, 5)),  # tuple of pairs, bin 2 dropped -> real, gap, real
+            )
+            assert transmission.shape == (3, 32, 32)
+            np.testing.assert_array_equal(transmission.masks["dropped_frames"].values, [False, True, False])
+
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            with pytest.raises(ValueError, match="at least one"):
+                run_venus_tpx3_event_pipeline(
+                    sample_paths=[self.sample],
+                    ob_paths=[self.ob],
+                    binning=self.binning,
+                    output_path=Path(f.name),
+                    detector_shape=(32, 32),
+                    rebin_by_tof=(),  # empty tuple -> must raise, never a silent no-rebin
+                )
 
     def test_venus_tpx3_event_pipeline_mask_air_roi(self):
         """A non-rectangular MaskROI air_roi flows through the TPX3 event pipeline over a bin-edge
