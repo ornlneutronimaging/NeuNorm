@@ -266,6 +266,7 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     if air_roi is not None:
         metadata["air_roi"] = region_provenance(air_roi)
 
+    output_description = str(output_path)
     if output_path.suffix.lower() in (".hdf5", ".h5"):
         write_hdf5(
             output_path, transmission, dead_pixel_mask="dead_pixels", hot_pixel_mask="hot_pixels", metadata=metadata
@@ -297,15 +298,22 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
             # add combined mask back in with name "scitiff-mask"
             transmission.masks["scitiff-mask"] = sc.array(dims=transmission.dims, values=combined_mask, dtype=bool)
 
-        write_tiff_stack(
+        written_paths = write_tiff_stack(
             output_path,
             transmission,
             metadata=metadata,
             daqmetadata=daqmetadata,
             one_file_per_image=tiff_one_file_per_image,
         )
+        # In per-image mode ``output_path`` is only a naming template and is never written, so
+        # report what actually landed on disk rather than a file that does not exist.
+        if len(written_paths) > 1:
+            output_description = f"{len(written_paths)} files, {written_paths[0].name} .. {written_paths[-1].name}"
+        else:
+            output_description = str(written_paths[0])
+
     else:
         raise ValueError(f"Unsupported output file format: {output_path.suffix}")
 
-    logger.success("VENUS TPX3 event pipeline completed successfully. Output written to {}", output_path)
+    logger.success("VENUS TPX3 event pipeline completed successfully. Output written to {}", output_description)
     return transmission

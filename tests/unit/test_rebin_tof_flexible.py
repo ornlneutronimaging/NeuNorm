@@ -680,3 +680,49 @@ def test_rebin_tof_accepts_tuple_bin_list():
     data = _stack([10, 20, 30, 40], variances=[4, 4, 4, 4])
     out = rebin_tof(data, ((0, 2), (2, 4)), reduction="sum")
     np.testing.assert_allclose(out.values[:, 0, 0], [30, 70])
+
+
+def test_gapped_edges_documented_widening_vs_true_member_spans():
+    """Pin the KNOWN, documented limitation of a single N+1 edge array over a non-contiguous bin list,
+    against an INDEPENDENT oracle (each range's true member span), not the implementation's formula.
+
+    N ranges over a non-contiguous frame set cannot be represented exactly by N+1 shared edges, so
+    one boundary must absorb the omitted span. NeuNorm keeps every bin's LOWER edge exact (the VENUS
+    spectra left-edge convention) and absorbs the omission into the preceding bin's closing edge.
+    This test states both numbers explicitly so the discrepancy is visible rather than hidden behind
+    an oracle that mirrors the code.
+    """
+    data = _stack([10, 20, 30, 40, 50, 60], variances=[1] * 6)  # frame left edges 0.0 .. 0.5, close 0.6
+    ranges = [(0, 1), (2, 3), (5, 6)]  # frames 1 and 3-4 uncovered
+    out = reduce_tof_bins(data, ranges, reduction="sum")
+
+    edges = out.coords["tof"].values
+    # every bin's LOWER edge equals its first member frame's left edge (exact, independent oracle)
+    expected_lower = [round(0.1 * start, 10) for start, _ in ranges]
+    np.testing.assert_allclose(edges[:-1], expected_lower)
+    # the closing edge equals the LAST range's stop (exact)
+    np.testing.assert_allclose(edges[-1], 0.1 * ranges[-1][1])
+
+    # ... but the implied WIDTHS are wider than the true member spans wherever frames were dropped:
+    implied_widths = np.diff(edges)
+    true_widths = [0.1 * (stop - start) for start, stop in ranges]
+    np.testing.assert_allclose(true_widths, [0.1, 0.1, 0.1])
+    np.testing.assert_allclose(implied_widths, [0.2, 0.3, 0.1])  # bins 0 and 1 absorb the omissions
+    assert implied_widths[0] > true_widths[0]  # the documented widening, made explicit
+    assert implied_widths[2] == pytest.approx(true_widths[2])  # last bin unaffected
+
+    # spectra_tof stays EXACT for every bin (mean of that bin's member left edges) — this is the
+    # coordinate that reports what each image actually contains.
+    np.testing.assert_allclose(out.coords[SPECTRA_TOF_COORD].values, [0.0, 0.2, 0.5])
+
+
+def test_contiguous_edges_match_independent_frame_boundaries():
+    """Backward-compat for the common (contiguous) case, checked against frame boundaries computed
+    from the fixture rather than against the implementation's edge formula."""
+    data = _stack([10, 20, 30, 40, 50, 60], variances=[1] * 6)  # left edges 0.0..0.5, close 0.6
+    ranges = [(0, 2), (2, 5), (5, 6)]
+    out = reduce_tof_bins(data, ranges, reduction="mean")
+    # contiguous tiling -> every edge is a real frame boundary and widths equal member counts
+    expected = [0.0, 0.2, 0.5, 0.6]
+    np.testing.assert_allclose(out.coords["tof"].values, expected)
+    np.testing.assert_allclose(np.diff(out.coords["tof"].values), [0.1 * (b - a) for a, b in ranges])

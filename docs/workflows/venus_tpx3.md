@@ -968,7 +968,6 @@ TPX1 guide's "Rebinning Constraints" for the full description; the API is
 | TOF Bin Edges | (N_bins+1,) | float64 | Time-of-flight boundaries (μs) |
 | Dead Pixel Mask | (y, x) | bool | True = dead pixel |
 | Hot Pixel Mask | (y, x) | bool | True = hot pixel |
-| Dropped-frame Mask | (TOF,) | bool | True = missing/gap bin (flexible bin-list rebin only) |
 | Per-bin TOF (`spectra_tof`) | (N_bins,) | float64 | Mean time of each bin's frames (bin-list / mean / median rebin only) |
 | Metadata | dict | - | Processing provenance |
 

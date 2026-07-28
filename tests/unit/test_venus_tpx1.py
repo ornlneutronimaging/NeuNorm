@@ -611,20 +611,26 @@ class TestVenusTPX1Pipeline:
                 assert "spectra_tof" in hf
                 assert hf["spectra_tof"].shape == (2,)  # one per output image
 
-    def test_venus_tpx1_pipeline_rebin_by_tof_list_gap_tiff(self):
-        """A gapped bin-list rebin must also export to TIFF: the 1-D dropped_frames mask has to
-        broadcast to the full (t, y, x) stack for scitiff (regression for the mask-combining path)."""
-        with tempfile.NamedTemporaryFile(suffix=".tiff", delete=True) as f:
-            output_path = Path(f.name)
-            run_venus_tpx1_pipeline(
+    def test_venus_tpx1_pipeline_rebin_by_tof_list_dropped_frame_tiff(self):
+        """A bin-list rebin with a dropped frame still exports to TIFF, with the 2-D (y, x)
+        dead-pixel mask broadcast by DIM NAME to the full (t, y, x) scitiff stack — the
+        mask-combining path. Asserts the written stack, not merely that a file appeared."""
+        with tempfile.TemporaryDirectory() as d:
+            output_path = Path(d) / "norm.tiff"
+            transmission = run_venus_tpx1_pipeline(
                 sample_tiff_paths=[self.sample_tiff_paths],
                 ob_tiff_paths=[self.ob_tiff_paths],
                 sample_hdf5_paths=[self.sample_nexus_path],
                 ob_hdf5_paths=[self.ob_nexus_path],
                 output_path=output_path,
-                rebin_by_tof=[[0, 2], [3, 5]],  # gap -> 1-D dropped_frames mask
+                rebin_by_tof=[[0, 2], [3, 5]],  # frame 2 uncovered -> dropped
             )
-            assert output_path.exists()  # scitiff write succeeded with the broadcast mask
+            assert transmission.shape == (2, 32, 32)
+            # the combined mask is broadcast to the full stack shape for scitiff, not left 2-D
+            assert transmission.masks["scitiff-mask"].sizes == transmission.sizes
+            image = load_scitiff(output_path)["image"]
+            assert image.sizes["y"] == 32 and image.sizes["x"] == 32
+            assert image.sizes[[d for d in image.dims if d not in ("y", "x", "c")][0]] == 2
 
     def test_venus_tpx1_pipeline_empty_rebin_list_raises(self):
         """An explicit but empty bin list is invalid input, not a silent no-op rebin."""

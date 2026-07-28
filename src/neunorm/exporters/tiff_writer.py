@@ -59,7 +59,9 @@ def convert_metadata_to_scitiff_coords(metadata: dict) -> sc.DataGroup:
     return extra
 
 
-#: Dimensions treated as spatial; any other dimension is the spectral (per-image) axis.
+#: Dimensions treated as spatial (a single image plane). Any OTHER dimension is the spectral
+#: (per-image) axis used by ``one_file_per_image`` — e.g. ``tof``, or ``t`` after the pipelines
+#: rename it for scitiff. More than one non-spatial dimension is ambiguous and is rejected.
 _SPATIAL_DIMS = ("x", "y")
 
 
@@ -131,11 +133,18 @@ def write_tiff_stack(
     one_file_per_image : bool
         When ``False`` (default) write one multi-page TIFF containing the whole stack — unchanged
         behavior. When ``True`` write **one scitiff file per spectral image** (one normalization per
-        file), named ``<stem>_00000<suffix>``, ``<stem>_00001<suffix>``, … in spectral order, so the
-        files sort correctly and open as ordinary single images in tools such as ImageJ. Each file
-        keeps its own slice's coordinates — including that bin's ``tof`` bounds and ``spectra_tof``
-        time — plus the same metadata as the stack. Data with no spectral dimension (a plain
-        ``(y, x)`` radiograph) is already one image and is written as a single file.
+        file), named ``<stem>_00000<suffix>``, ``<stem>_00001<suffix>``, … in spectral order (the
+        index is zero-padded to at least 5 digits, widening if there are more than 100000 images, so
+        a lexicographic listing always matches spectral order). Each file holds a single
+        ``(y, x)`` normalization and keeps its own slice's coordinates — including that bin's ``tof``
+        bounds and ``spectra_tof`` time — plus the same metadata as the stack. Note that, exactly as
+        for the stack, ``concat_stdevs_and_mask=True`` packs intensities, standard deviations and the
+        mask into three channels, so each file is a 3-channel scitiff image (ImageJ shows it as a
+        3-channel hyperstack, channel 1 being the normalization). Data with no spectral dimension (a
+        plain ``(y, x)`` radiograph) is already one image and is written as a single file.
+
+        Raises ``ValueError`` if the data has more than one non-spatial dimension (ambiguous split)
+        or if the spectral dimension is empty.
 
     Returns
     -------
@@ -154,13 +163,24 @@ def write_tiff_stack(
 
     spectral_dims = [d for d in image.dims if d not in _SPATIAL_DIMS]
     if one_file_per_image and spectral_dims:
+        if len(spectral_dims) > 1:
+            raise ValueError(
+                f"one_file_per_image needs exactly one non-spatial dimension to split on; got "
+                f"{spectral_dims} in dims {image.dims}. Reduce or select the extra dimension(s) first."
+            )
+        spectral_dim = spectral_dims[0]
+        n_images = image.sizes[spectral_dim]
+        if n_images == 0:
+            raise ValueError(f"cannot write one file per image: dimension '{spectral_dim}' is empty (size 0)")
         # One normalization per file. Slice with an integer index so each file holds a plain
         # (y, x) image: scipp reduces that dim's bin-edge coord to the slice's two bounds and a
         # point coord (spectra_tof) to a scalar, so every file records which bin it came from.
-        spectral_dim = spectral_dims[0]
+        # Pad the index to the width of the largest index (at least 5) so a lexicographic listing
+        # always matches spectral order, even past 99999 images.
+        width = max(5, len(str(n_images - 1)))
         written: list[Path] = []
-        for index in range(image.sizes[spectral_dim]):
-            frame_path = output_path.with_name(f"{output_path.stem}_{index:05d}{output_path.suffix}")
+        for index in range(n_images):
+            frame_path = output_path.with_name(f"{output_path.stem}_{index:0{width}d}{output_path.suffix}")
             dg = _build_scitiff_datagroup(image[spectral_dim, index], metadata, daqmetadata)
             save_scitiff(dg, frame_path, concat_stdevs_and_mask=True)
             written.append(frame_path)

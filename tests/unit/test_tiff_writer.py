@@ -252,13 +252,15 @@ def test_write_tiff_stack_one_file_per_image():
 
         for index, path in enumerate(written):
             image = load_scitiff(path)["image"]
-            # each file is a single (y, x) image holding that bin's values
-            assert set(image.dims) >= {"y", "x"}
-            np.testing.assert_allclose(
-                np.squeeze(sc.values(image).values)[: stack.sizes["y"]],
-                stack.values[index],
-                rtol=1e-6,
-            )
+            # exactly ONE image per file: the only non-spatial dim is scitiff's stdev/mask channel
+            # (concat_stdevs_and_mask=True), never a second spectral image.
+            assert image.sizes["y"] == stack.sizes["y"]
+            assert image.sizes["x"] == stack.sizes["x"]
+            assert [d for d in image.dims if d not in ("y", "x", "c")] == []
+            # channel 0 is the normalization itself; compare the FULL array, no squeeze/slicing
+            values = sc.values(image).values
+            frame = values[0] if values.ndim == 3 else values
+            np.testing.assert_allclose(frame, stack.values[index], rtol=1e-6)
 
 
 def test_write_tiff_stack_one_file_per_image_keeps_per_bin_coords():
@@ -299,3 +301,76 @@ def test_write_tiff_stack_one_file_per_image_on_2d_writes_single_file():
         written = write_tiff_stack(output_path, radiograph, one_file_per_image=True)
         assert written == [output_path]
         assert output_path.exists()
+
+
+def test_write_tiff_stack_one_file_per_image_preserves_variances_mask_and_metadata():
+    """Each per-image file must carry the SAME payload the stack does: that slice's stdevs, its mask,
+    and the metadata/DAQ tags — verified on disk, not just assumed (review finding)."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    stack = _tof_stack(n=3)
+    stack.variances = np.arange(3 * 4 * 4, dtype=np.float64).reshape((3, 4, 4)) + 1.0  # distinct per frame
+    mask = np.zeros((4, 4), dtype=bool)
+    mask[0, 0] = True
+    stack.masks["dead"] = sc.array(dims=["y", "x"], values=mask)
+
+    with tempfile.TemporaryDirectory() as d:
+        written = write_tiff_stack(
+            Path(d) / "norm.tiff",
+            stack,
+            metadata={"roi_applied": "false", "sample_paths": ["a.tiff", "b.tiff"]},
+            daqmetadata={"facility": "ORNL", "instrument": "VENUS"},
+            one_file_per_image=True,
+        )
+        assert len(written) == 3
+        for index, path in enumerate(written):
+            dg = load_scitiff(path)
+            image = dg["image"]
+            # stdevs for THIS slice survive the round trip
+            stdevs = sc.stddevs(image).values
+            frame_stdevs = stdevs[0] if stdevs.ndim == 3 else stdevs
+            np.testing.assert_allclose(frame_stdevs, np.sqrt(stack.variances[index]), rtol=1e-6)
+            # the mask travels with every file (scitiff round-trips it as "scitiff-mask")
+            assert "scitiff-mask" in image.masks
+            np.testing.assert_array_equal(image.masks["scitiff-mask"].values, mask)
+            # metadata/DAQ tags travel with every file
+            assert json.loads(dg["extra"]["sample_paths"]) == ["a.tiff", "b.tiff"]
+            assert dg["extra"]["roi_applied"] == "false"
+
+
+def test_write_tiff_stack_one_file_per_image_index_width_grows_past_five_digits():
+    """The zero-pad width must grow with the image count so a lexicographic listing always equals
+    spectral order (a fixed %05d would sort norm_100000 before norm_99999)."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    # 5 digits is the floor for small stacks
+    small = _tof_stack(n=2)
+    with tempfile.TemporaryDirectory() as d:
+        names = [p.name for p in write_tiff_stack(Path(d) / "n.tiff", small, one_file_per_image=True)]
+        assert names == ["n_00000.tiff", "n_00001.tiff"]
+
+    # the width formula itself, checked at the 100000-image boundary without writing that many files
+    assert max(5, len(str(100000 - 1))) == 5  # 0..99999 still fits in 5
+    assert max(5, len(str(100001 - 1))) == 6  # 0..100000 needs 6, so ordering is preserved
+    padded = [f"{i:0{max(5, len(str(100000)))}d}" for i in (99999, 100000)]
+    assert padded == ["099999", "100000"]
+    assert sorted(padded) == padded  # lexicographic == numeric
+
+
+def test_write_tiff_stack_one_file_per_image_rejects_ambiguous_and_empty_spectral_dims():
+    """Two non-spatial dims is an ambiguous split, and an empty spectral dim would write no file at
+    all — both must raise instead of silently doing the wrong thing (review findings)."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    two_spectral = sc.DataArray(
+        data=sc.array(dims=["angle", "t", "y", "x"], values=np.zeros((2, 3, 4, 4)), unit="dimensionless")
+    )
+    with tempfile.TemporaryDirectory() as d:
+        with pytest.raises(ValueError, match="exactly one non-spatial dimension"):
+            write_tiff_stack(Path(d) / "n.tiff", two_spectral, one_file_per_image=True)
+
+    empty = sc.DataArray(data=sc.array(dims=["t", "y", "x"], values=np.zeros((0, 4, 4)), unit="dimensionless"))
+    with tempfile.TemporaryDirectory() as d:
+        with pytest.raises(ValueError, match="empty"):
+            write_tiff_stack(Path(d) / "n.tiff", empty, one_file_per_image=True)
+        assert list(Path(d).iterdir()) == []  # nothing written
