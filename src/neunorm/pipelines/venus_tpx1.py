@@ -323,11 +323,10 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         metadata["air_roi"] = region_provenance(air_roi)
 
     if gamma_filter:
-        metadata["gamma_filter"] = {
-            "sigma": gamma_filter_sigma,
-            "n_pixels_replaced_sample": gamma_filter_counts.get("sample", 0),
-            "n_pixels_replaced_ob": gamma_filter_counts.get("ob", 0),
-        }
+        # Flat scalar keys: the TIFF metadata writer rejects nested dicts.
+        metadata["gamma_filter_sigma"] = gamma_filter_sigma
+        metadata["gamma_filter_n_pixels_replaced_sample"] = gamma_filter_counts.get("sample", 0)
+        metadata["gamma_filter_n_pixels_replaced_ob"] = gamma_filter_counts.get("ob", 0)
 
     output_description = str(output_path)
     if output_path.suffix.lower() in (".hdf5", ".h5"):
