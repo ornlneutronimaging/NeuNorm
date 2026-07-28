@@ -326,8 +326,8 @@ class TestVenusTPX3HistogramPipeline:
         np.testing.assert_allclose(transmission.variances, 0.0227, rtol=0.1)
 
     def test_venus_tpx3_histogram_pipeline_rebin_by_tof_list(self):
-        """A bin-list rebin_by_tof mean-reduces the TPX3 histogram stack, carrying spectra_tof and
-        (with a gap) the dropped_frames missing-data mask through to the HDF5 output."""
+        """A bin-list rebin_by_tof mean-reduces the TPX3 histogram stack and carries spectra_tof to
+        the HDF5 output; an uncovered frame is dropped silently (one image per requested range)."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
             transmission = run_venus_tpx3_histogram_pipeline(
@@ -336,18 +336,20 @@ class TestVenusTPX3HistogramPipeline:
                 sample_hdf5_paths=[self.sample_nexus_path],
                 ob_hdf5_paths=[self.ob_nexus_path],
                 output_path=output_path,
-                rebin_by_tof=[[0, 2], [3, 5]],  # 5 frames, frame 2 dropped -> 3 bins (real, gap, real)
+                rebin_by_tof=[[0, 2], [3, 5]],  # 5 frames, frame 2 uncovered -> dropped -> 2 bins
             )
-            assert transmission.shape == (3, 32, 32)
+            assert transmission.shape == (2, 32, 32)
             assert "spectra_tof" in transmission.coords
-            np.testing.assert_array_equal(transmission.masks["dropped_frames"].values, [False, True, False])
+            assert "dropped_frames" not in transmission.masks
+            assert not np.isnan(transmission.values).any()
             with h5py.File(output_path, "r") as hf:
                 assert "spectra_tof" in hf
-                assert "masks/dropped_frames" in hf
+                assert hf["spectra_tof"].shape == (2,)
+                assert "masks/dropped_frames" not in hf
 
     def test_venus_tpx3_histogram_pipeline_rebin_by_tof_tuple(self):
-        """A gapped TUPLE-of-pairs spec behaves exactly like the list form, and an empty tuple is an
-        explicit-but-invalid request that raises rather than silently skipping the rebin."""
+        """A TUPLE-of-pairs spec behaves exactly like the list form (including dropping an uncovered
+        frame), and an empty tuple is an explicit-but-invalid request that raises."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
             transmission = run_venus_tpx3_histogram_pipeline(
@@ -356,10 +358,10 @@ class TestVenusTPX3HistogramPipeline:
                 sample_hdf5_paths=[self.sample_nexus_path],
                 ob_hdf5_paths=[self.ob_nexus_path],
                 output_path=output_path,
-                rebin_by_tof=((0, 2), (3, 5)),  # tuple of pairs, frame 2 dropped -> real, gap, real
+                rebin_by_tof=((0, 2), (3, 5)),  # tuple of pairs, frame 2 uncovered -> dropped
             )
-            assert transmission.shape == (3, 32, 32)
-            np.testing.assert_array_equal(transmission.masks["dropped_frames"].values, [False, True, False])
+            assert transmission.shape == (2, 32, 32)
+            assert "dropped_frames" not in transmission.masks
 
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             with pytest.raises(ValueError, match="at least one"):

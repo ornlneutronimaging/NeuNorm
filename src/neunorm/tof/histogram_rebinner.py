@@ -6,10 +6,13 @@ via :func:`scipp.rebin`, which can only sum. Passing ``reduction="mean"`` or ``"
 explicit ``[[start, stop], ...]`` frame-index bin list as ``width``, instead reduces user-defined
 ranges of image frames into one frame each with the chosen reduction — the flexible list-based
 rebinning requested in the project (e.g. ``[[0, 4], [5, 30]]`` grouping frames into non-uniform
-bins, with dropped-frame gaps represented as missing data).
+bins). Ranges are half-open (Python convention), and the output has exactly one image per range:
+frames no range covers are **dropped silently** — a deliberate choice made with the instrument
+scientist (see :func:`_reduce_tof_by_bin_list`), with the per-bin ``spectra_tof`` axis serving as
+the record of what each output image actually contains.
 
 Public helpers backing the reduction path: :func:`reduce_tof_bins` (the low-level reducer over
-already-canonical, contiguous ``(start, stop)`` ranges) and the :func:`linear_bin_list` /
+already-canonical, ordered ``(start, stop)`` ranges) and the :func:`linear_bin_list` /
 :func:`log_bin_list` bin-list generators. Reduced output carries a ``spectra_tof`` point coordinate
 giving each bin's representative time (the mean of its member frames' left-edge times) alongside the
 bin-edge ``tof`` axis, so the spectra can be updated on export.
@@ -36,9 +39,6 @@ ReductionMode = Literal["mean", "sum", "median"]
 #: member frames' left-edge times — carried alongside the bin-edge ``tof`` axis so the spectra can
 #: be updated on export (GitHub #192).
 SPECTRA_TOF_COORD = "spectra_tof"
-
-#: Mask name flagging output bins that are dropped-frame gaps (True = not real data).
-DROPPED_FRAMES_MASK = "dropped_frames"
 
 
 def rebin_with_snapped_boundaries(old_edges: sc.Variable, requested_tof_edges: sc.Variable):
@@ -117,7 +117,8 @@ def _validate_bins(
     """Check the TOF axis and bin ranges, returning canonical int ranges and the bin-edge coord.
 
     Enforces: ``tof_dim`` present with a bin-edge coordinate (length N+1); at least one range;
-    every range in-bounds and increasing (``0 <= start < stop <= N``); ranges tile contiguously.
+    every range in-bounds and increasing (``0 <= start < stop <= N``); ranges ordered and disjoint
+    (gaps between ranges are allowed — those frames are dropped; overlaps are not).
     """
     if tof_dim not in data.dims:
         raise ValueError(f"TOF dimension '{tof_dim}' not found in data dimensions {data.dims}")
@@ -141,12 +142,19 @@ def _validate_bins(
                 f"bin range ({start}, {stop}) is invalid for a TOF axis of length {n_frames}: "
                 "require 0 <= start < stop <= N (half-open, Python convention)"
             )
-    for (_, stop), (next_start, _) in zip(ranges[:-1], ranges[1:]):
-        if stop != next_start:
+    # Ranges must be ordered and disjoint, but NOT necessarily contiguous: frames left uncovered
+    # between two ranges are dropped (see the module docstring — a deliberate, CIS-requested
+    # behavior). Overlaps remain an error, since a frame cannot contribute to two output bins.
+    for (prev_start, prev_stop), (start, stop) in zip(ranges[:-1], ranges[1:]):
+        if start < prev_stop:
+            if start >= prev_start:
+                raise ValueError(
+                    f"bins overlap: ({prev_start}, {prev_stop}) and ({start}, {stop}) share frame(s); "
+                    "bins must be disjoint (frames may be skipped between bins, but not shared)"
+                )
             raise ValueError(
-                f"bins must tile contiguously to form a bin-edge TOF axis; a bin ending at "
-                f"{stop} is followed by a bin starting at {next_start}. Represent dropped "
-                "frames as an explicit gap bin upstream rather than as a hole."
+                f"bins must be given in increasing order; bin ({start}, {stop}) starts before the "
+                f"preceding bin ({prev_start}, {prev_stop})"
             )
     return ranges, tof_edges
 
@@ -197,7 +205,7 @@ def reduce_tof_bins(
     reduction: ReductionMode = "mean",
     tof_dim: str = "tof",
 ) -> sc.DataArray:
-    """Reduce contiguous ranges of TOF frames into one frame each.
+    """Reduce ranges of TOF frames into one frame each.
 
     This is the low-level primitive behind the reduction path of :func:`rebin_tof`. Each
     ``(start, stop)`` range (half-open, Python convention: ``start`` inclusive, ``stop``
@@ -205,8 +213,10 @@ def reduce_tof_bins(
     using the chosen ``reduction``. The output ``tof`` axis is rebuilt as a **bin-edge**
     coordinate from the ranges' boundary edges, matching the convention of un-rebinned data.
 
-    Ranges must tile contiguously (no gaps); to rebin by a list that may contain gaps, pass the
-    list as the ``width`` of :func:`rebin_tof`, which inserts the gap bins for you.
+    Ranges must be ordered and disjoint but need not be contiguous: any frame no range covers is
+    simply not read, and the output has exactly one frame per range. Dropping uncovered frames
+    silently is a deliberate, instrument-scientist-requested behavior — see
+    :func:`_reduce_tof_by_bin_list` for the full rationale.
 
     Parameters
     ----------
@@ -215,10 +225,9 @@ def reduce_tof_bins(
         coordinate (length ``N + 1`` for a ``tof_dim`` of length ``N``). Variances, spatial
         (``y``, ``x``) coordinates, scalar coordinates, and ``(y, x)`` masks are preserved.
     bins : sequence of (start, stop)
-        Contiguous, ordered, half-open frame-index ranges, e.g. ``[(0, 4), (4, 7)]``. Adjacent
-        ranges must tile without holes (``stop`` of one equals ``start`` of the next) so the
-        output forms a valid bin-edge axis; represent dropped frames as an explicit gap bin
-        upstream rather than as a hole here.
+        Ordered, disjoint, half-open frame-index ranges, e.g. ``[(0, 4), (4, 7)]``. Ranges need
+        not be adjacent — frames between two ranges (or before the first / after the last) are
+        dropped silently. Overlapping or unordered ranges are rejected.
     reduction : {"mean", "sum", "median"}, optional
         How to combine the frames in each bin. Default ``"mean"``.
 
@@ -248,7 +257,7 @@ def reduce_tof_bins(
     ------
     ValueError
         If ``tof_dim`` is absent, ``reduction`` is not recognised, ``bins`` is empty, an index is
-        not an integer, a range is out of bounds or non-increasing, the ranges are not contiguous,
+        not an integer, a range is out of bounds or non-increasing, the ranges overlap or are unordered,
         or ``data`` lacks a bin-edge ``tof_dim`` coordinate.
     """
     if reduction not in ("mean", "sum", "median"):
@@ -273,9 +282,14 @@ def reduce_tof_bins(
 
     result = sc.concat(reduced_frames, tof_dim)
 
-    # Rebuild the bin-edge tof coordinate: first bin's lower edge, then every bin's upper edge.
-    # Contiguity (checked in _validate_bins) makes these shared, giving exactly len(bins)+1 edges.
-    edge_indices = [ranges[0][0]] + [stop for _, stop in ranges]
+    # Rebuild the bin-edge tof coordinate: every bin's LOWER edge, closed by the last bin's upper
+    # edge — exactly len(bins)+1 edges. Taking the lower edges keeps each bin's START time exact,
+    # which is the convention the VENUS spectra files use (they record left edges). For contiguous
+    # bins this is identical to using the upper edges. When frames were skipped between two bins,
+    # the omitted span cannot be represented in a single contiguous bin-edge array, so it is
+    # absorbed into the preceding bin's closing edge; the per-bin ``spectra_tof`` below stays exact
+    # and is what reveals the omission.
+    edge_indices = [start for start, _ in ranges] + [ranges[-1][1]]
     result.coords[tof_dim] = sc.concat([tof_edges[tof_dim, i] for i in edge_indices], tof_dim)
 
     # Per-bin representative time = mean of the member frames' left-edge times (the VENUS spectra
@@ -310,7 +324,8 @@ def _parse_bin_list(bin_list: Sequence[Sequence[int]]) -> list[tuple[int, int]]:
 def _validate_bin_list(ranges: list[tuple[int, int]], n_frames: int) -> None:
     """Reject out-of-bounds, empty/reversed, unordered, or overlapping ranges.
 
-    Interior gaps between bins are legitimate (the user may drop frames) and are NOT flagged here.
+    Gaps between bins are legitimate (the user may drop frames) and are NOT flagged: the uncovered
+    frames are dropped silently, by design.
     """
     for start, stop in ranges:
         if start < 0 or stop > n_frames:
@@ -346,58 +361,33 @@ def _reduce_tof_by_bin_list(
     of :func:`rebin_tof`).
 
     Each ``[start, stop]`` in ``bin_list`` (half-open, Python convention) selects the frames
-    ``start .. stop - 1`` and reduces them to one output frame via :func:`reduce_tof_bins`.
+    ``start .. stop - 1`` and reduces them to one output frame via :func:`reduce_tof_bins`. The
+    output therefore has **exactly one image per requested range** — ``len(bin_list)`` images.
 
-    **Gaps are allowed.** Where consecutive bins leave an interior hole (one bin's ``stop`` is
-    less than the next bin's ``start``), the dropped frames are represented as an explicit **gap
-    bin flagged as missing data** — added to the ``"dropped_frames"`` mask along ``tof``
-    (``True`` = dropped) and given ``NaN`` values/variances — so the output ``tof`` axis stays a
-    contiguous, monotonic bin-edge coordinate spanning the gap. Frames before the first bin or
-    after the last bin are simply excluded (the axis spans the first ``start`` to the last
-    ``stop``); only interior gaps become masked bins.
+    **Frames not covered by any range are dropped silently.** This is a deliberate design choice
+    requested by the instrument scientist, not an oversight: no extra bin is inserted, no mask is
+    attached, and nothing is logged. The per-bin ``spectra_tof`` coordinate (each bin's mean member
+    time) is written alongside the data, and inspecting that per-image axis is how a user sees that
+    frames were left out. Dropping applies the same way wherever the omission falls — between two
+    ranges, before the first, or after the last.
 
-    Reconciling with the design rule "do not provide the option to skip images": that rule forbids
-    skipping frames *within* a bin (a bin like ``0, 1, 5, 8`` that is not a contiguous run), which is
-    impossible here — each ``[start, stop)`` is a contiguous range by construction. Dropping frames
-    *between* bins is a different, deliberate operation (excluding unwanted data), and those dropped
-    frames are explicitly recorded as missing (the gap bin above), not silently discarded.
+    An earlier revision represented an interior omission as an explicit ``NaN`` "missing data" bin
+    flagged by a ``dropped_frames`` mask, which meant two requested ranges could return three
+    images. That surprised users and was removed at the instrument scientist's request; do not
+    reintroduce it without checking with them.
+
+    Note this does not weaken the "do not provide the option to skip images" rule from the original
+    request: that rule forbids skipping frames *within* a bin (a bin like ``0, 1, 5, 8`` that is not
+    a contiguous run), which remains impossible — each ``[start, stop)`` is contiguous by
+    construction. Excluding frames *between* bins is a separate, intentional operation.
     """
     ranges = _parse_bin_list(bin_list)
     if tof_dim not in data.dims:
         raise ValueError(f"TOF dimension '{tof_dim}' not found in data dimensions {data.dims}")
     _validate_bin_list(ranges, data.sizes[tof_dim])
-
-    # Fill interior gaps with explicit bins so the reduced axis stays contiguous, tracking which
-    # output bins are dropped-frame gaps. _validate_bin_list above has already guaranteed the
-    # ranges are sorted, disjoint and in-bounds, so reduce_tof_bins' contiguity guard is only a
-    # backstop here.
-    filled: list[tuple[int, int]] = []
-    is_gap: list[bool] = []
-    for index, (start, stop) in enumerate(ranges):
-        if index > 0:
-            prev_stop = ranges[index - 1][1]
-            if start > prev_stop:  # interior gap: frames [prev_stop, start) were dropped
-                filled.append((prev_stop, start))
-                is_gap.append(True)
-        filled.append((start, stop))
-        is_gap.append(False)
-
-    result = reduce_tof_bins(data, filled, reduction=reduction, tof_dim=tof_dim)
-
-    if any(is_gap):
-        gap = np.array(is_gap)
-        # A dropped-frame bin carries no meaningful value: NaN it (values + variances) and flag it
-        # with the tof mask. NaN needs a float dtype, so promote an integer result (e.g. an int-count
-        # sum, which scipp keeps integer) to float first. (result.dtype is a scipp DType.)
-        if result.dtype not in (sc.DType.float32, sc.DType.float64):
-            result = result.astype(sc.DType.float64)
-        result.values[gap] = np.nan
-        if result.variances is not None:
-            result.variances[gap] = np.nan
-        result.coords[SPECTRA_TOF_COORD].values[gap] = np.nan  # dropped bins have no representative time
-        result.masks[DROPPED_FRAMES_MASK] = sc.array(dims=[tof_dim], values=gap)
-
-    return result
+    # Uncovered frames need no special handling: reduce_tof_bins accepts ordered, disjoint ranges
+    # and simply never reads the frames that no range covers.
+    return reduce_tof_bins(data, ranges, reduction=reduction, tof_dim=tof_dim)
 
 
 def linear_bin_list(n_frames: int, step: int) -> list[tuple[int, int]]:
@@ -504,7 +494,7 @@ def rebin_tof(  # noqa: C901
     - **Reduction.** With ``reduction="mean"`` or ``"median"``, or with ``width`` given as an
       explicit ``[[start, stop], ...]`` frame-index bin list, user-defined ranges of frames are
       reduced into one frame each (see :func:`reduce_tof_bins`). A bin list may leave interior
-      gaps (dropped frames), represented as missing-data bins (``dropped_frames`` mask + ``NaN``);
+      gaps: frames covered by no range are dropped silently (one output image per range);
       an integer ``width`` with a mean/median reduction is expanded to uniform bins. Reduced output
       carries a ``spectra_tof`` point coordinate. mean/median support only ``unit="bins"`` (or an
       explicit list) — ``scipp.rebin`` is sum-only.

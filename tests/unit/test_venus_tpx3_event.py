@@ -419,7 +419,7 @@ class TestVenusTPX3EventPipeline:
 
     def test_venus_tpx3_event_pipeline_rebin_by_tof_list(self):
         """A bin-list rebin_by_tof applies to the histogrammed event stack (event-mode parity):
-        it mean-reduces the bins and carries spectra_tof + the dropped_frames mask to the output."""
+        it mean-reduces the bins, carries spectra_tof, and drops an uncovered bin silently."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
             transmission = run_venus_tpx3_event_pipeline(
@@ -428,15 +428,16 @@ class TestVenusTPX3EventPipeline:
                 binning=self.binning,
                 output_path=output_path,
                 detector_shape=(32, 32),
-                rebin_by_tof=[[0, 2], [3, 5]],  # 5 histogram bins, bin 2 dropped -> 3 bins
+                rebin_by_tof=[[0, 2], [3, 5]],  # 5 histogram bins, bin 2 uncovered -> dropped
             )
-            assert transmission.shape == (3, 32, 32)
+            assert transmission.shape == (2, 32, 32)
             assert "spectra_tof" in transmission.coords
-            np.testing.assert_array_equal(transmission.masks["dropped_frames"].values, [False, True, False])
+            assert "dropped_frames" not in transmission.masks
+            assert not np.isnan(transmission.values).any()
 
     def test_venus_tpx3_event_pipeline_rebin_by_tof_tuple(self):
-        """A gapped TUPLE-of-pairs spec behaves exactly like the list form, and an empty tuple is an
-        explicit-but-invalid request that raises rather than silently skipping the rebin."""
+        """A TUPLE-of-pairs spec behaves exactly like the list form (including dropping an uncovered
+        bin), and an empty tuple is an explicit-but-invalid request that raises."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             transmission = run_venus_tpx3_event_pipeline(
                 sample_paths=[self.sample],
@@ -444,10 +445,10 @@ class TestVenusTPX3EventPipeline:
                 binning=self.binning,
                 output_path=Path(f.name),
                 detector_shape=(32, 32),
-                rebin_by_tof=((0, 2), (3, 5)),  # tuple of pairs, bin 2 dropped -> real, gap, real
+                rebin_by_tof=((0, 2), (3, 5)),  # tuple of pairs, bin 2 uncovered -> dropped
             )
-            assert transmission.shape == (3, 32, 32)
-            np.testing.assert_array_equal(transmission.masks["dropped_frames"].values, [False, True, False])
+            assert transmission.shape == (2, 32, 32)
+            assert "dropped_frames" not in transmission.masks
 
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             with pytest.raises(ValueError, match="at least one"):

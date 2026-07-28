@@ -586,8 +586,10 @@ class TestVenusTPX1Pipeline:
             )
             assert output_path.exists()  # scitiff write succeeded for the median-reduced stack
 
-    def test_venus_tpx1_pipeline_rebin_by_tof_list_gap(self):
-        """A gap in the bin list flags the dropped frame as missing data through to the output."""
+    def test_venus_tpx1_pipeline_rebin_by_tof_list_dropped_frame(self):
+        """An uncovered frame is dropped silently end-to-end: 2 requested ranges -> 2 output images,
+        no extra bin, no NaN, no mask. The per-bin spectra_tof written to the output is what records
+        which frames each image covers (the CIS's stated way to spot an omission)."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
             transmission = run_venus_tpx1_pipeline(
@@ -596,16 +598,18 @@ class TestVenusTPX1Pipeline:
                 sample_hdf5_paths=[self.sample_nexus_path],
                 ob_hdf5_paths=[self.ob_nexus_path],
                 output_path=output_path,
-                rebin_by_tof=[[0, 2], [3, 5]],  # frame 2 dropped -> gap bin
+                rebin_by_tof=[[0, 2], [3, 5]],  # frame 2 uncovered -> dropped
             )
-            assert transmission.shape == (3, 32, 32)  # real, gap, real
-            assert "dropped_frames" in transmission.masks
-            np.testing.assert_array_equal(transmission.masks["dropped_frames"].values, [False, True, False])
-            # the missing-data flag + per-bin mean-time must persist to the HDF5 output
+            assert transmission.shape == (2, 32, 32)  # one image per requested range
+            assert "dropped_frames" not in transmission.masks
+            assert not np.isnan(transmission.values).any()
+            # sample/OB frames are 81..85 / 99..103 -> mean(81,82)/mean(99,100)*2, mean(84,85)/mean(102,103)*2
+            np.testing.assert_allclose(transmission.values[0], 81.5 / 99.5 * 2, rtol=1e-5)
+            np.testing.assert_allclose(transmission.values[1], 84.5 / 102.5 * 2, rtol=1e-5)
             with h5py.File(output_path, "r") as hf:
-                assert "masks/dropped_frames" in hf
-                np.testing.assert_array_equal(hf["masks/dropped_frames"][()], [False, True, False])
+                assert "masks/dropped_frames" not in hf
                 assert "spectra_tof" in hf
+                assert hf["spectra_tof"].shape == (2,)  # one per output image
 
     def test_venus_tpx1_pipeline_rebin_by_tof_list_gap_tiff(self):
         """A gapped bin-list rebin must also export to TIFF: the 1-D dropped_frames mask has to
@@ -651,9 +655,9 @@ class TestVenusTPX1Pipeline:
                     rebin_by_tof=(),  # empty tuple -> invalid, must raise (not silently skipped)
                 )
 
-    def test_venus_tpx1_pipeline_rebin_by_tof_list_gap_with_air_roi(self):
-        """A gapped bin-list rebin combined with air_roi must not crash: the NaN gap bin is excluded
-        from the air-correction strict-finiteness guard (regression for the gap + air_roi P0)."""
+    def test_venus_tpx1_pipeline_rebin_by_tof_list_dropped_frame_with_air_roi(self):
+        """A bin list with a dropped frame combined with air_roi must not crash and must correct every
+        output bin (no masked/NaN bin exists any more, so the air guard sees only real bins)."""
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
             transmission = run_venus_tpx1_pipeline(
@@ -662,15 +666,14 @@ class TestVenusTPX1Pipeline:
                 sample_hdf5_paths=[self.sample_nexus_path],
                 ob_hdf5_paths=[self.ob_nexus_path],
                 output_path=output_path,
-                rebin_by_tof=[[0, 2], [3, 5]],  # frame 2 dropped -> gap bin (NaN)
+                rebin_by_tof=[[0, 2], [3, 5]],  # frame 2 uncovered -> dropped
                 air_roi=(0, 0, 10, 10),
             )
-            assert transmission.shape == (3, 32, 32)
-            np.testing.assert_array_equal(transmission.masks["dropped_frames"].values, [False, True, False])
-            # real bins air-corrected to ~1.0 (spatially uniform); the gap bin stays NaN
-            np.testing.assert_allclose(transmission.values[0], 1.0, rtol=1e-5)
-            np.testing.assert_allclose(transmission.values[2], 1.0, rtol=1e-5)
-            assert np.isnan(transmission.values[1]).all()
+            assert transmission.shape == (2, 32, 32)
+            assert "dropped_frames" not in transmission.masks
+            # spatially uniform stack -> every bin air-corrects to ~1.0, none NaN
+            np.testing.assert_allclose(transmission.values, 1.0, rtol=1e-5)
+            assert not np.isnan(transmission.values).any()
 
     def test_venus_tpx1_pipeline_invalid_output_format(self):
         """Check error for unsupported output file format."""

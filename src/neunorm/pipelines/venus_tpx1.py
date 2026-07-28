@@ -104,7 +104,9 @@ def run_venus_tpx1_pipeline(  # noqa: C901
     rebin_by_tof : bool, int, or list/tuple of [start, stop], optional
         TOF rebinning. ``True`` uses the statistics-based recommended factor; an ``int`` is a uniform
         factor (frames per bin); a ``[[start, stop], ...]`` list defines explicit half-open
-        frame-index bins (variable width, interior gaps allowed and flagged as missing data).
+        frame-index bins (variable width). One output image per range; frames covered by no range
+        are dropped silently (a deliberate choice — the per-bin ``spectra_tof`` axis records what
+        each image contains).
     rebin_reduction : {"mean", "sum", "median"}, optional
         How frames combine within each TOF bin. ``None`` (default) preserves existing behavior — a
         uniform factor **sums**, a bin list takes the **mean** — while an explicit value applies to
@@ -299,8 +301,8 @@ def run_venus_tpx1_pipeline(  # noqa: C901
 
         # Combine all masks and broadcast to the shape of the transmission data.
         # Mask must be same shape as the image data for scitiff. Broadcast each mask by DIM NAME
-        # (scipp), so both a spatial (y, x) mask and a 1-D per-frame (t) mask (e.g. dropped_frames
-        # from a gapped bin-list rebin) expand correctly to the full (t, y, x) stack.
+        # (scipp), so both a spatial (y, x) mask and a 1-D per-frame (t) mask expand correctly to
+        # the full (t, y, x) stack.
         if transmission.masks:
             combined_mask = np.zeros_like(transmission.values, dtype=bool)
             for mask in transmission.masks.values():

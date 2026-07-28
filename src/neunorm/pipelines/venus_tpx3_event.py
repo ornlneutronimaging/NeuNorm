@@ -88,7 +88,9 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
         TOF rebinning applied to the histogrammed event stack (so the bin list indexes the TOF
         histogram bins, exactly as in the histogram pipeline). ``True`` uses the statistics-based
         recommended factor; an ``int`` is a uniform factor; a ``[[start, stop], ...]`` list defines
-        explicit half-open bins (variable width, interior gaps allowed and flagged as missing data).
+        explicit half-open bins (variable width). One output image per range; bins covered by no
+        range are dropped silently (a deliberate choice — the per-bin ``spectra_tof`` axis records
+        what each image contains).
     rebin_reduction : {"mean", "sum", "median"}, optional
         How frames combine within each TOF bin. ``None`` (default) preserves existing behavior — a
         uniform factor **sums**, a bin list takes the **mean** — while an explicit value applies to

@@ -22,9 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are consistent across the package. A one/two-frame bin uses the exact `Var(mean)`, since the median
   equals the mean there. An exact small-sample median variance would require per-pixel resampling
   (bootstrap): sound in principle, but impractical at detector scale, so it is deliberately not used. Existing `rebin_by_tof=int`/`True` behavior is
-  unchanged (still sums; `rebin_reduction` defaults to that). Interior **gaps** are allowed — dropped frames become an explicit bin flagged as
-  missing data (a `dropped_frames` mask along `tof` plus `NaN` values), keeping a contiguous bin-edge
-  `tof` axis; frames before the first/after the last bin are excluded. Each rebinned bin carries a
+  unchanged (still sums; `rebin_reduction` defaults to that). The output has **exactly one image per
+  requested range**: frames covered by no range are **dropped silently** — a deliberate choice made
+  with the instrument scientist, wherever the omission falls (between ranges, before the first, or
+  after the last). No extra bin is inserted, nothing is masked, and nothing is logged; the per-bin
+  `spectra_tof` axis is the record of which frames each image covers. Each rebinned bin carries a
   `spectra_tof` point coordinate (the mean of its member frames' times), persisted to the HDF5/TIFF
   output. The API lives in `neunorm.tof.histogram_rebinner`: the existing `rebin_tof` gains a
   `reduction` argument and accepts an explicit `[[start, stop], ...]` bin list as its `width` (its

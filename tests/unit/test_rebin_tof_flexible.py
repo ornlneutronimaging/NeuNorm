@@ -13,7 +13,6 @@ from loguru import logger
 
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.tof.histogram_rebinner import (
-    DROPPED_FRAMES_MASK,
     SPECTRA_TOF_COORD,
     linear_bin_list,
     log_bin_list,
@@ -230,10 +229,15 @@ def test_out_of_bounds_range_raises():
         reduce_tof_bins(data, [(2, 2)])  # non-increasing
 
 
-def test_non_contiguous_bins_raise():
+def test_non_contiguous_bins_accepted_dropping_uncovered_frames():
+    """reduce_tof_bins accepts ordered, disjoint ranges that are NOT adjacent: the uncovered frame is
+    simply never read (no gap bin — the CIS-requested silent drop)."""
     data = _stack([10, 20, 30, 40], variances=[1, 1, 1, 1])
-    with pytest.raises(ValueError, match="contiguous"):
-        reduce_tof_bins(data, [(0, 2), (3, 4)])  # hole at index 2
+    out = reduce_tof_bins(data, [(0, 2), (3, 4)])  # frame 2 uncovered -> dropped
+    assert out.sizes["tof"] == 2
+    assert not out.masks
+    np.testing.assert_allclose(out.values[:, 0, 0], [15, 40])  # mean(10,20), then frame 3 alone
+    np.testing.assert_allclose(out.coords["tof"].values, [0.0, 0.3, 0.4])  # left edges exact
 
 
 def test_non_bin_edge_coord_raises():
@@ -253,47 +257,52 @@ def test_list_no_gap_equals_reduce_tof_bins():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
     out = rebin_tof(data, [[0, 2], [2, 5]], reduction="mean")
     ref = reduce_tof_bins(data, [(0, 2), (2, 5)], reduction="mean")
-    assert DROPPED_FRAMES_MASK not in out.masks
+    assert not out.masks
     np.testing.assert_allclose(out.values, ref.values)
     np.testing.assert_allclose(out.variances, ref.variances)
     np.testing.assert_allclose(out.coords["tof"].values, ref.coords["tof"].values)
 
 
-def test_list_single_interior_gap_is_missing_data():
-    """A dropped frame between bins becomes a masked, NaN gap bin; the tof axis stays contiguous."""
+def test_list_uncovered_frame_is_dropped_silently():
+    """A frame covered by no range is DROPPED: one output image per requested range, no inserted
+    bin, no NaN, no mask, nothing logged. (CIS/Jean's decision — an earlier revision returned an
+    extra NaN 'missing data' bin, which meant 2 ranges gave 3 images.)"""
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])  # edges [0,.1,.2,.3,.4,.5]
-    out = rebin_tof(data, [[0, 2], [3, 5]], reduction="mean")  # frame 2 dropped
-    assert out.sizes["tof"] == 3  # real, gap, real
-    # gap flagged as missing data (mask + NaN), real bins correct
-    assert DROPPED_FRAMES_MASK in out.masks
-    np.testing.assert_array_equal(out.masks[DROPPED_FRAMES_MASK].values, [False, True, False])
+    messages, remove = _capture_warnings()
+    try:
+        out = rebin_tof(data, [[0, 2], [3, 5]], reduction="mean")  # frame 2 uncovered -> dropped
+    finally:
+        remove()
+    assert out.sizes["tof"] == 2  # one image per requested range
+    assert not out.masks  # nothing flagged
+    assert not np.isnan(out.values).any()  # no missing-data bin
+    assert messages == []  # silent, by design
     np.testing.assert_allclose(out.values[0], 15)  # mean(10, 20)
-    np.testing.assert_allclose(out.values[2], 45)  # mean(40, 50)
-    assert np.isnan(out.values[1]).all()
-    np.testing.assert_allclose(out.variances[0], 2)
-    np.testing.assert_allclose(out.variances[2], 2)
-    assert np.isnan(out.variances[1]).all()
-    # contiguous bin-edge axis spanning the gap: edges at frame indices 0, 2, 3, 5
+    np.testing.assert_allclose(out.values[1], 45)  # mean(40, 50) — frame 2 (30) excluded
+    np.testing.assert_allclose(out.variances, 2)
+    # valid N+1 bin-edge axis; each bin's LEFT edge is exact (frame indices 0 and 3)
     assert out.coords["tof"].sizes["tof"] == out.sizes["tof"] + 1
-    np.testing.assert_allclose(out.coords["tof"].values, [0.0, 0.2, 0.3, 0.5])
+    np.testing.assert_allclose(out.coords["tof"].values, [0.0, 0.3, 0.5])
+    # the per-bin x-axis is what reveals the omission: bin 0 averages frames 0-1 only
+    np.testing.assert_allclose(out.coords[SPECTRA_TOF_COORD].values, [0.05, 0.35])
 
 
-def test_list_multiple_gaps():
+def test_list_multiple_uncovered_frames_dropped_silently():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
-    out = rebin_tof(data, [[0, 1], [2, 3], [4, 5]], reduction="mean")  # drop frames 1 and 3
-    assert out.sizes["tof"] == 5
-    np.testing.assert_array_equal(out.masks[DROPPED_FRAMES_MASK].values, [False, True, False, True, False])
-    np.testing.assert_allclose([out.values[0, 0, 0], out.values[2, 0, 0], out.values[4, 0, 0]], [10, 30, 50])
-    assert np.isnan(out.values[1]).all() and np.isnan(out.values[3]).all()
+    out = rebin_tof(data, [[0, 1], [2, 3], [4, 5]], reduction="mean")  # frames 1 and 3 uncovered
+    assert out.sizes["tof"] == 3  # 3 requested ranges -> 3 images
+    assert not out.masks
+    np.testing.assert_allclose(out.values[:, 0, 0], [10, 30, 50])
+    assert not np.isnan(out.values).any()
 
 
 def test_list_reduction_mode_flows_through():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
-    out = rebin_tof(data, [[0, 2], [3, 5]], reduction="sum")  # frame 2 dropped
+    out = rebin_tof(data, [[0, 2], [3, 5]], reduction="sum")  # frame 2 uncovered -> dropped
+    assert out.sizes["tof"] == 2
     np.testing.assert_allclose(out.values[0], 30)  # sum(10, 20)
-    np.testing.assert_allclose(out.values[2], 90)  # sum(40, 50)
+    np.testing.assert_allclose(out.values[1], 90)  # sum(40, 50)
     np.testing.assert_allclose(out.variances[0], 8)  # 4 + 4
-    assert np.isnan(out.values[1]).all()
 
 
 def test_list_leading_and_trailing_frames_excluded():
@@ -301,7 +310,7 @@ def test_list_leading_and_trailing_frames_excluded():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
     out = rebin_tof(data, [[1, 3]], reduction="mean")  # frames 0, 3, 4 excluded
     assert out.sizes["tof"] == 1
-    assert DROPPED_FRAMES_MASK not in out.masks
+    assert not out.masks
     np.testing.assert_allclose(out.values[0], 25)  # mean(20, 30)
     np.testing.assert_allclose(out.coords["tof"].values, [0.1, 0.3])
 
@@ -360,11 +369,12 @@ def test_validate_non_integer_indices():
 
 
 def test_validate_gaps_still_allowed():
-    """Validation must NOT reject a legitimate between-bin gap (regression for Task 2 behavior)."""
+    """Validation must NOT reject a legitimate between-bin gap — the uncovered frame is simply
+    dropped, yielding one image per requested range."""
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
-    out = rebin_tof(data, [[0, 2], [3, 5]])  # frame 2 dropped -> gap bin, no error
-    assert out.sizes["tof"] == 3
-    np.testing.assert_array_equal(out.masks[DROPPED_FRAMES_MASK].values, [False, True, False])
+    out = rebin_tof(data, [[0, 2], [3, 5]])  # frame 2 uncovered -> dropped, no error
+    assert out.sizes["tof"] == 2
+    assert not out.masks
 
 
 # --------------------------------------------------------------------------------------------
@@ -382,23 +392,22 @@ def test_median_on_integer_data_promotes_no_crash():
     np.testing.assert_allclose(out.values[1], 35)  # median(30, 40)
 
 
-def test_sum_gap_on_integer_data_promotes_no_crash():
-    """sum + interior gap on an integer stack must not crash: result is promoted to float for NaN."""
+def test_sum_with_dropped_frame_on_integer_data_stays_integer():
+    """An integer sum keeps its integer dtype even when frames are dropped: with no NaN gap bin to
+    insert there is nothing forcing a float promotion."""
     data = _stack([10, 20, 30, 40, 50], dtype="int64")  # integer, no variances
-    out = rebin_tof(data, [[0, 2], [3, 5]], reduction="sum")  # frame 2 dropped -> gap
-    assert np.issubdtype(out.values.dtype, np.floating)
-    np.testing.assert_allclose(out.values[0], 30)  # sum(10, 20)
-    np.testing.assert_allclose(out.values[2], 90)  # sum(40, 50)
-    assert np.isnan(out.values[1]).all()  # gap bin NaN
-    np.testing.assert_array_equal(out.masks[DROPPED_FRAMES_MASK].values, [False, True, False])
-
-
-def test_sum_gap_on_integer_data_without_gap_stays_integer():
-    """Without a gap there is no NaN, so an integer sum keeps its integer dtype (no needless promote)."""
-    data = _stack([10, 20, 30, 40], dtype="int64")
-    out = rebin_tof(data, [[0, 2], [2, 4]], reduction="sum")  # contiguous, no gap
+    out = rebin_tof(data, [[0, 2], [3, 5]], reduction="sum")  # frame 2 uncovered -> dropped
     assert np.issubdtype(out.values.dtype, np.integer)
-    assert DROPPED_FRAMES_MASK not in out.masks
+    assert not out.masks
+    np.testing.assert_array_equal(out.values[:, 0, 0], [30, 90])  # sum(10,20), sum(40,50)
+
+
+def test_sum_contiguous_on_integer_data_stays_integer():
+    """Contiguous integer sum also keeps its integer dtype (no needless promote)."""
+    data = _stack([10, 20, 30, 40], dtype="int64")
+    out = rebin_tof(data, [[0, 2], [2, 4]], reduction="sum")  # contiguous
+    assert np.issubdtype(out.values.dtype, np.integer)
+    assert not out.masks
     np.testing.assert_array_equal(out.values[:, 0, 0], [30, 70])
 
 
@@ -448,34 +457,37 @@ def test_spectra_tof_variable_width_bins():
     np.testing.assert_allclose(out.coords[SPECTRA_TOF_COORD].values, [0.0, 0.25])
 
 
-def test_spectra_tof_gap_bin_is_nan_and_axis_monotonic():
-    """A dropped-frame gap bin has NaN spectra_tof; the bin-edge tof axis stays contiguous/monotonic."""
+def test_spectra_tof_reveals_dropped_frames_and_axis_monotonic():
+    """With frames dropped, every spectra_tof entry stays a real time (no NaN) and the per-bin values
+    are what tell the user frames were left out — this is the CIS's stated detection method. The
+    bin-edge tof axis stays strictly increasing."""
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
-    out = rebin_tof(data, [[0, 2], [3, 5]], reduction="mean")  # frame 2 dropped -> gap
+    out = rebin_tof(data, [[0, 2], [3, 5]], reduction="mean")  # frame 2 uncovered -> dropped
     st = out.coords[SPECTRA_TOF_COORD].values
-    np.testing.assert_allclose(st[0], 0.05)  # mean left edges of frames 0,1
-    assert np.isnan(st[1])  # gap bin has no representative time
-    np.testing.assert_allclose(st[2], 0.35)  # mean left edges of frames 3,4 = [0.3, 0.4]
+    assert not np.isnan(st).any()
+    np.testing.assert_allclose(st, [0.05, 0.35])  # mean left edges of frames 0-1 and 3-4
+    # contrast: covering frame 2 instead shifts bin 0's time, so the axis distinguishes the cases
+    covered = rebin_tof(data, [[0, 3], [3, 5]], reduction="mean")
+    np.testing.assert_allclose(covered.coords[SPECTRA_TOF_COORD].values, [0.1, 0.35])
     tof = out.coords["tof"].values
-    assert np.all(np.diff(tof) > 0)  # strictly increasing (monotonic) across the gap
-    np.testing.assert_allclose(tof, [0.0, 0.2, 0.3, 0.5])
+    assert np.all(np.diff(tof) > 0)  # strictly increasing (monotonic)
+    np.testing.assert_allclose(tof, [0.0, 0.3, 0.5])
 
 
 def test_spectra_tof_round_trips_through_hdf5():
     """The updated spectra (spectra_tof) is written to and read back from HDF5 output (#192)."""
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
-    out = rebin_tof(data, [[0, 2], [3, 5]], reduction="mean")  # frame 2 dropped -> gap
+    out = rebin_tof(data, [[0, 2], [3, 5]], reduction="mean")  # frame 2 uncovered -> dropped
     with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
         output_path = Path(f.name)
         write_hdf5(output_path, out)
         with h5py.File(output_path, "r") as hf:
             assert "/spectra_tof" in hf
             st = hf["/spectra_tof"][()]
-            np.testing.assert_allclose(st[0], 0.05)
-            assert np.isnan(st[1])
-            np.testing.assert_allclose(st[2], 0.35)
+            assert st.shape == (2,)  # one entry per requested range
+            np.testing.assert_allclose(st, [0.05, 0.35])
             assert hf["/spectra_tof"].attrs.get("units") == "s"
-            np.testing.assert_allclose(hf["/tof"][()], [0.0, 0.2, 0.3, 0.5])
+            np.testing.assert_allclose(hf["/tof"][()], [0.0, 0.3, 0.5])
 
 
 # --------------------------------------------------------------------------------------------
@@ -593,11 +605,10 @@ def test_rebin_tof_int_mean_uses_linear_bins():
 
 def test_rebin_tof_list_default_is_mean_with_gap():
     data = _stack([10, 20, 30, 40, 50], variances=[4, 4, 4, 4, 4])
-    out = rebin_tof(data, [[0, 2], [3, 5]])  # frame 2 dropped
-    assert out.sizes["tof"] == 3
+    out = rebin_tof(data, [[0, 2], [3, 5]])  # frame 2 uncovered -> dropped
+    assert out.sizes["tof"] == 2
     np.testing.assert_allclose(out.values[0, 0, 0], 15)  # mean(10, 20)
-    assert np.isnan(out.values[1]).all()  # gap
-    assert DROPPED_FRAMES_MASK in out.masks
+    assert not out.masks
     assert SPECTRA_TOF_COORD in out.coords
 
 

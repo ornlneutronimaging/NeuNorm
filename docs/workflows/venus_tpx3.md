@@ -942,7 +942,7 @@ In histogram mode, rebinning is constrained because events have already been bin
 | Sub-frame (arbitrary) TOF edges | No | Would require re-processing events; edges only on whole frames |
 | Heterogeneous (variable-width) bins | Yes (whole frames) | `rebin_by_tof=[[start, stop], ...]` groups whole frames into variable-width bins |
 | Mean / median reduction | Yes | `rebin_reduction` on the bin-list path (adjacent-bin `rebin_tof` sums only) |
-| Drop frames (gaps) | Yes | Interior gaps become a `dropped_frames`-masked, `NaN` missing-data bin |
+| Drop frames (gaps) | Yes | Frames covered by no range are dropped silently; one output image per range |
 | Spatial NxN binning | Yes | Sum counts over pixel groups |
 
 Flexible bin-list rebinning (`rebin_by_tof=[[start, stop], ...]`, half-open frame-index ranges) works

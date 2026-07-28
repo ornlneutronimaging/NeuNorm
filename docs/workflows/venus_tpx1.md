@@ -402,11 +402,13 @@ TPX1 histogram data has fixed TOF bins determined at acquisition. Rebinning opti
   gamma filter, so median uncertainties are consistent package-wide. Computing an exact small-sample
   median variance would require per-pixel resampling (bootstrap) — sound in theory, but not tractable
   for detector-scale stacks, so the approximation is the deliberate production choice.
-- **Interior gaps are allowed**: dropped frames (e.g. `[[0, 4], [5, 30]]` drops frame 4) become an
-  explicit bin flagged as missing data — a `dropped_frames` mask along `tof` plus `NaN` values — so
-  the output keeps a contiguous bin-edge `tof` axis. Frames before the first / after the last bin
-  are excluded. Skipping frames *within* a range is impossible by construction; overlapping,
-  out-of-bounds, or unordered lists are rejected with a clear error.
+- **You get exactly one image per requested range.** Frames covered by no range are **dropped
+  silently** — this is a deliberate design choice, not an oversight. Because ranges are half-open,
+  `[[0, 4], [5, 30]]` covers frames 0–3 and 5–29, so frame 4 is dropped; write `[[0, 5], [5, 30]]`
+  if you meant the two ranges to be contiguous. The same applies before the first and after the last
+  range. Nothing is masked or logged; check the per-bin `spectra_tof` values (below) to see which
+  frames each output image actually covers. Skipping frames *within* a range is impossible by
+  construction; overlapping, out-of-bounds, or unordered lists are rejected with a clear error.
 - Each output bin carries a `spectra_tof` coordinate = the mean of its member frames' times,
   written to the output file. `neunorm.tof.histogram_rebinner.linear_bin_list` / `log_bin_list`
   generate uniform / geometric frame-index bin lists to pass as `rebin_tof`'s `width`.

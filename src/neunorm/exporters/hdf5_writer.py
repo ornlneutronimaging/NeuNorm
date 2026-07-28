@@ -103,7 +103,7 @@ def write_hdf5(  # noqa: C901
         /uncertainty      # (θ, [TOF,] y, x) float32 (only if variances are present)
         /masks/dead       # (y, x) bool (only if the named dead-pixel mask exists)
         /masks/hot        # (y, x) bool (only if the named hot-pixel mask exists)
-        /masks/<name>     # any other mask under its own name (e.g. dropped_frames, a 1-D TOF mask)
+        /masks/<name>     # any other mask under its own name (e.g. a 1-D TOF mask)
         /tof              # (N+1,) float64 (only if the data carries a "tof" coordinate)
         /spectra_tof      # (N,) float64 per-bin mean time (only for bin-list / mean / median rebins)
         /metadata/        # processing provenance (only when metadata is supplied)
@@ -164,8 +164,8 @@ def write_hdf5(  # noqa: C901
                 logger.warning(f"Could not write coordinate '{coord}' to HDF5: {e}")
 
         # Write masks. The dead/hot masks keep their canonical /masks/dead and /masks/hot names;
-        # any other mask (e.g. the 1-D dropped_frames flag from a gapped bin-list rebin) is written
-        # under its own name so that missing-data provenance is not lost.
+        # any other mask (e.g. a 1-D per-bin TOF mask) is written under its own name so that
+        # mask provenance is not lost.
         if dead_pixel_mask in transmission.masks:
             f.create_dataset("masks/dead", data=transmission.masks[dead_pixel_mask].values)
         if hot_pixel_mask in transmission.masks:

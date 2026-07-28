@@ -157,16 +157,16 @@ def _pooled_regions_overlap(rois_bounds, ny: int, nx: int) -> bool:
 def _require_positive_finite_coefficient(coeff: sc.Variable, data: sc.DataArray, name: str, region_arg: str) -> None:
     """Raise unless every non-missing pooled-coefficient bin is strictly positive and finite.
 
-    Bins flagged by a coeff-aligned mask on ``data`` (e.g. the ``dropped_frames`` gaps of a bin-list
-    rebin, whose values are NaN by construction) are legitimately non-finite and are excluded from
-    the guard, so a gapped rebin can still be air/background corrected. ``sc.sum(...).data`` upstream
-    dropped the mask, so it is read back from ``data.masks`` here.
+    Bins flagged by a coeff-aligned mask on ``data`` (a masked spectral bin may hold ``NaN`` by
+    construction) are legitimately non-finite and are excluded from the guard, so masked data can
+    still be air/background corrected. ``sc.sum(...).data`` upstream dropped the mask, so it is read
+    back from ``data.masks`` here.
     """
     values = np.atleast_1d(coeff.values).astype(float)
     gap = np.zeros(values.shape, dtype=bool)
     for mask in data.masks.values():
-        # A missing-bin mask (e.g. the 1-D dropped_frames tof mask) may be lower-dimensional than
-        # the coefficient; broadcast any mask whose dims are a subset of coeff's and drop those bins.
+        # A missing-bin mask (e.g. a 1-D per-bin tof mask) may be lower-dimensional than the
+        # coefficient; broadcast any mask whose dims are a subset of coeff's and drop those bins.
         if set(mask.dims) <= set(coeff.dims):
             gap |= np.atleast_1d(sc.broadcast(mask, sizes=coeff.sizes).values)
     checked = values[~gap]
