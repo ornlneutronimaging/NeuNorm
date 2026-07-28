@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -219,3 +220,82 @@ def test_write_tiff_stack_unsupported_metadata_type():
 
     with pytest.raises(ValueError):
         write_tiff_stack("test.tiff", transmission, metadata=metadata)
+
+
+def _tof_stack(n=3, ny=4, nx=4):
+    """A (t, y, x) transmission stack with a bin-edge t axis and a per-bin spectra_tof point coord."""
+    values = np.arange(n * ny * nx, dtype=np.float64).reshape((n, ny, nx))
+    return sc.DataArray(
+        data=sc.array(dims=["t", "y", "x"], values=values, unit="dimensionless", variances=np.ones((n, ny, nx))),
+        coords={
+            "t": sc.array(dims=["t"], values=np.arange(n + 1, dtype=float), unit="s"),  # bin edges (N+1)
+            "spectra_tof": sc.array(dims=["t"], values=np.arange(n, dtype=float) + 0.5, unit="s"),  # points (N)
+            "y": sc.arange("y", ny),
+            "x": sc.arange("x", nx),
+        },
+    )
+
+
+def test_write_tiff_stack_one_file_per_image():
+    """one_file_per_image=True writes one scitiff per spectral image (one normalization per file),
+    zero-padded so the files sort in spectral order, each carrying its own slice's data."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    stack = _tof_stack(n=3)
+    with tempfile.TemporaryDirectory() as d:
+        output_path = Path(d) / "norm.tiff"
+        written = write_tiff_stack(output_path, stack, one_file_per_image=True)
+
+        assert [p.name for p in written] == ["norm_00000.tiff", "norm_00001.tiff", "norm_00002.tiff"]
+        assert sorted(p.name for p in Path(d).iterdir()) == [p.name for p in written]  # sort == spectral order
+        assert not output_path.exists()  # the template itself is not written
+
+        for index, path in enumerate(written):
+            image = load_scitiff(path)["image"]
+            # each file is a single (y, x) image holding that bin's values
+            assert set(image.dims) >= {"y", "x"}
+            np.testing.assert_allclose(
+                np.squeeze(sc.values(image).values)[: stack.sizes["y"]],
+                stack.values[index],
+                rtol=1e-6,
+            )
+
+
+def test_write_tiff_stack_one_file_per_image_keeps_per_bin_coords():
+    """Each per-image file records which bin it came from: that bin's t bounds and spectra_tof."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    stack = _tof_stack(n=3)
+    with tempfile.TemporaryDirectory() as d:
+        written = write_tiff_stack(Path(d) / "norm.tiff", stack, one_file_per_image=True)
+        for index, path in enumerate(written):
+            image = load_scitiff(path)["image"]
+            np.testing.assert_allclose(image.coords["spectra_tof"].values, index + 0.5)
+            np.testing.assert_allclose(image.coords["t"].values, [index, index + 1])  # this bin's bounds
+
+
+def test_write_tiff_stack_default_is_single_stack():
+    """Default (one_file_per_image=False) is unchanged: a single multi-page file, no per-image files."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    stack = _tof_stack(n=3)
+    with tempfile.TemporaryDirectory() as d:
+        output_path = Path(d) / "norm.tiff"
+        written = write_tiff_stack(output_path, stack)
+        assert written == [output_path]
+        assert [p.name for p in Path(d).iterdir()] == ["norm.tiff"]
+        assert load_scitiff(output_path)["image"].sizes["t"] == 3  # whole stack in one file
+
+
+def test_write_tiff_stack_one_file_per_image_on_2d_writes_single_file():
+    """A plain (y, x) radiograph has no spectral dim — it is already one image, so it is written
+    as a single file rather than being split."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    values = np.arange(16, dtype=np.float64).reshape((4, 4))
+    radiograph = sc.DataArray(data=sc.array(dims=["y", "x"], values=values, unit="dimensionless"))
+    with tempfile.TemporaryDirectory() as d:
+        output_path = Path(d) / "radio.tiff"
+        written = write_tiff_stack(output_path, radiograph, one_file_per_image=True)
+        assert written == [output_path]
+        assert output_path.exists()

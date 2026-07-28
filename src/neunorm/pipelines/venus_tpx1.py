@@ -63,6 +63,7 @@ def run_venus_tpx1_pipeline(  # noqa: C901
     rebin_reduction: Optional[Literal["mean", "sum", "median"]] = None,
     rebin_by_spatial: Optional[int | tuple[int, int]] = None,
     flight_path: sc.Variable = sc.scalar(VENUS_FLIGHT_PATH_M, unit="m"),
+    tiff_one_file_per_image: bool = False,
 ) -> sc.DataArray:
     """Execute VENUS TPX1 normalization pipeline.
 
@@ -119,6 +120,12 @@ def run_venus_tpx1_pipeline(  # noqa: C901
     flight_path : sc.Variable
         Source-to-detector flight path used for TOF→energy/wavelength coordinate labeling.
         Defaults to ``VENUS_FLIGHT_PATH_M`` (25 m); set it per detector/sample position.
+
+    tiff_one_file_per_image : bool
+        TIFF output only. When ``False`` (default) the stack is written as one multi-page scitiff
+        file. When ``True`` each spectral image is written as its own scitiff file
+        (``<stem>_00000.tiff``, ``<stem>_00001.tiff``, …, one normalization per file), which suits
+        tools such as ImageJ that expect individual images. Ignored for HDF5 output.
 
     Notes
     -----
@@ -313,7 +320,13 @@ def run_venus_tpx1_pipeline(  # noqa: C901
             # add combined mask back in with name "scitiff-mask"
             transmission.masks["scitiff-mask"] = sc.array(dims=transmission.dims, values=combined_mask, dtype=bool)
 
-        write_tiff_stack(output_path, transmission, metadata=metadata, daqmetadata=daqmetadata)
+        write_tiff_stack(
+            output_path,
+            transmission,
+            metadata=metadata,
+            daqmetadata=daqmetadata,
+            one_file_per_image=tiff_one_file_per_image,
+        )
     else:
         raise ValueError(f"Unsupported output file format: {output_path.suffix}")
 

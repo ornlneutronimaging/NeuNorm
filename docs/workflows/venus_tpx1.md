@@ -409,6 +409,11 @@ TPX1 histogram data has fixed TOF bins determined at acquisition. Rebinning opti
   range. Nothing is masked or logged; check the per-bin `spectra_tof` values (below) to see which
   frames each output image actually covers. Skipping frames *within* a range is impossible by
   construction; overlapping, out-of-bounds, or unordered lists are rejected with a clear error.
+- **TIFF output shape**: by default the whole stack is written as one multi-page scitiff file.
+  Pass `tiff_one_file_per_image=True` to write **one scitiff per image** instead
+  (`<stem>_00000.tiff`, `<stem>_00001.tiff`, … in TOF order — one normalization per file), which
+  suits ImageJ workflows that open individual images. Each file carries its own bin's `tof` bounds
+  and `spectra_tof` time. HDF5 output is unaffected.
 - Each output bin carries a `spectra_tof` coordinate = the mean of its member frames' times,
   written to the output file. `neunorm.tof.histogram_rebinner.linear_bin_list` / `log_bin_list`
   generate uniform / geometric frame-index bin lists to pass as `rebin_tof`'s `width`.

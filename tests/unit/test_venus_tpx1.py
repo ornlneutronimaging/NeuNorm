@@ -675,6 +675,43 @@ class TestVenusTPX1Pipeline:
             np.testing.assert_allclose(transmission.values, 1.0, rtol=1e-5)
             assert not np.isnan(transmission.values).any()
 
+    def test_venus_tpx1_pipeline_tiff_one_file_per_image(self):
+        """tiff_one_file_per_image=True writes one scitiff per TOF image (one normalization per
+        file) for ImageJ-style workflows, instead of a single multi-page stack. CIS request."""
+        with tempfile.TemporaryDirectory() as d:
+            output_path = Path(d) / "norm.tiff"
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 2], [2, 5]],  # 2 output images
+                tiff_one_file_per_image=True,
+            )
+            assert transmission.shape == (2, 32, 32)
+            # one file per normalization, zero-padded so they sort in TOF order
+            written = sorted(p.name for p in Path(d).iterdir())
+            assert written == ["norm_00000.tiff", "norm_00001.tiff"]
+            assert not output_path.exists()  # no multi-page stack written
+            # each file holds that bin's normalization
+            first = load_scitiff(Path(d) / "norm_00000.tiff")["image"]
+            np.testing.assert_allclose(np.squeeze(sc.values(first).values)[:32], 81.5 / 99.5 * 2, rtol=1e-4)
+
+    def test_venus_tpx1_pipeline_tiff_default_is_single_stack(self):
+        """Default TIFF output is unchanged: a single multi-page file, not per-image files."""
+        with tempfile.TemporaryDirectory() as d:
+            output_path = Path(d) / "norm.tiff"
+            run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 2], [2, 5]],
+            )
+            assert [p.name for p in Path(d).iterdir()] == ["norm.tiff"]
+
     def test_venus_tpx1_pipeline_invalid_output_format(self):
         """Check error for unsupported output file format."""
         with tempfile.NamedTemporaryFile(suffix=".bmp", delete=True) as f:

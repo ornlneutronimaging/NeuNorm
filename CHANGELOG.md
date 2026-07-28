@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-image TIFF export** — `write_tiff_stack(..., one_file_per_image=True)`, exposed on the
+  VENUS TOF pipelines as `tiff_one_file_per_image=True`, writes **one scitiff file per spectral
+  image** (one normalization per file) named `<stem>_00000.tiff`, `<stem>_00001.tiff`, … in spectral
+  order, instead of a single multi-page stack. Requested by the instrument scientist for workflows
+  built around opening individual images in ImageJ. Each file keeps its own slice's coordinates —
+  that bin's `tof` bounds and `spectra_tof` time — plus the same metadata as the stack. The default
+  is unchanged (single multi-page scitiff), so existing workflows are unaffected.
 - **Flexible TOF rebinning** — variable-width, list-defined bins with a choice of reduction
   ([#192](https://github.com/ornlneutronimaging/NeuNorm/issues/192)). The VENUS TOF pipelines
   (`venus_tpx1`, `venus_tpx3_histogram`, `venus_tpx3_event`) now accept an explicit
