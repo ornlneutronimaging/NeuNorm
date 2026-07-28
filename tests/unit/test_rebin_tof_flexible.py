@@ -683,14 +683,20 @@ def test_rebin_tof_accepts_tuple_bin_list():
 
 
 def test_gapped_edges_documented_widening_vs_true_member_spans():
-    """Pin the KNOWN, documented limitation of a single N+1 edge array over a non-contiguous bin list,
+    """Pin the KNOWN, DOCUMENTED limitation of a single N+1 edge array over a non-contiguous bin list,
     against an INDEPENDENT oracle (each range's true member span), not the implementation's formula.
 
-    N ranges over a non-contiguous frame set cannot be represented exactly by N+1 shared edges, so
-    one boundary must absorb the omitted span. NeuNorm keeps every bin's LOWER edge exact (the VENUS
-    spectra left-edge convention) and absorbs the omission into the preceding bin's closing edge.
-    This test states both numbers explicitly so the discrepancy is visible rather than hidden behind
-    an oracle that mirrors the code.
+    scipp gives N images N+1 SHARED edges, so one number is both "bin i ends" and "bin i+1 starts".
+    Once frames are dropped those are different times and the format cannot hold both: NeuNorm keeps
+    every bin's LEADING edge exact (the VENUS spectra convention) and absorbs the omission into the
+    preceding bin's closing edge. This test states the exact leading edges AND the inflated implied
+    widths explicitly, so the discrepancy is visible in the suite rather than hidden behind an oracle
+    that mirrors the code.
+
+    This behavior is intentional and requested (arbitrary ranges with silent frame dropping); the
+    module docstring and the TPX1 workflow guide record why such output is not a continuous spectrum
+    and should not be used for Bragg-edge/resonance analysis. If this test fails, the axis convention
+    changed — reconcile it with that documentation before updating the numbers.
     """
     data = _stack([10, 20, 30, 40, 50, 60], variances=[1] * 6)  # frame left edges 0.0 .. 0.5, close 0.6
     ranges = [(0, 1), (2, 3), (5, 6)]  # frames 1 and 3-4 uncovered

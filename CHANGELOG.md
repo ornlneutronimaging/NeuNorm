@@ -33,7 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requested range**: frames covered by no range are **dropped silently** — a deliberate choice made
   with the instrument scientist, wherever the omission falls (between ranges, before the first, or
   after the last). No extra bin is inserted, nothing is masked, and nothing is logged; the per-bin
-  `spectra_tof` axis is the record of which frames each image covers. Each rebinned bin carries a
+  `spectra_tof` axis is the record of which frames each image covers. **Caveat, documented in the API
+  and workflow guides:** dropping frames leaves the output images covering disjoint time bands, which
+  a scipp `N+1` bin-edge axis cannot express exactly — leading edges stay exact, but the omitted span
+  is absorbed into the closing edge of the preceding bin, widening that bin's implied `tof` (and
+  derived `wavelength`/`energy`) span. Such output is not a continuous spectrum and should not be used
+  for Bragg-edge or resonance analysis; prefer contiguous ranges there. Pixel values, variances and
+  `spectra_tof` are exact regardless. Each rebinned bin carries a
   `spectra_tof` point coordinate (the mean of its member frames' times), persisted to the HDF5/TIFF
   output. The API lives in `neunorm.tof.histogram_rebinner`: the existing `rebin_tof` gains a
   `reduction` argument and accepts an explicit `[[start, stop], ...]` bin list as its `width` (its

@@ -22,6 +22,38 @@ bin-edge ``tof`` axis, so the spectra can be updated on export.
 transforms handle it specially: :func:`neunorm.tof.binning.get_energy_histogram` reverses it (and
 any ``tof``-dependent mask) together with the data, and a second sum-mode :func:`rebin_tof` drops it
 — its per-bin mean time cannot be recomputed from combined bins without the original frame times.
+
+.. warning::
+
+   **Dropping frames produces an axis that cannot be fully described, and output that is not a
+   continuous spectrum. Prefer contiguous bin lists.**
+
+   This is a requested capability (the instrument scientist asked for arbitrary ranges with
+   uncovered frames dropped silently), and it is delivered as specified — but the consequences below
+   are inherent to it, not defects to be fixed, and they are the reason to avoid it where the data
+   will be analysed as a spectrum.
+
+   *Why the axis cannot be exact.* scipp represents a binned dimension with ``N + 1`` bin edges for
+   ``N`` images: neighbouring images **share** a boundary number, which is at once "image *i* ends"
+   and "image *i+1* begins". That identity only holds if the images tile time continuously. Drop a
+   frame and it no longer does — the true end of one image and the true start of the next are
+   different times — but the format has only one number for both. NeuNorm keeps the **leading**
+   edges exact (the VENUS spectra convention), so the omitted span is absorbed into the closing edge
+   of the bin before it: that bin's implied width, and the ``wavelength``/``energy`` edges the
+   pipelines derive from it, overstate what the image actually covers. Example: 0.1 s frames with
+   ranges ``[[0, 1], [3, 5]]`` label image 0 as spanning 0.1–0.4 s when it holds only frame 0
+   (0.1–0.2 s), a ~67 % error in its reported wavelength band centre.
+
+   *Why the result is not a physical spectrum.* Removing interior frames leaves the remaining images
+   covering disjoint, non-adjacent time bands. Anything that treats the ``tof``/``wavelength``/
+   ``energy`` axis as a continuous, gap-free spectrum — Bragg-edge fitting, resonance analysis,
+   integrating over a wavelength range — is then working with an axis whose bands do not abut and one
+   of whose widths is overstated. Use contiguous ranges for that kind of analysis, and reserve frame
+   dropping for excluding known-bad frames from data you inspect image by image.
+
+   *What is always exact*, regardless of dropping: every pixel value and variance; every bin's
+   leading edge; and ``spectra_tof``, the per-image representative time — which is the coordinate to
+   read to see which frames each output image actually contains.
 """
 
 from typing import Literal, Optional, Sequence, Union
@@ -250,8 +282,16 @@ def reduce_tof_bins(
     -------
     scipp.DataArray
         Stack with ``tof_dim`` reduced to ``len(bins)`` frames, propagated variances, a rebuilt
-        bin-edge ``tof_dim`` coordinate, and a ``spectra_tof`` point coordinate giving each bin's
-        representative time (the mean of its member frames' left-edge times).
+        bin-edge ``tof_dim`` coordinate whose **leading edges are exact**, and a ``spectra_tof``
+        point coordinate giving each bin's representative time (the mean of its member frames'
+        left-edge times).
+
+        If the ranges leave frames uncovered, the returned ``tof_dim`` axis **cannot** describe the
+        result exactly: with ``N + 1`` shared edges for ``N`` bins, the omitted span is absorbed into
+        the closing edge of the bin preceding it, so that bin's implied width — and any
+        ``wavelength``/``energy`` axis derived from these edges — overstates its true coverage. Pixel
+        values, variances, the leading edges and ``spectra_tof`` stay exact. See the module-level
+        warning: this is inherent to dropping frames, and such output is not a continuous spectrum.
 
     Raises
     ------
@@ -282,13 +322,17 @@ def reduce_tof_bins(
 
     result = sc.concat(reduced_frames, tof_dim)
 
-    # Rebuild the bin-edge tof coordinate: every bin's LOWER edge, closed by the last bin's upper
-    # edge — exactly len(bins)+1 edges. Taking the lower edges keeps each bin's START time exact,
-    # which is the convention the VENUS spectra files use (they record left edges). For contiguous
-    # bins this is identical to using the upper edges. When frames were skipped between two bins,
-    # the omitted span cannot be represented in a single contiguous bin-edge array, so it is
-    # absorbed into the preceding bin's closing edge; the per-bin ``spectra_tof`` below stays exact
-    # and is what reveals the omission.
+    # Rebuild the bin-edge tof coordinate: every bin's LOWER (leading) edge, closed by the last
+    # bin's upper edge — exactly len(bins)+1 edges. Leading edges are what the VENUS spectra files
+    # record, so every bin's START time is exact and matches that convention.
+    #
+    # KNOWN LIMITATION when frames are dropped (see this module's docstring): scipp models a binned
+    # dimension with N+1 shared edges, where one number is simultaneously "bin i ends" and
+    # "bin i+1 starts". If frames between two bins were dropped those are two DIFFERENT times, so
+    # the format cannot express both: the omitted span is absorbed into the preceding bin's closing
+    # edge, making that one bin's implied width too wide. Values, variances and the per-bin
+    # `spectra_tof` remain exact; only that boundary (and anything derived from it, e.g. the
+    # wavelength/energy edges the pipelines compute) overstates the bin's coverage.
     edge_indices = [start for start, _ in ranges] + [ranges[-1][1]]
     result.coords[tof_dim] = sc.concat([tof_edges[tof_dim, i] for i in edge_indices], tof_dim)
 

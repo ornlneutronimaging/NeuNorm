@@ -942,7 +942,7 @@ In histogram mode, rebinning is constrained because events have already been bin
 | Sub-frame (arbitrary) TOF edges | No | Would require re-processing events; edges only on whole frames |
 | Heterogeneous (variable-width) bins | Yes (whole frames) | `rebin_by_tof=[[start, stop], ...]` groups whole frames into variable-width bins |
 | Mean / median reduction | Yes | `rebin_reduction` on the bin-list path (adjacent-bin `rebin_tof` sums only) |
-| Drop frames (gaps) | Yes | Frames covered by no range are dropped silently; one output image per range |
+| Drop frames (gaps) | Yes (avoid for spectral analysis) | Frames covered by no range are dropped silently; one output image per range. The `N+1` edge axis cannot describe the omission exactly (the bin before it is widened) and the images no longer cover adjacent bands — see the TPX1 guide's warning |
 | Spatial NxN binning | Yes | Sum counts over pixel groups |
 
 Flexible bin-list rebinning (`rebin_by_tof=[[start, stop], ...]`, half-open frame-index ranges) works

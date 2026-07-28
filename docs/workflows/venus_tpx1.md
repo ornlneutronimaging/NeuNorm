@@ -403,12 +403,34 @@ TPX1 histogram data has fixed TOF bins determined at acquisition. Rebinning opti
   median variance would require per-pixel resampling (bootstrap) — sound in theory, but not tractable
   for detector-scale stacks, so the approximation is the deliberate production choice.
 - **You get exactly one image per requested range.** Frames covered by no range are **dropped
-  silently** — this is a deliberate design choice, not an oversight. Because ranges are half-open,
-  `[[0, 4], [5, 30]]` covers frames 0–3 and 5–29, so frame 4 is dropped; write `[[0, 5], [5, 30]]`
-  if you meant the two ranges to be contiguous. The same applies before the first and after the last
-  range. Nothing is masked or logged; check the per-bin `spectra_tof` values (below) to see which
-  frames each output image actually covers. Skipping frames *within* a range is impossible by
-  construction; overlapping, out-of-bounds, or unordered lists are rejected with a clear error.
+  silently** — this is a deliberate, requested design choice, not an oversight. Because ranges are
+  half-open, `[[0, 4], [5, 30]]` covers frames 0–3 and 5–29, so frame 4 is dropped; write
+  `[[0, 5], [5, 30]]` if you meant the two ranges to be contiguous. The same applies before the first
+  and after the last range. Nothing is masked or logged; check the per-bin `spectra_tof` values
+  (below) to see which frames each output image actually covers. Skipping frames *within* a range is
+  impossible by construction; overlapping, out-of-bounds, or unordered lists are rejected with a
+  clear error.
+
+> ⚠️ **Dropping frames is supported, but the result is not a physical spectrum — prefer contiguous
+> ranges.** This is delivered as requested; the two consequences below are inherent to it, not bugs.
+>
+> **1. The time axis cannot be exact.** scipp stores a binned axis as `N + 1` edges for `N` images,
+> so neighbouring images *share* a boundary number that means both "image *i* ends" and
+> "image *i+1* begins". That is only true if the images tile time continuously. Once a frame is
+> dropped those are two different times and the format has one number for both. NeuNorm keeps the
+> **leading** edges exact (matching the `*_Spectra.txt` convention), so the omitted span is absorbed
+> into the closing edge of the bin before it. With 0.1 s frames, `[[0, 1], [3, 5]]` labels image 0 as
+> spanning 0.1–0.4 s although it contains only frame 0 (0.1–0.2 s) — about a **67 % error in that
+> image's reported wavelength band centre**, since `wavelength`/`energy` are derived from these edges.
+>
+> **2. The output images no longer cover adjacent bands.** Bragg-edge fitting, resonance analysis and
+> integrating over a wavelength range all assume a continuous, gap-free axis. After dropping frames
+> the bands do not abut and one width is overstated, so those analyses are no longer valid on that
+> axis. Use frame dropping to exclude known-bad frames from data you inspect image by image; use
+> contiguous ranges when the stack will be analysed as a spectrum.
+>
+> **Always exact, with or without dropping:** every pixel value and variance, every bin's leading
+> edge, and `spectra_tof` — the per-image time that tells you what each image really contains.
 - **TIFF output shape**: by default the whole stack is written as one multi-page scitiff file.
   Pass `tiff_one_file_per_image=True` to write **one scitiff per image** instead
   (`<stem>_00000.tiff`, `<stem>_00001.tiff`, … in TOF order — one normalization per file), which

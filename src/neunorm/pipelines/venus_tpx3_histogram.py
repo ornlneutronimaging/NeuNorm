@@ -89,9 +89,14 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
     rebin_by_tof : bool, int, or list/tuple of [start, stop], optional
         TOF rebinning. ``True`` uses the statistics-based recommended factor; an ``int`` is a uniform
         factor (frames per bin); a ``[[start, stop], ...]`` list defines explicit half-open
-        frame-index bins (variable width). One output image per range; frames covered by no range
-        are dropped silently (a deliberate choice — the per-bin ``spectra_tof`` axis records what
-        each image contains).
+        frame-index bins (variable width). One output image per range.
+        Frames covered by no range are dropped silently (a deliberate, requested behavior). Note
+        that dropping frames leaves the output images covering disjoint time bands, which the
+        ``N+1`` bin-edge ``tof`` axis cannot describe exactly — the bin before a dropped span has its
+        closing edge (and derived ``wavelength``/``energy`` edge) widened by the omitted span, and the
+        result is not a continuous spectrum. Prefer contiguous ranges when the data will be analysed
+        as a spectrum; see :mod:`neunorm.tof.histogram_rebinner` for details. Values, variances and
+        the per-bin ``spectra_tof`` are exact either way.
     rebin_reduction : {"mean", "sum", "median"}, optional
         How frames combine within each TOF bin. ``None`` (default) preserves existing behavior — a
         uniform factor **sums**, a bin list takes the **mean** — while an explicit value applies to
