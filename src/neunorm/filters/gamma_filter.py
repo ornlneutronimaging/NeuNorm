@@ -122,3 +122,72 @@ def apply_gamma_filter(
     )
 
     return out
+
+
+def replace_pixels_with_frame_local_median(data: sc.DataArray, pixel_mask: sc.Variable, kernel_size: int = 3) -> int:
+    """Replace flagged pixels of every spectral frame with the frame's local spatial median.
+
+    Companion of :func:`apply_gamma_filter` for **sparse TOF stacks** (e.g. VENUS TPX1
+    per-bin histograms, median counts per pixel per bin ≈ 0), where a frame-by-frame
+    outlier filter cannot work: the local median of a nearly empty neighborhood is 0,
+    so every real event would be flagged. Instead the gamma-contaminated pixels are
+    detected once on the spectrally *integrated* counts (see
+    :func:`neunorm.tof.pixel_detector.detect_hot_pixels`) and this function replaces
+    their values — in each spectral frame — with the median of the ``kernel_size ×
+    kernel_size`` spatial neighborhood of that frame. Variances, when present, get the
+    neighborhood median of the variances the same way.
+
+    The replacement happens **in place** on ``data``.
+
+    Parameters
+    ----------
+    data : sc.DataArray
+        Stack with one spectral dimension (``tof``/``energy``/``wavelength``/``N_image``)
+        and two spatial dimensions.
+    pixel_mask : sc.Variable
+        Boolean mask over the spatial dimensions — True = replace this pixel.
+    kernel_size : int
+        Odd size (>= 3) of the spatial neighborhood used for the median.
+
+    Returns
+    -------
+    int
+        Number of pixels replaced.
+    """
+    if kernel_size < 3 or kernel_size % 2 == 0:
+        raise ValueError("kernel_size must be an odd integer >= 3.")
+
+    spatial_dims = list(pixel_mask.dims)
+    spectral_dims = [dim for dim in data.dims if dim not in spatial_dims]
+    if len(spectral_dims) != 1:
+        raise ValueError(f"Expected exactly one spectral dimension, got {spectral_dims} (data dims {data.dims}).")
+
+    # Views with the spectral axis first and the spatial axes in the mask's order:
+    # np.transpose returns views, so writing through them updates `data` in place.
+    order = [data.dims.index(spectral_dims[0])] + [data.dims.index(dim) for dim in spatial_dims]
+    values = np.transpose(data.values, order)
+    variances = np.transpose(data.variances, order) if data.variances is not None else None
+    mask = pixel_mask.values
+
+    half = kernel_size // 2
+    n_rows, n_cols = mask.shape
+    flagged = np.argwhere(mask)
+    for row, col in flagged:
+        row_slice = slice(max(0, row - half), min(n_rows, row + half + 1))
+        col_slice = slice(max(0, col - half), min(n_cols, col + half + 1))
+        # Exclude the flagged pixels themselves from the neighborhood so adjacent
+        # gamma pixels do not feed each other's replacement value.
+        good = ~mask[row_slice, col_slice]
+        if not good.any():
+            values[:, row, col] = 0.0
+            if variances is not None:
+                variances[:, row, col] = 0.0
+            continue
+        neighborhood = values[:, row_slice, col_slice][:, good]
+        values[:, row, col] = np.median(neighborhood, axis=1)
+        if variances is not None:
+            neighborhood_var = variances[:, row_slice, col_slice][:, good]
+            variances[:, row, col] = np.median(neighborhood_var, axis=1)
+
+    logger.info("Replaced {} flagged pixel(s) with the frame-local median (kernel {})", len(flagged), kernel_size)
+    return int(len(flagged))

@@ -20,6 +20,7 @@ from neunorm.data_models.roi import (
 )
 from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
+from neunorm.filters.gamma_filter import replace_pixels_with_frame_local_median
 from neunorm.loaders.metadata_loader import load_metadata
 from neunorm.loaders.tiff_loader import load_tiff_stack
 from neunorm.processing.air_region_corrector import apply_air_region_correction
@@ -29,7 +30,7 @@ from neunorm.processing.run_combiner import combine_runs
 from neunorm.processing.spatial_rebinner import rebin_spatial
 from neunorm.tof.coordinate_converter import convert_tof_to_energy, convert_tof_to_wavelength
 from neunorm.tof.histogram_rebinner import rebin_tof
-from neunorm.tof.pixel_detector import detect_dead_pixels
+from neunorm.tof.pixel_detector import detect_dead_pixels, detect_hot_pixels
 from neunorm.tof.statistics_analyzer import analyze_statistics
 from neunorm.utils.constants import VENUS_FLIGHT_PATH_M
 
@@ -62,6 +63,8 @@ def run_venus_tpx1_pipeline(  # noqa: C901
     rebin_by_tof: Optional[bool | int | list | tuple] = False,
     rebin_reduction: Optional[Literal["mean", "sum", "median"]] = None,
     rebin_by_spatial: Optional[int | tuple[int, int]] = None,
+    gamma_filter: bool = False,
+    gamma_filter_sigma: float = 5.0,
     flight_path: sc.Variable = sc.scalar(VENUS_FLIGHT_PATH_M, unit="m"),
     tiff_one_file_per_image: bool = False,
 ) -> sc.DataArray:
@@ -73,6 +76,7 @@ def run_venus_tpx1_pipeline(  # noqa: C901
     - Load metadata (including proton charge and detector time offset)
     - Run combine
     - ROI clip (optional)
+    - Gamma filtering (optional)
     - Dead pixel detection
     - Statistics analysis + rebinning recommendation (only when ``rebin_by_tof=True``)
     - Rebinning (TOF and/or spatial, optional)
@@ -122,6 +126,18 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         Whether to apply spatial rebinning. If an integer is provided, it is used as the
         rebinning factor for both spatial axes. A ``(x, y)`` tuple selects per-axis
         rebinning factors (x and y). If None, no spatial rebinning is applied.
+    gamma_filter : bool
+        Remove gamma-contaminated pixels. TPX1 per-bin histograms are too sparse for a
+        frame-by-frame outlier filter, so the contaminated pixels are detected on the
+        TOF-integrated counts of the sample and of the OB (MAD threshold, see
+        :func:`neunorm.tof.pixel_detector.detect_hot_pixels`) and their values are
+        replaced, in every TOF frame, by the frame's local (3×3) spatial median
+        (:func:`neunorm.filters.gamma_filter.replace_pixels_with_frame_local_median`).
+        Applied after the optional ROI crop, before dead-pixel detection and
+        normalization, so every downstream product is clean.
+    gamma_filter_sigma : float
+        MAD threshold (in equivalent sigmas) of the gamma-pixel detection (default 5.0;
+        lower = more aggressive).
     flight_path : sc.Variable
         Source-to-detector flight path used for TOF→energy/wavelength coordinate labeling.
         Defaults to ``VENUS_FLIGHT_PATH_M`` (25 m); set it per detector/sample position.
@@ -225,6 +241,21 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         sample = apply_roi(sample, roi)
         ob = apply_roi(ob, roi)
 
+    # Gamma filtering (optional): detect gamma-contaminated pixels on the TOF-integrated
+    # counts of each side (a per-frame filter cannot work on sparse TPX bins) and replace
+    # their per-frame values with the frame's local spatial median.
+    gamma_filter_counts = {}
+    if gamma_filter:
+        for side_name, side in (("sample", sample), ("ob", ob)):
+            hot = detect_hot_pixels(side, sigma=gamma_filter_sigma)
+            n_hot = int(hot.values.sum())
+            logger.info(
+                f"Gamma filter ({side_name}): {n_hot} pixel(s) above the MAD threshold (sigma={gamma_filter_sigma})"
+            )
+            if n_hot:
+                replace_pixels_with_frame_local_median(side, hot)
+            gamma_filter_counts[side_name] = n_hot
+
     # Dead pixel detection
     sample.masks["dead_pixels"] = detect_dead_pixels(ob)
 
@@ -290,6 +321,13 @@ def run_venus_tpx1_pipeline(  # noqa: C901
 
     if air_roi is not None:
         metadata["air_roi"] = region_provenance(air_roi)
+
+    if gamma_filter:
+        metadata["gamma_filter"] = {
+            "sigma": gamma_filter_sigma,
+            "n_pixels_replaced_sample": gamma_filter_counts.get("sample", 0),
+            "n_pixels_replaced_ob": gamma_filter_counts.get("ob", 0),
+        }
 
     output_description = str(output_path)
     if output_path.suffix.lower() in (".hdf5", ".h5"):
