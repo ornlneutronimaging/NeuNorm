@@ -431,11 +431,15 @@ TPX1 histogram data has fixed TOF bins determined at acquisition. Rebinning opti
 >
 > **Always exact, with or without dropping:** every pixel value and variance, every bin's leading
 > edge, and `spectra_tof` — the per-image time that tells you what each image really contains.
-- **TIFF output shape**: by default the whole stack is written as one multi-page scitiff file.
-  Pass `tiff_one_file_per_image=True` to write **one scitiff per image** instead
-  (`<stem>_00000.tiff`, `<stem>_00001.tiff`, … in TOF order — one normalization per file), which
-  suits ImageJ workflows that open individual images. Each file carries its own bin's `tof` bounds
-  and `spectra_tof` time. HDF5 output is unaffected.
+- **TIFF output shape**: by default the whole stack is written as one multi-page scitiff file whose
+  channels are intensities, standard deviations and the mask. Pass `tiff_one_file_per_image=True` to
+  write **one scitiff per image** instead (`<stem>_00000.tiff`, `<stem>_00001.tiff`, … in TOF order —
+  one normalization per file), which suits ImageJ workflows that open individual images. Those files
+  are **single-page**: they contain only the normalization, so a viewer shows exactly as many images
+  as you have TOF bins rather than three times that many. The trade-off is that scitiff stores
+  variances only in the stdev channel, so a per-image file carries **no uncertainty** — take that from
+  the HDF5 output. Each file still carries its own bin's `tof` bounds, `spectra_tof` time, masks and
+  metadata. HDF5 output is unaffected.
 - Each output bin carries a `spectra_tof` coordinate = the mean of its member frames' times,
   written to the output file. `neunorm.tof.histogram_rebinner.linear_bin_list` / `log_bin_list`
   generate uniform / geometric frame-index bin lists to pass as `rebin_tof`'s `width`.

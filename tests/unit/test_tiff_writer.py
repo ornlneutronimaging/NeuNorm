@@ -303,9 +303,9 @@ def test_write_tiff_stack_one_file_per_image_on_2d_writes_single_file():
         assert output_path.exists()
 
 
-def test_write_tiff_stack_one_file_per_image_preserves_variances_mask_and_metadata():
-    """Each per-image file must carry the SAME payload the stack does: that slice's stdevs, its mask,
-    and the metadata/DAQ tags — verified on disk, not just assumed (review finding)."""
+def test_write_tiff_stack_one_file_per_image_is_single_page_by_default():
+    """One normalization per file means ONE page per file: no stdev/mask channels, so a viewer does not
+    report 3x the number of images (CIS report). Mask + metadata still travel."""
     from neunorm.exporters.tiff_writer import write_tiff_stack
 
     stack = _tof_stack(n=3)
@@ -323,19 +323,67 @@ def test_write_tiff_stack_one_file_per_image_preserves_variances_mask_and_metada
             one_file_per_image=True,
         )
         assert len(written) == 3
+        import tifffile
+
         for index, path in enumerate(written):
+            with tifffile.TiffFile(path) as tf:
+                assert len(tf.pages) == 1, f"{path.name} has {len(tf.pages)} pages, expected 1"
+                np.testing.assert_allclose(tf.asarray(), stack.values[index], rtol=1e-6)
             dg = load_scitiff(path)
             image = dg["image"]
-            # stdevs for THIS slice survive the round trip
-            stdevs = sc.stddevs(image).values
-            frame_stdevs = stdevs[0] if stdevs.ndim == 3 else stdevs
-            np.testing.assert_allclose(frame_stdevs, np.sqrt(stack.variances[index]), rtol=1e-6)
-            # the mask travels with every file (scitiff round-trips it as "scitiff-mask")
-            assert "scitiff-mask" in image.masks
-            np.testing.assert_array_equal(image.masks["scitiff-mask"].values, mask)
-            # metadata/DAQ tags travel with every file
+            assert image.dims == ("y", "x")
+            # the mask still travels with every file
+            assert "dead" in image.masks
+            np.testing.assert_array_equal(image.masks["dead"].values, mask)
+            # metadata/DAQ tags still travel with every file
             assert json.loads(dg["extra"]["sample_paths"]) == ["a.tiff", "b.tiff"]
             assert dg["extra"]["roi_applied"] == "false"
+
+
+def test_write_tiff_stack_one_file_per_image_can_opt_into_stdev_channels():
+    """concat_stdevs_and_mask=True restores the 3-channel form per file for callers who want the
+    uncertainty plane in the TIFF; stdevs then round-trip per slice."""
+    import tifffile
+
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    stack = _tof_stack(n=2)
+    stack.variances = np.arange(2 * 4 * 4, dtype=np.float64).reshape((2, 4, 4)) + 1.0
+    stack.masks["dead"] = sc.array(dims=["y", "x"], values=np.zeros((4, 4), dtype=bool))
+    with tempfile.TemporaryDirectory() as d:
+        written = write_tiff_stack(Path(d) / "norm.tiff", stack, one_file_per_image=True, concat_stdevs_and_mask=True)
+        for index, path in enumerate(written):
+            with tifffile.TiffFile(path) as tf:
+                # channels = intensities + stdevs + mask (scitiff packs one plane per component)
+                assert len(tf.pages) == 3
+            image = load_scitiff(path)["image"]
+            np.testing.assert_allclose(sc.stddevs(image).values, np.sqrt(stack.variances[index]), rtol=1e-6)
+
+
+def test_write_tiff_stack_stack_mode_still_three_channels():
+    """Regression: the DEFAULT stack mode must keep its 3-channel form — the per-image change must not
+    alter it."""
+    import tifffile
+
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    stack = _tof_stack(n=3)  # has variances, no mask -> 2 channels per image
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "norm.tiff"
+        write_tiff_stack(out, stack)
+        with tifffile.TiffFile(out) as tf:
+            assert len(tf.pages) == 3 * 2  # 3 images x (intensity, stdev)
+        # and the uncertainty is still recoverable from the stack, unlike the per-image default
+        assert load_scitiff(out)["image"].variances is not None
+
+    # the pipelines broadcast the combined mask to the FULL stack dims before writing (a 2-D (y, x)
+    # mask is dropped by scitiff on a 3-D stack), which is what makes real output 3 channels per image
+    stack.masks["scitiff-mask"] = sc.array(dims=["t", "y", "x"], values=np.zeros((3, 4, 4), dtype=bool))
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "norm.tiff"
+        write_tiff_stack(out, stack)
+        with tifffile.TiffFile(out) as tf:
+            assert len(tf.pages) == 3 * 3  # 3 images x (intensity, stdev, mask)
 
 
 def test_write_tiff_stack_one_file_per_image_index_width_grows_past_five_digits():

@@ -13,9 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   VENUS TOF pipelines as `tiff_one_file_per_image=True`, writes **one scitiff file per spectral
   image** (one normalization per file) named `<stem>_00000.tiff`, `<stem>_00001.tiff`, … in spectral
   order, instead of a single multi-page stack. Requested by the instrument scientist for workflows
-  built around opening individual images in ImageJ. Each file keeps its own slice's coordinates —
-  that bin's `tof` bounds and `spectra_tof` time — plus the same metadata as the stack. The default
-  is unchanged (single multi-page scitiff), so existing workflows are unaffected.
+  built around opening individual images in ImageJ. Each per-image file is a **single-page** image
+  holding only the normalization: packing the scitiff stdev and mask planes as extra channels would
+  make a viewer report three times as many images, the extra two being an uncertainty plane and an
+  all-zero mask. Pass `concat_stdevs_and_mask=True` to keep those channels; note that scitiff stores
+  variances only in that channel, so a single-page file carries no uncertainty — read it from the HDF5
+  output. Each file keeps its own slice's coordinates (that bin's `tof` bounds and `spectra_tof` time)
+  plus the same metadata and masks as the stack. Stack output is unchanged, so existing workflows are
+  unaffected.
 - **Flexible TOF rebinning** — variable-width, list-defined bins with a choice of reduction
   ([#192](https://github.com/ornlneutronimaging/NeuNorm/issues/192)). The VENUS TOF pipelines
   (`venus_tpx1`, `venus_tpx3_histogram`, `venus_tpx3_event`) now accept an explicit
