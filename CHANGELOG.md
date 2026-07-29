@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Progress-reporting contract** — new `neunorm.utils.progress` module
+  ([#195](https://github.com/ornlneutronimaging/NeuNorm/issues/195)), the foundation for reporting
+  where a long normalization run has got to. Defines the immutable `ProgressEvent(stage, completed,
+  total, detail)` handed to user callbacks, the `Progress` / `ProgressCallback` types, the shared
+  `STAGE_*` labels, and `resolve_progress()`, which normalizes a caller's `progress` argument —
+  `False` (no reporting), `True` (NeuNorm drives a `tqdm` bar), or a callable — into a pre-bound
+  reporter. `completed` is an **absolute** count, so a `tqdm` adapter is
+  `bar.update(event.completed - bar.n)`; `tqdm.update()` takes a delta, and passing the absolute
+  count to it would overshoot. `total` is `None` where an item count is not knowable in advance.
+  Events are emitted synchronously from the calling thread, and a callback that raises is not
+  caught — that is how a caller cancels a run. `tqdm` is imported lazily, so the default
+  `progress=False` path never pays for it. Also included: `tqdm_safe_logging()`, which routes
+  loguru's stderr records through `tqdm.write` so they do not corrupt a bar, and which leaves a host
+  application's logging configuration alone if nothing is writing to stderr.
+  **No pipeline emits progress yet** — the instrumentation and the `progress` parameter land in
+  follow-up work; this entry adds only the contract, and fixes the long-stale `neunorm.utils`
+  docstring that already advertised "progress reporting".
+
+### Changed
+
+- **Public signatures of all six pipelines and `write_tiff_stack` are now guarded by tests**
+  (`tests/unit/test_public_signatures.py`). Each pins its released positional parameter order, so a
+  parameter can no longer be inserted mid-signature and silently re-bind every argument after it.
+  This is a regression that already shipped: `rebin_reduction` was added immediately after
+  `rebin_by_tof` in the three VENUS TOF pipelines, shifting every later positional parameter — five
+  of them in `venus_tpx3_event`. No signature changes in this entry, only the guard; new parameters
+  must be **appended**, preferably keyword-only. Callers passing optional arguments positionally
+  should switch to keywords, which every in-repo and documented call site already does.
+
 - **Per-image TIFF export** — `write_tiff_stack(..., one_file_per_image=True)`, exposed on the
   VENUS TOF pipelines as `tiff_one_file_per_image=True`, writes **one scitiff file per spectral
   image** (one normalization per file) named `<stem>_00000.tiff`, `<stem>_00001.tiff`, … in spectral
