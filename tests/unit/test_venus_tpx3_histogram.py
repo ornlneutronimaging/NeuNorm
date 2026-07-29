@@ -325,6 +325,55 @@ class TestVenusTPX3HistogramPipeline:
         np.testing.assert_allclose(transmission.values, 1)
         np.testing.assert_allclose(transmission.variances, 0.0227, rtol=0.1)
 
+    def test_venus_tpx3_histogram_pipeline_rebin_by_tof_list(self):
+        """A bin-list rebin_by_tof mean-reduces the TPX3 histogram stack and carries spectra_tof to
+        the HDF5 output; an uncovered frame is dropped silently (one image per requested range)."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx3_histogram_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 2], [3, 5]],  # 5 frames, frame 2 uncovered -> dropped -> 2 bins
+            )
+            assert transmission.shape == (2, 32, 32)
+            assert "spectra_tof" in transmission.coords
+            assert "dropped_frames" not in transmission.masks
+            assert not np.isnan(transmission.values).any()
+            with h5py.File(output_path, "r") as hf:
+                assert "spectra_tof" in hf
+                assert hf["spectra_tof"].shape == (2,)
+                assert "masks/dropped_frames" not in hf
+
+    def test_venus_tpx3_histogram_pipeline_rebin_by_tof_tuple(self):
+        """A TUPLE-of-pairs spec behaves exactly like the list form (including dropping an uncovered
+        frame), and an empty tuple is an explicit-but-invalid request that raises."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx3_histogram_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=((0, 2), (3, 5)),  # tuple of pairs, frame 2 uncovered -> dropped
+            )
+            assert transmission.shape == (2, 32, 32)
+            assert "dropped_frames" not in transmission.masks
+
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            with pytest.raises(ValueError, match="at least one"):
+                run_venus_tpx3_histogram_pipeline(
+                    sample_tiff_paths=[self.sample_tiff_paths],
+                    ob_tiff_paths=[self.ob_tiff_paths],
+                    sample_hdf5_paths=[self.sample_nexus_path],
+                    ob_hdf5_paths=[self.ob_nexus_path],
+                    output_path=Path(f.name),
+                    rebin_by_tof=(),  # empty tuple -> must raise, never a silent no-rebin
+                )
+
     def test_venus_tpx3_histogram_pipeline_mask_air_roi(self):
         """A non-rectangular MaskROI air_roi flows through the TPX3 histogram pipeline over a
         bin-edge tof coord: air-region mean -> 1.0 per tof bin, the N+1 bin-edge tof axis survives,
@@ -394,7 +443,7 @@ class TestVenusTPX3HistogramPipeline:
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
 
-            with pytest.raises(ValueError, match=r"Invalid value for rebin_by_tof: invalid. Must be bool or int."):
+            with pytest.raises(ValueError, match=r"bool, an int factor, or a list"):
                 run_venus_tpx3_histogram_pipeline(
                     sample_tiff_paths=[self.sample_tiff_paths],
                     ob_tiff_paths=[self.ob_tiff_paths],

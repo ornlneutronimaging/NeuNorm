@@ -474,7 +474,7 @@ class TestVenusTPX1Pipeline:
         with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
             output_path = Path(f.name)
 
-            with pytest.raises(ValueError, match=r"Invalid value for rebin_by_tof: invalid. Must be bool or int."):
+            with pytest.raises(ValueError, match=r"bool, an int factor, or a list"):
                 run_venus_tpx1_pipeline(
                     sample_tiff_paths=[self.sample_tiff_paths],
                     ob_tiff_paths=[self.ob_tiff_paths],
@@ -483,6 +483,240 @@ class TestVenusTPX1Pipeline:
                     output_path=output_path,
                     rebin_by_tof="invalid",  # invalid value should trigger error
                 )
+
+    def test_venus_tpx1_pipeline_rebin_by_tof_list_mean(self):
+        """A bin-list rebin_by_tof mean-reduces the 5-frame TOF stack and carries spectra_tof out."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 2], [2, 5]],  # 5 frames -> 2 mean bins
+            )
+            assert transmission.shape == (2, 32, 32)
+            assert transmission.coords["tof"].sizes["tof"] == 3  # bin-edge axis for 2 bins
+            assert "spectra_tof" in transmission.coords
+            # mean-reduced: bin0 = mean(81,82)/mean(99,100)*2, bin1 = mean(83,84,85)/mean(101,102,103)*2
+            np.testing.assert_allclose(transmission.values[0], 81.5 / 99.5 * 2, rtol=1e-5)
+            np.testing.assert_allclose(transmission.values[1], 84.0 / 102.0 * 2, rtol=1e-5)
+            with h5py.File(output_path, "r") as hf:
+                assert "spectra_tof" in hf  # per-bin mean-time exported
+
+    def test_venus_tpx1_pipeline_rebin_by_tof_tuple(self):
+        """A tuple-of-pairs rebin_by_tof is accepted like a list (the spec guard + rebin_tof both
+        take list|tuple) — regression for the consolidation guard narrowing."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=((0, 2), (2, 5)),  # tuple of pairs -> 2 mean bins
+            )
+            assert transmission.shape == (2, 32, 32)
+            np.testing.assert_allclose(transmission.values[0], 81.5 / 99.5 * 2, rtol=1e-5)
+
+    def test_venus_tpx1_pipeline_rebin_by_tof_median(self):
+        """rebin_reduction='median' end-to-end: median values are produced and BOTH bins carry a
+        finite uncertainty — the 3-frame bin via NeuNorm's (pi/(2n))*mean(Var) approximation, the
+        2-frame bin exactly (median == mean there)."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 3], [3, 5]],  # n=3 bin (approximated variance) + n=2 bin (exact)
+                rebin_reduction="median",
+            )
+            assert transmission.shape == (2, 32, 32)
+            assert np.all(np.isfinite(transmission.values))  # median values are exact/finite
+            # both bins carry a usable uncertainty: n=3 approximated, n=2 exact -- never NaN
+            assert np.all(np.isfinite(transmission.variances))
+            assert np.all(transmission.variances > 0)
+
+    def test_venus_tpx1_pipeline_rebin_by_tof_median_air_roi_hdf5(self):
+        """A median-reduced (n>=3, approximated-variance) bin flows through air correction and HDF5
+        export without tripping the strict positive/finite guard or corrupting the other bin, and its
+        uncertainty survives to disk. Both bins are *unmasked* real bins -- a path distinct from a
+        masked gap bin (NaN value) -- so the guard, which checks VALUES, must pass."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 3], [3, 5]],  # n=3 bin (approximated variance) + n=2 bin (exact)
+                rebin_reduction="median",
+                air_roi=(0, 0, 10, 10),
+            )
+            assert transmission.shape == (2, 32, 32)
+            assert "dropped_frames" not in transmission.masks  # both bins are real, not gaps
+            # air correction of the spatially-uniform stack -> ~1.0 for BOTH bins, and the median
+            # uncertainties stay finite and positive through the correction
+            np.testing.assert_allclose(transmission.values, 1.0, rtol=1e-5)
+            assert np.all(np.isfinite(transmission.variances))
+            assert np.all(transmission.variances > 0)
+            # the uncertainty round-trips to disk (stored as sqrt(variance)) for both bins
+            with h5py.File(output_path, "r") as hf:
+                assert hf["uncertainty"].shape == (2, 32, 32)
+                assert np.all(np.isfinite(hf["uncertainty"][()]))
+
+    def test_venus_tpx1_pipeline_rebin_by_tof_median_tiff(self):
+        """A median-reduced (n>=3, approximated-variance) stack must also serialize to TIFF."""
+        with tempfile.NamedTemporaryFile(suffix=".tiff", delete=True) as f:
+            output_path = Path(f.name)
+            run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 3], [3, 5]],  # n=3 -> approximated variance
+                rebin_reduction="median",
+            )
+            assert output_path.exists()  # scitiff write succeeded for the median-reduced stack
+
+    def test_venus_tpx1_pipeline_rebin_by_tof_list_dropped_frame(self):
+        """An uncovered frame is dropped silently end-to-end: 2 requested ranges -> 2 output images,
+        no extra bin, no NaN, no mask. The per-bin spectra_tof written to the output is what records
+        which frames each image covers (the CIS's stated way to spot an omission)."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 2], [3, 5]],  # frame 2 uncovered -> dropped
+            )
+            assert transmission.shape == (2, 32, 32)  # one image per requested range
+            assert "dropped_frames" not in transmission.masks
+            assert not np.isnan(transmission.values).any()
+            # sample/OB frames are 81..85 / 99..103 -> mean(81,82)/mean(99,100)*2, mean(84,85)/mean(102,103)*2
+            np.testing.assert_allclose(transmission.values[0], 81.5 / 99.5 * 2, rtol=1e-5)
+            np.testing.assert_allclose(transmission.values[1], 84.5 / 102.5 * 2, rtol=1e-5)
+            with h5py.File(output_path, "r") as hf:
+                assert "masks/dropped_frames" not in hf
+                assert "spectra_tof" in hf
+                assert hf["spectra_tof"].shape == (2,)  # one per output image
+
+    def test_venus_tpx1_pipeline_rebin_by_tof_list_dropped_frame_tiff(self):
+        """A bin-list rebin with a dropped frame still exports to TIFF, with the 2-D (y, x)
+        dead-pixel mask broadcast by DIM NAME to the full (t, y, x) scitiff stack — the
+        mask-combining path. Asserts the written stack, not merely that a file appeared."""
+        with tempfile.TemporaryDirectory() as d:
+            output_path = Path(d) / "norm.tiff"
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 2], [3, 5]],  # frame 2 uncovered -> dropped
+            )
+            assert transmission.shape == (2, 32, 32)
+            # the combined mask is broadcast to the full stack shape for scitiff, not left 2-D
+            assert transmission.masks["scitiff-mask"].sizes == transmission.sizes
+            image = load_scitiff(output_path)["image"]
+            assert image.sizes["y"] == 32 and image.sizes["x"] == 32
+            assert image.sizes[[d for d in image.dims if d not in ("y", "x", "c")][0]] == 2
+
+    def test_venus_tpx1_pipeline_empty_rebin_list_raises(self):
+        """An explicit but empty bin list is invalid input, not a silent no-op rebin."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            with pytest.raises(ValueError, match="at least one"):
+                run_venus_tpx1_pipeline(
+                    sample_tiff_paths=[self.sample_tiff_paths],
+                    ob_tiff_paths=[self.ob_tiff_paths],
+                    sample_hdf5_paths=[self.sample_nexus_path],
+                    ob_hdf5_paths=[self.ob_nexus_path],
+                    output_path=output_path,
+                    rebin_by_tof=[],  # empty list -> invalid, must raise (not skipped)
+                )
+
+    def test_venus_tpx1_pipeline_empty_rebin_tuple_raises(self):
+        """An empty TUPLE must behave like an empty list: an explicit-but-invalid rebin request that
+        raises, never a silent no-rebin. `()` is falsy, so the entry check has to admit tuples too."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            with pytest.raises(ValueError, match="at least one"):
+                run_venus_tpx1_pipeline(
+                    sample_tiff_paths=[self.sample_tiff_paths],
+                    ob_tiff_paths=[self.ob_tiff_paths],
+                    sample_hdf5_paths=[self.sample_nexus_path],
+                    ob_hdf5_paths=[self.ob_nexus_path],
+                    output_path=output_path,
+                    rebin_by_tof=(),  # empty tuple -> invalid, must raise (not silently skipped)
+                )
+
+    def test_venus_tpx1_pipeline_rebin_by_tof_list_dropped_frame_with_air_roi(self):
+        """A bin list with a dropped frame combined with air_roi must not crash and must correct every
+        output bin (no masked/NaN bin exists any more, so the air guard sees only real bins)."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 2], [3, 5]],  # frame 2 uncovered -> dropped
+                air_roi=(0, 0, 10, 10),
+            )
+            assert transmission.shape == (2, 32, 32)
+            assert "dropped_frames" not in transmission.masks
+            # spatially uniform stack -> every bin air-corrects to ~1.0, none NaN
+            np.testing.assert_allclose(transmission.values, 1.0, rtol=1e-5)
+            assert not np.isnan(transmission.values).any()
+
+    def test_venus_tpx1_pipeline_tiff_one_file_per_image(self):
+        """tiff_one_file_per_image=True writes one scitiff per TOF image (one normalization per
+        file) for ImageJ-style workflows, instead of a single multi-page stack. CIS request."""
+        with tempfile.TemporaryDirectory() as d:
+            output_path = Path(d) / "norm.tiff"
+            transmission = run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 2], [2, 5]],  # 2 output images
+                tiff_one_file_per_image=True,
+            )
+            assert transmission.shape == (2, 32, 32)
+            # one file per normalization, zero-padded so they sort in TOF order
+            written = sorted(p.name for p in Path(d).iterdir())
+            assert written == ["norm_00000.tiff", "norm_00001.tiff"]
+            assert not output_path.exists()  # no multi-page stack written
+            # each file holds that bin's normalization
+            first = load_scitiff(Path(d) / "norm_00000.tiff")["image"]
+            np.testing.assert_allclose(np.squeeze(sc.values(first).values)[:32], 81.5 / 99.5 * 2, rtol=1e-4)
+
+    def test_venus_tpx1_pipeline_tiff_default_is_single_stack(self):
+        """Default TIFF output is unchanged: a single multi-page file, not per-image files."""
+        with tempfile.TemporaryDirectory() as d:
+            output_path = Path(d) / "norm.tiff"
+            run_venus_tpx1_pipeline(
+                sample_tiff_paths=[self.sample_tiff_paths],
+                ob_tiff_paths=[self.ob_tiff_paths],
+                sample_hdf5_paths=[self.sample_nexus_path],
+                ob_hdf5_paths=[self.ob_nexus_path],
+                output_path=output_path,
+                rebin_by_tof=[[0, 2], [2, 5]],
+            )
+            assert [p.name for p in Path(d).iterdir()] == ["norm.tiff"]
 
     def test_venus_tpx1_pipeline_invalid_output_format(self):
         """Check error for unsupported output file format."""

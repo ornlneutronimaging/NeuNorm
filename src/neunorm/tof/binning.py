@@ -11,6 +11,7 @@ All conversions preserve variance (uncertainty) information.
 
 from typing import Optional
 
+import numpy as np
 import scipp as sc
 import scipp.constants as sc_const
 
@@ -326,6 +327,31 @@ def _create_tof_bins_direct(config: BinningConfig) -> sc.Variable:
     return tof_bins
 
 
+def _flip_variable(var: sc.Variable, axis: int) -> sc.Variable:
+    """Reverse a Variable's values (and variances, if any) along ``axis``, preserving dims/unit."""
+    variances = None if var.variances is None else np.flip(var.variances, axis=axis).copy()
+    return sc.array(dims=var.dims, values=np.flip(var.values, axis=axis).copy(), variances=variances, unit=var.unit)
+
+
+def _reverse_tof_dependent(da: sc.DataArray, tof_dim: str = "tof") -> None:
+    """Reverse every ``tof_dim``-dependent point coord (except the ``tof_dim`` edge coord itself)
+    and every ``tof_dim``-dependent mask in place, keeping them aligned after the data has been
+    reversed for energy ordering. Without this a carried point coord (e.g. ``spectra_tof``) or a
+    ``tof``-dependent mask would keep TOF order and mislabel each energy bin."""
+    for name in list(da.coords):
+        coord = da.coords[name]
+        if name != tof_dim and tof_dim in coord.dims:
+            was_aligned = coord.aligned
+            da.coords[name] = _flip_variable(coord, coord.dims.index(tof_dim))
+            # Reassigning a coord defaults it to aligned=True; keep the original flag (an unaligned
+            # provenance coord must stay unaligned), matching histogram_rebinner's convention.
+            da.coords.set_aligned(name, was_aligned)
+    for name in list(da.masks):
+        mask = da.masks[name]
+        if tof_dim in mask.dims:
+            da.masks[name] = _flip_variable(mask, mask.dims.index(tof_dim))
+
+
 def get_energy_histogram(
     hist_tof: sc.DataArray, flight_path: sc.Variable, offset: sc.Variable = sc.scalar(0, unit="us")
 ) -> sc.DataArray:
@@ -372,6 +398,9 @@ def get_energy_histogram(
     else:
         # Handle other dimension orders if needed
         raise NotImplementedError("TOF must be first dimension for now")
+
+    # Keep any other TOF-dependent coord (e.g. spectra_tof) and mask aligned with the reversed data.
+    _reverse_tof_dependent(hist_reversed)
 
     # Remove TOF coordinate
     del hist_reversed.coords["tof"]

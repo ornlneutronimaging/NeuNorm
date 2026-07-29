@@ -4,7 +4,7 @@ VENUS TPX3 histogram pipeline.
 
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Literal, Optional, Sequence
 
 import numpy as np
 import scipp as sc
@@ -42,9 +42,11 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
     output_path: Path,
     roi: Optional[ROILike] = None,
     air_roi: Optional[RegionLike] = None,
-    rebin_by_tof: Optional[bool | int] = False,
+    rebin_by_tof: Optional[bool | int | list | tuple] = False,
+    rebin_reduction: Optional[Literal["mean", "sum", "median"]] = None,
     rebin_by_spatial: Optional[int | tuple[int, int]] = None,
     flight_path: sc.Variable = sc.scalar(VENUS_FLIGHT_PATH_M, unit="m"),
+    tiff_one_file_per_image: bool = False,
 ) -> sc.DataArray:
     """Execute VENUS TPX3 histogram normalization pipeline.
 
@@ -84,9 +86,22 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
     air_roi : ROI, MaskROI, or tuple, optional
         Region of interest for air correction — an ``ROI``, a bare ``(x0, y0, x1, y1)`` tuple, or an
         arbitrary-shape ``MaskROI`` selection. If None, air correction is not applied.
-    rebin_by_tof : Optional[Union[bool,int]]
-        Whether to apply TOF rebinning based on statistics analysis. If an integer is provided,
-        it will be used as the rebinning factor instead of the recommended one.
+    rebin_by_tof : bool, int, or list/tuple of [start, stop], optional
+        TOF rebinning. ``True`` uses the statistics-based recommended factor; an ``int`` is a uniform
+        factor (frames per bin); a ``[[start, stop], ...]`` list defines explicit half-open
+        frame-index bins (variable width). One output image per range.
+        Frames covered by no range are dropped silently (a deliberate, requested behavior). Note
+        that dropping frames leaves the output images covering disjoint time bands, which the
+        ``N+1`` bin-edge ``tof`` axis cannot describe exactly — the bin before a dropped span has its
+        closing edge (and derived ``wavelength``/``energy`` edge) widened by the omitted span, and the
+        result is not a continuous spectrum. Prefer contiguous ranges when the data will be analysed
+        as a spectrum; see :mod:`neunorm.tof.histogram_rebinner` for details. Values, variances and
+        the per-bin ``spectra_tof`` are exact either way.
+    rebin_reduction : {"mean", "sum", "median"}, optional
+        How frames combine within each TOF bin. ``None`` (default) preserves existing behavior — a
+        uniform factor **sums**, a bin list takes the **mean** — while an explicit value applies to
+        either. A bin list or a mean/median reduction also attaches a ``spectra_tof`` per-bin
+        mean-time coordinate.
     rebin_by_spatial : Optional[int | tuple[int, int]]
         Whether to apply spatial rebinning. If a single integer is provided, it is used as the
         rebinning factor for both spatial axes. A ``(x, y)`` tuple selects per-axis
@@ -94,6 +109,12 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
     flight_path : sc.Variable
         Source-to-detector flight path used for TOF→energy/wavelength coordinate labeling.
         Defaults to ``VENUS_FLIGHT_PATH_M`` (25 m); set it per detector/sample position.
+
+    tiff_one_file_per_image : bool
+        TIFF output only. When ``False`` (default) the stack is written as one multi-page scitiff
+        file. When ``True`` each spectral image is written as its own scitiff file
+        (``<stem>_00000.tiff``, ``<stem>_00001.tiff``, …, one normalization per file), which suits
+        tools such as ImageJ that expect individual images. Ignored for HDF5 output.
 
     Notes
     -----
@@ -210,20 +231,22 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
         sample.masks["dead_pixels"] = detect_dead_pixels(sample)
         sample.masks["hot_pixels"] = detect_hot_pixels(sample)
 
-    # TOF rebinning (optional)
-    if rebin_by_tof:
-        if rebin_by_tof is True:
-            # Analyze statistics to get recommended rebinning factor
-            recommended_factor = analyze_statistics(ob)
-            logger.info(f"Recommended TOF rebinning factor based on statistics analysis: {recommended_factor}")
-            sample = rebin_tof(sample, recommended_factor.recommended_rebinning)
-            ob = rebin_tof(ob, recommended_factor.recommended_rebinning)
-        elif isinstance(rebin_by_tof, int):
-            logger.info(f"Applying TOF rebinning with user-specified factor: {rebin_by_tof}")
-            sample = rebin_tof(sample, rebin_by_tof)
-            ob = rebin_tof(ob, rebin_by_tof)
-        else:
-            raise ValueError(f"Invalid value for rebin_by_tof: {rebin_by_tof}. Must be bool or int.")
+    # TOF rebinning (optional): an integer factor, ``True`` for the statistics-based recommended
+    # factor, or an explicit ``[[start, stop], ...]`` bin list. ``rebin_reduction`` selects how
+    # frames combine (default: sum for a factor, mean for a bin list); see ``rebin_tof``.
+    # A bin list/tuple (even empty) is an explicit rebin request; an empty one must surface as an error
+    # from ``rebin_tof`` rather than be silently skipped by the plain falsy check.
+    if rebin_by_tof or isinstance(rebin_by_tof, (list, tuple)):
+        spec = rebin_by_tof
+        if spec is True:
+            spec = analyze_statistics(ob).recommended_rebinning
+            logger.info(f"Recommended TOF rebinning factor based on statistics analysis: {spec}")
+        if isinstance(spec, bool) or not isinstance(spec, (int, np.integer, list, tuple)):
+            raise ValueError(
+                f"rebin_by_tof must be a bool, an int factor, or a list/tuple of [start, stop] pairs; got {spec!r}"
+            )
+        sample = rebin_tof(sample, spec, reduction=rebin_reduction)
+        ob = rebin_tof(ob, spec, reduction=rebin_reduction)
 
     # Normalization
     transmission = normalize_transmission(
@@ -264,6 +287,7 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
     if air_roi is not None:
         metadata["air_roi"] = region_provenance(air_roi)
 
+    output_description = str(output_path)
     if output_path.suffix.lower() in (".hdf5", ".h5"):
         write_hdf5(
             output_path, transmission, dead_pixel_mask="dead_pixels", hot_pixel_mask="hot_pixels", metadata=metadata
@@ -291,16 +315,30 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
         if transmission.masks:
             combined_mask = np.zeros_like(transmission.values, dtype=bool)
             for mask in transmission.masks.values():
-                combined_mask |= mask.values
+                # dim-aware broadcast: a (y, x) mask and a 1-D per-frame (t) mask both expand to (t, y, x)
+                combined_mask |= sc.broadcast(mask, sizes=transmission.sizes).values
 
             # remove other masks
             transmission.masks.clear()
             # add combined mask back in with name "scitiff-mask"
             transmission.masks["scitiff-mask"] = sc.array(dims=transmission.dims, values=combined_mask, dtype=bool)
 
-        write_tiff_stack(output_path, transmission, metadata=metadata, daqmetadata=daqmetadata)
+        written_paths = write_tiff_stack(
+            output_path,
+            transmission,
+            metadata=metadata,
+            daqmetadata=daqmetadata,
+            one_file_per_image=tiff_one_file_per_image,
+        )
+        # In per-image mode ``output_path`` is only a naming template and is never written, so
+        # report what actually landed on disk rather than a file that does not exist.
+        if len(written_paths) > 1:
+            output_description = f"{len(written_paths)} files, {written_paths[0].name} .. {written_paths[-1].name}"
+        else:
+            output_description = str(written_paths[0])
+
     else:
         raise ValueError(f"Unsupported output file format: {output_path.suffix}")
 
-    logger.success("VENUS TPX3 histogram pipeline completed successfully. Output written to {}", output_path)
+    logger.success("VENUS TPX3 histogram pipeline completed successfully. Output written to {}", output_description)
     return transmission

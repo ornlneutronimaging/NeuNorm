@@ -938,14 +938,24 @@ In histogram mode, rebinning is constrained because events have already been bin
 
 | Operation | Supported | Notes |
 |-----------|-----------|-------|
-| Combine N adjacent TOF bins | Yes | Sum counts, merge bin edges |
-| Arbitrary TOF bin edges | No | Would require re-processing events |
-| Heterogeneous bin widths | No | Cannot split or recombine non-adjacent bins |
+| Combine N adjacent TOF bins | Yes | `rebin_tof` — sum counts, merge bin edges |
+| Sub-frame (arbitrary) TOF edges | No | Would require re-processing events; edges only on whole frames |
+| Heterogeneous (variable-width) bins | Yes (whole frames) | `rebin_by_tof=[[start, stop], ...]` groups whole frames into variable-width bins |
+| Mean / median reduction | Yes | `rebin_reduction` on the bin-list path (adjacent-bin `rebin_tof` sums only) |
+| Drop frames (gaps) | Yes (avoid for spectral analysis) | Frames covered by no range are dropped silently; one output image per range. The `N+1` edge axis cannot describe the omission exactly (the bin before it is widened) and the images no longer cover adjacent bands — see the TPX1 guide's warning |
 | Spatial NxN binning | Yes | Sum counts over pixel groups |
 
+Flexible bin-list rebinning (`rebin_by_tof=[[start, stop], ...]`, half-open frame-index ranges) works
+on the histogrammed stack in **both** event mode (applied after event histogramming) and histogram
+mode. Each output bin gains a `spectra_tof` coordinate (mean of its member frames' times). See the
+TPX1 guide's "Rebinning Constraints" for the full description; the API is
+`neunorm.tof.histogram_rebinner.rebin_tof` (a `[[start, stop], ...]` list as `width`, plus a
+`reduction`), with the `linear_bin_list` / `log_bin_list` generators alongside it.
+
 **Comparison with Event Mode**:
-- Event mode: Full flexibility (any bin scheme from raw events)
-- Histogram mode: Limited to combining existing bins
+- Event mode: Full flexibility (any bin scheme, incl. sub-frame edges, from raw events)
+- Histogram mode: Combine / regroup existing bins (adjacent sum, or variable-width mean/sum/median
+  via the bin list) — no sub-frame edges
 
 ---
 
@@ -958,6 +968,7 @@ In histogram mode, rebinning is constrained because events have already been bin
 | TOF Bin Edges | (N_bins+1,) | float64 | Time-of-flight boundaries (μs) |
 | Dead Pixel Mask | (y, x) | bool | True = dead pixel |
 | Hot Pixel Mask | (y, x) | bool | True = hot pixel |
+| Per-bin TOF (`spectra_tof`) | (N_bins,) | float64 | Mean time of each bin's frames (bin-list / mean / median rebin only) |
 | Metadata | dict | - | Processing provenance |
 
 **Metadata contents**:

@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-image TIFF export** — `write_tiff_stack(..., one_file_per_image=True)`, exposed on the
+  VENUS TOF pipelines as `tiff_one_file_per_image=True`, writes **one scitiff file per spectral
+  image** (one normalization per file) named `<stem>_00000.tiff`, `<stem>_00001.tiff`, … in spectral
+  order, instead of a single multi-page stack. Requested by the instrument scientist for workflows
+  built around opening individual images in ImageJ. Each per-image file is a **single-page** image
+  holding only the normalization: packing the scitiff stdev and mask planes as extra channels would
+  make a viewer report three times as many images, the extra two being an uncertainty plane and an
+  all-zero mask. Pass `concat_stdevs_and_mask=True` to keep those channels; note that scitiff stores
+  variances only in that channel, so a single-page file carries no uncertainty — read it from the HDF5
+  output. Each file keeps its own slice's coordinates (that bin's `tof` bounds and `spectra_tof` time)
+  plus the same metadata and masks as the stack. Stack output is unchanged, so existing workflows are
+  unaffected.
+- **Flexible TOF rebinning** — variable-width, list-defined bins with a choice of reduction
+  ([#192](https://github.com/ornlneutronimaging/NeuNorm/issues/192)). The VENUS TOF pipelines
+  (`venus_tpx1`, `venus_tpx3_histogram`, `venus_tpx3_event`) now accept an explicit
+  `rebin_by_tof=[[start, stop], ...]` list of **half-open frame-index ranges** (Python convention)
+  in addition to the existing `bool`/`int` factor, plus a new `rebin_reduction` parameter selecting
+  how frames combine per bin — `"mean"` (default for a bin list), `"sum"`, or `"median"` — with
+  scipp variance propagation: mean `ΣVar/N²`, sum `ΣVar`; the median value is exact and, for a bin of
+  three or more frames, its uncertainty uses NeuNorm's standard median-variance approximation
+  `Var(median) ≈ (π / (2n)) · mean(Var)` (with a warning that it is an estimate) — the same rule as
+  `processing.reference_preparer.median_with_variance` and the gamma filter, so median uncertainties
+  are consistent across the package. A one/two-frame bin uses the exact `Var(mean)`, since the median
+  equals the mean there. An exact small-sample median variance would require per-pixel resampling
+  (bootstrap): sound in principle, but impractical at detector scale, so it is deliberately not used. Existing `rebin_by_tof=int`/`True` behavior is
+  unchanged (still sums; `rebin_reduction` defaults to that). The output has **exactly one image per
+  requested range**: frames covered by no range are **dropped silently** — a deliberate choice made
+  with the instrument scientist, wherever the omission falls (between ranges, before the first, or
+  after the last). No extra bin is inserted, nothing is masked, and nothing is logged; the per-bin
+  `spectra_tof` axis is the record of which frames each image covers. **Caveat, documented in the API
+  and workflow guides:** dropping frames leaves the output images covering disjoint time bands, which
+  a scipp `N+1` bin-edge axis cannot express exactly — leading edges stay exact, but the omitted span
+  is absorbed into the closing edge of the preceding bin, widening that bin's implied `tof` (and
+  derived `wavelength`/`energy`) span. Such output is not a continuous spectrum and should not be used
+  for Bragg-edge or resonance analysis; prefer contiguous ranges there. Pixel values, variances and
+  `spectra_tof` are exact regardless. Each rebinned bin carries a
+  `spectra_tof` point coordinate (the mean of its member frames' times), persisted to the HDF5/TIFF
+  output. The API lives in `neunorm.tof.histogram_rebinner`: the existing `rebin_tof` gains a
+  `reduction` argument and accepts an explicit `[[start, stop], ...]` bin list as its `width` (its
+  adjacent-bin, sum-only integer/time/wavelength/edge-snapping behavior is unchanged when summing),
+  backed by the public helpers `reduce_tof_bins` and the `linear_bin_list` / `log_bin_list` bin-list
+  generators (uniform and geometric frame-index bins, the latter porting iBeatles' logarithmic mode
+  without its zero-start infinite loop).
 - **Arbitrary-shape (mask-based) ROI regions** — `MaskROI`
   ([#180](https://github.com/ornlneutronimaging/NeuNorm/issues/180)). A pixel **selection** mask
   (same `(y, x)` size as the image; 1/nonzero = pixel *in* the region — the opposite polarity of

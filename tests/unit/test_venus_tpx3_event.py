@@ -4,6 +4,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import pytest
 import scipp as sc
 from scitiff.io import load_scitiff
 
@@ -415,6 +416,50 @@ class TestVenusTPX3EventPipeline:
         # Since all the data are the same for a single tof the air correction should just normalize 1.
         np.testing.assert_allclose(transmission.values, 1)
         np.testing.assert_allclose(transmission.variances, 0.244, rtol=0.25)
+
+    def test_venus_tpx3_event_pipeline_rebin_by_tof_list(self):
+        """A bin-list rebin_by_tof applies to the histogrammed event stack (event-mode parity):
+        it mean-reduces the bins, carries spectra_tof, and drops an uncovered bin silently."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            output_path = Path(f.name)
+            transmission = run_venus_tpx3_event_pipeline(
+                sample_paths=[self.sample],
+                ob_paths=[self.ob],
+                binning=self.binning,
+                output_path=output_path,
+                detector_shape=(32, 32),
+                rebin_by_tof=[[0, 2], [3, 5]],  # 5 histogram bins, bin 2 uncovered -> dropped
+            )
+            assert transmission.shape == (2, 32, 32)
+            assert "spectra_tof" in transmission.coords
+            assert "dropped_frames" not in transmission.masks
+            assert not np.isnan(transmission.values).any()
+
+    def test_venus_tpx3_event_pipeline_rebin_by_tof_tuple(self):
+        """A TUPLE-of-pairs spec behaves exactly like the list form (including dropping an uncovered
+        bin), and an empty tuple is an explicit-but-invalid request that raises."""
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            transmission = run_venus_tpx3_event_pipeline(
+                sample_paths=[self.sample],
+                ob_paths=[self.ob],
+                binning=self.binning,
+                output_path=Path(f.name),
+                detector_shape=(32, 32),
+                rebin_by_tof=((0, 2), (3, 5)),  # tuple of pairs, bin 2 uncovered -> dropped
+            )
+            assert transmission.shape == (2, 32, 32)
+            assert "dropped_frames" not in transmission.masks
+
+        with tempfile.NamedTemporaryFile(suffix=".hdf5", delete=True) as f:
+            with pytest.raises(ValueError, match="at least one"):
+                run_venus_tpx3_event_pipeline(
+                    sample_paths=[self.sample],
+                    ob_paths=[self.ob],
+                    binning=self.binning,
+                    output_path=Path(f.name),
+                    detector_shape=(32, 32),
+                    rebin_by_tof=(),  # empty tuple -> must raise, never a silent no-rebin
+                )
 
     def test_venus_tpx3_event_pipeline_mask_air_roi(self):
         """A non-rectangular MaskROI air_roi flows through the TPX3 event pipeline over a bin-edge

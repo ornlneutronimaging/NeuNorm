@@ -103,7 +103,9 @@ def write_hdf5(  # noqa: C901
         /uncertainty      # (θ, [TOF,] y, x) float32 (only if variances are present)
         /masks/dead       # (y, x) bool (only if the named dead-pixel mask exists)
         /masks/hot        # (y, x) bool (only if the named hot-pixel mask exists)
+        /masks/<name>     # any other mask under its own name (e.g. a 1-D TOF mask)
         /tof              # (N+1,) float64 (only if the data carries a "tof" coordinate)
+        /spectra_tof      # (N,) float64 per-bin mean time (only for bin-list / mean / median rebins)
         /metadata/        # processing provenance (only when metadata is supplied)
 
     Metadata values are stored as native datasets (strings, scalars, flat arrays).
@@ -161,11 +163,27 @@ def write_hdf5(  # noqa: C901
             except TypeError as e:
                 logger.warning(f"Could not write coordinate '{coord}' to HDF5: {e}")
 
-        # Write masks
+        # Write masks. The dead/hot masks keep their canonical /masks/dead and /masks/hot names;
+        # any other mask (e.g. a 1-D per-bin TOF mask) is written under its own name so that
+        # mask provenance is not lost.
         if dead_pixel_mask in transmission.masks:
             f.create_dataset("masks/dead", data=transmission.masks[dead_pixel_mask].values)
         if hot_pixel_mask in transmission.masks:
             f.create_dataset("masks/hot", data=transmission.masks[hot_pixel_mask].values)
+        for mask_name in transmission.masks:
+            if mask_name in (dead_pixel_mask, hot_pixel_mask):
+                continue
+            if "/" in mask_name:  # a '/' would create nested HDF5 groups and clash unpredictably
+                raise ValueError(f"mask name '{mask_name}' must not contain '/'")
+            path = f"masks/{mask_name}"
+            if path in f:
+                # A mask genuinely named 'dead'/'hot' distinct from the designated dead/hot mask
+                # collides with the canonical path. Fail loudly rather than silently drop its data.
+                raise ValueError(
+                    f"mask '{mask_name}' collides with the already-written HDF5 path '{path}'; "
+                    "rename it (it must not reuse the canonical 'dead'/'hot' names unless it is the designated mask)"
+                )
+            f.create_dataset(path, data=transmission.masks[mask_name].values)
 
         # Write metadata. Provenance is best-effort: a single un-writable key — a bad value
         # (ragged/unserializable) or a malformed/colliding name — must never abort the write or

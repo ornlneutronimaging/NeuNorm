@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -219,3 +220,205 @@ def test_write_tiff_stack_unsupported_metadata_type():
 
     with pytest.raises(ValueError):
         write_tiff_stack("test.tiff", transmission, metadata=metadata)
+
+
+def _tof_stack(n=3, ny=4, nx=4):
+    """A (t, y, x) transmission stack with a bin-edge t axis and a per-bin spectra_tof point coord."""
+    values = np.arange(n * ny * nx, dtype=np.float64).reshape((n, ny, nx))
+    return sc.DataArray(
+        data=sc.array(dims=["t", "y", "x"], values=values, unit="dimensionless", variances=np.ones((n, ny, nx))),
+        coords={
+            "t": sc.array(dims=["t"], values=np.arange(n + 1, dtype=float), unit="s"),  # bin edges (N+1)
+            "spectra_tof": sc.array(dims=["t"], values=np.arange(n, dtype=float) + 0.5, unit="s"),  # points (N)
+            "y": sc.arange("y", ny),
+            "x": sc.arange("x", nx),
+        },
+    )
+
+
+def test_write_tiff_stack_one_file_per_image():
+    """one_file_per_image=True writes one scitiff per spectral image (one normalization per file),
+    zero-padded so the files sort in spectral order, each carrying its own slice's data."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    stack = _tof_stack(n=3)
+    with tempfile.TemporaryDirectory() as d:
+        output_path = Path(d) / "norm.tiff"
+        written = write_tiff_stack(output_path, stack, one_file_per_image=True)
+
+        assert [p.name for p in written] == ["norm_00000.tiff", "norm_00001.tiff", "norm_00002.tiff"]
+        assert sorted(p.name for p in Path(d).iterdir()) == [p.name for p in written]  # sort == spectral order
+        assert not output_path.exists()  # the template itself is not written
+
+        for index, path in enumerate(written):
+            image = load_scitiff(path)["image"]
+            # exactly ONE image per file: the only non-spatial dim is scitiff's stdev/mask channel
+            # (concat_stdevs_and_mask=True), never a second spectral image.
+            assert image.sizes["y"] == stack.sizes["y"]
+            assert image.sizes["x"] == stack.sizes["x"]
+            assert [d for d in image.dims if d not in ("y", "x", "c")] == []
+            # channel 0 is the normalization itself; compare the FULL array, no squeeze/slicing
+            values = sc.values(image).values
+            frame = values[0] if values.ndim == 3 else values
+            np.testing.assert_allclose(frame, stack.values[index], rtol=1e-6)
+
+
+def test_write_tiff_stack_one_file_per_image_keeps_per_bin_coords():
+    """Each per-image file records which bin it came from: that bin's t bounds and spectra_tof."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    stack = _tof_stack(n=3)
+    with tempfile.TemporaryDirectory() as d:
+        written = write_tiff_stack(Path(d) / "norm.tiff", stack, one_file_per_image=True)
+        for index, path in enumerate(written):
+            image = load_scitiff(path)["image"]
+            np.testing.assert_allclose(image.coords["spectra_tof"].values, index + 0.5)
+            np.testing.assert_allclose(image.coords["t"].values, [index, index + 1])  # this bin's bounds
+
+
+def test_write_tiff_stack_default_is_single_stack():
+    """Default (one_file_per_image=False) is unchanged: a single multi-page file, no per-image files."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    stack = _tof_stack(n=3)
+    with tempfile.TemporaryDirectory() as d:
+        output_path = Path(d) / "norm.tiff"
+        written = write_tiff_stack(output_path, stack)
+        assert written == [output_path]
+        assert [p.name for p in Path(d).iterdir()] == ["norm.tiff"]
+        assert load_scitiff(output_path)["image"].sizes["t"] == 3  # whole stack in one file
+
+
+def test_write_tiff_stack_one_file_per_image_on_2d_writes_single_file():
+    """A plain (y, x) radiograph has no spectral dim — it is already one image, so it is written
+    as a single file rather than being split."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    values = np.arange(16, dtype=np.float64).reshape((4, 4))
+    radiograph = sc.DataArray(data=sc.array(dims=["y", "x"], values=values, unit="dimensionless"))
+    with tempfile.TemporaryDirectory() as d:
+        output_path = Path(d) / "radio.tiff"
+        written = write_tiff_stack(output_path, radiograph, one_file_per_image=True)
+        assert written == [output_path]
+        assert output_path.exists()
+
+
+def test_write_tiff_stack_one_file_per_image_is_single_page_by_default():
+    """One normalization per file means ONE page per file: no stdev/mask channels, so a viewer does not
+    report 3x the number of images (CIS report). Mask + metadata still travel."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    stack = _tof_stack(n=3)
+    stack.variances = np.arange(3 * 4 * 4, dtype=np.float64).reshape((3, 4, 4)) + 1.0  # distinct per frame
+    mask = np.zeros((4, 4), dtype=bool)
+    mask[0, 0] = True
+    stack.masks["dead"] = sc.array(dims=["y", "x"], values=mask)
+
+    with tempfile.TemporaryDirectory() as d:
+        written = write_tiff_stack(
+            Path(d) / "norm.tiff",
+            stack,
+            metadata={"roi_applied": "false", "sample_paths": ["a.tiff", "b.tiff"]},
+            daqmetadata={"facility": "ORNL", "instrument": "VENUS"},
+            one_file_per_image=True,
+        )
+        assert len(written) == 3
+        import tifffile
+
+        for index, path in enumerate(written):
+            with tifffile.TiffFile(path) as tf:
+                assert len(tf.pages) == 1, f"{path.name} has {len(tf.pages)} pages, expected 1"
+                np.testing.assert_allclose(tf.asarray(), stack.values[index], rtol=1e-6)
+            dg = load_scitiff(path)
+            image = dg["image"]
+            assert image.dims == ("y", "x")
+            # the mask still travels with every file
+            assert "dead" in image.masks
+            np.testing.assert_array_equal(image.masks["dead"].values, mask)
+            # metadata/DAQ tags still travel with every file
+            assert json.loads(dg["extra"]["sample_paths"]) == ["a.tiff", "b.tiff"]
+            assert dg["extra"]["roi_applied"] == "false"
+
+
+def test_write_tiff_stack_one_file_per_image_can_opt_into_stdev_channels():
+    """concat_stdevs_and_mask=True restores the 3-channel form per file for callers who want the
+    uncertainty plane in the TIFF; stdevs then round-trip per slice."""
+    import tifffile
+
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    stack = _tof_stack(n=2)
+    stack.variances = np.arange(2 * 4 * 4, dtype=np.float64).reshape((2, 4, 4)) + 1.0
+    stack.masks["dead"] = sc.array(dims=["y", "x"], values=np.zeros((4, 4), dtype=bool))
+    with tempfile.TemporaryDirectory() as d:
+        written = write_tiff_stack(Path(d) / "norm.tiff", stack, one_file_per_image=True, concat_stdevs_and_mask=True)
+        for index, path in enumerate(written):
+            with tifffile.TiffFile(path) as tf:
+                # channels = intensities + stdevs + mask (scitiff packs one plane per component)
+                assert len(tf.pages) == 3
+            image = load_scitiff(path)["image"]
+            np.testing.assert_allclose(sc.stddevs(image).values, np.sqrt(stack.variances[index]), rtol=1e-6)
+
+
+def test_write_tiff_stack_stack_mode_still_three_channels():
+    """Regression: the DEFAULT stack mode must keep its 3-channel form — the per-image change must not
+    alter it."""
+    import tifffile
+
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    stack = _tof_stack(n=3)  # has variances, no mask -> 2 channels per image
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "norm.tiff"
+        write_tiff_stack(out, stack)
+        with tifffile.TiffFile(out) as tf:
+            assert len(tf.pages) == 3 * 2  # 3 images x (intensity, stdev)
+        # and the uncertainty is still recoverable from the stack, unlike the per-image default
+        assert load_scitiff(out)["image"].variances is not None
+
+    # the pipelines broadcast the combined mask to the FULL stack dims before writing (a 2-D (y, x)
+    # mask is dropped by scitiff on a 3-D stack), which is what makes real output 3 channels per image
+    stack.masks["scitiff-mask"] = sc.array(dims=["t", "y", "x"], values=np.zeros((3, 4, 4), dtype=bool))
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d) / "norm.tiff"
+        write_tiff_stack(out, stack)
+        with tifffile.TiffFile(out) as tf:
+            assert len(tf.pages) == 3 * 3  # 3 images x (intensity, stdev, mask)
+
+
+def test_write_tiff_stack_one_file_per_image_index_width_grows_past_five_digits():
+    """The zero-pad width must grow with the image count so a lexicographic listing always equals
+    spectral order (a fixed %05d would sort norm_100000 before norm_99999)."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    # 5 digits is the floor for small stacks
+    small = _tof_stack(n=2)
+    with tempfile.TemporaryDirectory() as d:
+        names = [p.name for p in write_tiff_stack(Path(d) / "n.tiff", small, one_file_per_image=True)]
+        assert names == ["n_00000.tiff", "n_00001.tiff"]
+
+    # the width formula itself, checked at the 100000-image boundary without writing that many files
+    assert max(5, len(str(100000 - 1))) == 5  # 0..99999 still fits in 5
+    assert max(5, len(str(100001 - 1))) == 6  # 0..100000 needs 6, so ordering is preserved
+    padded = [f"{i:0{max(5, len(str(100000)))}d}" for i in (99999, 100000)]
+    assert padded == ["099999", "100000"]
+    assert sorted(padded) == padded  # lexicographic == numeric
+
+
+def test_write_tiff_stack_one_file_per_image_rejects_ambiguous_and_empty_spectral_dims():
+    """Two non-spatial dims is an ambiguous split, and an empty spectral dim would write no file at
+    all — both must raise instead of silently doing the wrong thing (review findings)."""
+    from neunorm.exporters.tiff_writer import write_tiff_stack
+
+    two_spectral = sc.DataArray(
+        data=sc.array(dims=["angle", "t", "y", "x"], values=np.zeros((2, 3, 4, 4)), unit="dimensionless")
+    )
+    with tempfile.TemporaryDirectory() as d:
+        with pytest.raises(ValueError, match="exactly one non-spatial dimension"):
+            write_tiff_stack(Path(d) / "n.tiff", two_spectral, one_file_per_image=True)
+
+    empty = sc.DataArray(data=sc.array(dims=["t", "y", "x"], values=np.zeros((0, 4, 4)), unit="dimensionless"))
+    with tempfile.TemporaryDirectory() as d:
+        with pytest.raises(ValueError, match="empty"):
+            write_tiff_stack(Path(d) / "n.tiff", empty, one_file_per_image=True)
+        assert list(Path(d).iterdir()) == []  # nothing written
