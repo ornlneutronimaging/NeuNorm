@@ -100,6 +100,28 @@ def test_resolve_progress_borrows_an_existing_reporter_without_rebinding_it():
     assert borrowed._owns_sink is False
 
 
+def test_borrowing_the_no_op_reporter_stays_a_no_op():
+    """`progress=False` must remain free however deep it is threaded.
+
+    `_NullReporter` overrides `for_stage`, `with_offset`, `__call__`, `note` and `close`, but for a
+    while not `_borrowed()`. A callee resolving a null reporter therefore got a LIVE reporter over the
+    null sink: it built a ProgressEvent per emit on the path documented to allocate nothing, and —
+    once a borrowed view began sharing its caller's counter cell — it mutated this module-level
+    singleton's count, which every unrelated `progress=False` call in the process shares.
+    """
+    outer = resolve_progress(False, STAGE_LOAD_SAMPLE, total=1000)
+    assert outer is NULL_REPORTER
+
+    leaf = resolve_progress(outer)
+    assert leaf is NULL_REPORTER, "borrowing the no-op reporter produced a live one"
+
+    before = NULL_REPORTER.completed
+    for _ in range(5):
+        leaf()
+    leaf.note("x")
+    assert NULL_REPORTER.completed == before, "the shared singleton's count was mutated"
+
+
 def test_a_borrowed_reporter_shares_the_caller_s_count():
     """A callee's advances must move the SAME count the caller reads.
 

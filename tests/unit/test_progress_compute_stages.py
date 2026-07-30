@@ -113,11 +113,27 @@ def test_gamma_filter_announces_the_optional_variance_recompute():
     assert max(e.completed for e in events) == 4
 
 
-def test_gamma_filter_progress_false_gives_identical_output():
-    """Reporting must not change the filtered data."""
-    data = _stack(20, spike=True)
+def test_gamma_filter_output_is_pinned_to_values_not_to_itself():
+    """The filtered result is pinned to computed values, not to a second call of the same function.
 
-    assert sc.identical(apply_gamma_filter(data), apply_gamma_filter(data, progress=lambda _e: None))
+    The earlier version of this test compared `apply_gamma_filter(data)` against
+    `apply_gamma_filter(data, progress=...)`. Both calls take one code path — `progress` only selects
+    the sink — so it could not detect the re-indentation defect it read as guarding, and any error
+    shared by both invocations was invisible. That is the seventh self-referential test in this
+    branch; the review closed the gap independently with an AST-equivalence check and a 30-config
+    differential run, and this pins the behaviour so the suite does too.
+    """
+    data = _stack(20, spike=True)
+    out = apply_gamma_filter(data)
+
+    # the spike is replaced by the local median of an otherwise-uniform field, i.e. the field value
+    assert out.values[0, 5, 5] == pytest.approx(20.0)
+    # every other pixel is untouched
+    untouched = out.values.copy()
+    untouched[0, 5, 5] = 20.0
+    assert np.allclose(untouched, 20.0)
+    # reporting changes nothing about that
+    assert sc.identical(out, apply_gamma_filter(data, progress=lambda _e: None))
 
 
 def test_gamma_filter_cancellation_propagates():
@@ -218,14 +234,23 @@ def test_normalizer_announces_the_background_roi_variance_term():
     assert max(e.completed for e in events) == 2, "the announcement must not advance past the total"
 
 
-def test_normalizer_progress_false_gives_identical_output():
-    """Reporting must not change the transmission, its variances or its coords."""
-    sample, ob = _stack(50), _stack(100)
+def test_normalizer_output_is_pinned_to_values_not_to_itself():
+    """The transmission is pinned to computed values, not to a second call of the same function.
 
-    assert sc.identical(
-        normalize_transmission(sample, ob),
-        normalize_transmission(sample, ob, progress=lambda _e: None),
-    )
+    Same reasoning as the gamma-filter test above: comparing the instrumented function against itself
+    cannot catch a control-flow change from moving ~110 lines into the `with` block, because both
+    calls run the same code.
+    """
+    sample, ob = _stack(50), _stack(100)
+    out = normalize_transmission(sample, ob)
+
+    # T = 50 / 100
+    assert np.allclose(out.values, 0.5)
+    # Var(T) = T^2 * (Var(S)/S^2 + Var(O)/O^2) = 0.25 * (50/2500 + 100/10000)
+    assert np.allclose(out.variances, 0.25 * (50 / 2500 + 100 / 10000))
+    assert out.unit == "dimensionless"
+    # reporting changes nothing about that
+    assert sc.identical(out, normalize_transmission(sample, ob, progress=lambda _e: None))
 
 
 def test_normalizer_cancellation_propagates():

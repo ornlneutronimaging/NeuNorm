@@ -248,6 +248,13 @@ def load_event_nexus(  # noqa: C901
         tof_ns = (tof_raw * 1000).astype(np.int64)
         report()
 
+        if n_events:
+            # Guarded because ndarray.min() on an empty array raises: an empty bank is a legitimate
+            # (if useless) file, and it should not turn a diagnostic log line into a crash.
+            logger.info(f"  TOF range: {tof_ns.min():,} - {tof_ns.max():,} ns")
+            logger.info(f"  X range: [{x.min()}, {x.max()}]")
+            logger.info(f"  Y range: [{y.min()}, {y.max()}]")
+
         # Create EventData model
         events = EventData(
             tof=tof_ns,

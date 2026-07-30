@@ -154,6 +154,44 @@ def test_event_loader_count_does_not_overstate_a_failed_read(tmp_path):
     assert max(e.completed for e in events) == 1
 
 
+def test_event_loader_logs_its_data_ranges(nexus_file):
+    """The TOF/X/Y range diagnostics must survive.
+
+    They were deleted by accident during this branch — a scripted edit with a mixed-indent anchor
+    removed them — and the whole suite stayed green, because nothing asserted on them. Pinned here so
+    a future accidental deletion fails instead of passing silently.
+    """
+    captured = io.StringIO()
+    sink_id = logger.add(captured, level="INFO", format="{message}")
+    try:
+        load_event_nexus(nexus_file, detector_shape=DETECTOR)
+        logged = captured.getvalue()
+    finally:
+        logger.remove(sink_id)
+
+    assert "TOF range:" in logged, logged
+    assert "X range:" in logged, logged
+    assert "Y range:" in logged, logged
+
+
+def test_event_loader_survives_an_empty_bank(tmp_path):
+    """An empty event bank is a legitimate file: the range diagnostics must not turn it into a crash.
+
+    `ndarray.min()` on an empty array raises, so the log lines are guarded.
+    """
+    path = tmp_path / "empty.nxs.h5"
+    with h5py.File(path, "w") as hf:
+        bank = hf.create_group("entry/bank1_events")
+        bank.create_dataset("event_id", data=np.array([], dtype=np.int64))
+        bank.create_dataset("event_time_offset", data=np.array([], dtype=np.float64))
+
+    events, sink = _collect()
+    result = load_event_nexus(path, detector_shape=DETECTOR, progress=sink)
+
+    assert result.total_events == 0
+    assert max(e.completed for e in events) == 4, "an empty bank must still complete its four steps"
+
+
 def test_event_loader_stage_is_selectable(nexus_file):
     """An open-beam event load must not be reported as `load_sample`."""
     events, sink = _collect()

@@ -309,6 +309,17 @@ class _NullReporter(ProgressReporter):
     def note(self, detail: str) -> None:  # noqa: ARG002 - no-op by design
         """Do nothing."""
 
+    def _borrowed(self) -> "ProgressReporter":
+        """Return this same no-op reporter.
+
+        Must be overridden alongside :meth:`for_stage` and :meth:`with_offset`. Inheriting the base
+        implementation handed a callee a LIVE reporter over the null sink: it allocated a
+        ``ProgressEvent`` per emit on the path documented to allocate nothing, and — once a borrowed
+        view began sharing its caller's counter cell — mutated this module-level singleton's count,
+        which every unrelated ``progress=False`` call in the process shares.
+        """
+        return self
+
     def for_stage(self, stage: str, total: Optional[int] = None) -> "ProgressReporter":  # noqa: ARG002 - no-op
         """Return this same no-op reporter."""
         return self
