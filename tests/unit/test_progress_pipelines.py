@@ -252,6 +252,41 @@ def test_mars_ccd_skips_the_dark_stage_when_there_is_no_dark(mars_ccd_inputs, tm
     assert max(e.completed for e in stages[STAGE_NORMALIZE]) == 1, "no dark: one division, no dark subtractions"
 
 
+@pytest.mark.parametrize(
+    ("label", "with_dark", "background_roi", "expected_normalize_total"),
+    [
+        ("dark only", True, None, 3),  # two dark subtractions + the division
+        ("neither", False, None, 1),  # the division alone
+        ("background ROI + dark", True, (0, 0, 8, 8), 4),  # + the ROI flux coefficient
+        ("background ROI only", False, (0, 0, 8, 8), 2),
+    ],
+)
+def test_mars_ccd_normalize_total_matches_whichever_branch_runs(
+    mars_ccd_inputs, tmp_path, label, with_dark, background_roi, expected_normalize_total
+):
+    """Four mutually exclusive normalize branches, four different step counts.
+
+    Each branch declares its own total from the helper the normalizer itself uses, so the bar has to
+    finish whichever one runs — a single literal would be right for one branch and wrong for three.
+    """
+    events, sink = _collect()
+
+    run_mars_ccd_pipeline(
+        sample_paths=mars_ccd_inputs["sample_paths"],
+        ob_paths=mars_ccd_inputs["ob_paths"],
+        dark_paths=mars_ccd_inputs["dark_paths"] if with_dark else None,
+        output_path=tmp_path / f"branch_{label.replace(' ', '_')}.h5",
+        background_roi=background_roi,
+        progress=sink,
+    )
+
+    normalize = _by_stage(events)[STAGE_NORMALIZE]
+    assert {e.total for e in normalize} == {expected_normalize_total}, label
+    assert max(e.completed for e in normalize) == expected_normalize_total, (
+        f"{label}: reached {max(e.completed for e in normalize)} of {expected_normalize_total}"
+    )
+
+
 def test_mars_ccd_progress_does_not_change_the_output(mars_ccd_inputs, tmp_path):
     """Reporting is observation only."""
     without = run_mars_ccd_pipeline(
