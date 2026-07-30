@@ -720,6 +720,85 @@ def test_every_pipeline_takes_progress_keyword_only_and_last(name):
     assert parameters["progress"].default is False, f"{name}: progress must default to False"
 
 
+@pytest.mark.parametrize(
+    ("label", "kwargs"),
+    [("normal", {}), ("zero events", {}), ("max_events truncation", {"max_events": 10})],
+)
+def test_the_event_load_total_rests_on_an_exact_step_count(tmp_path, label, kwargs):
+    """The event pipelines declare ``LOAD_EVENT_NEXUS_STEPS * file_count`` as their load total, which is
+    only exact if the loader emits that many ticks on EVERY path. Pinned here, next to the pipelines
+    that depend on it: a zero-event bank and a truncated read must still count four."""
+    from neunorm.loaders.event_loader import LOAD_EVENT_NEXUS_STEPS, load_event_nexus
+
+    n_events = 0 if label == "zero events" else 100
+    path = tmp_path / f"{label.replace(' ', '_')}.h5"
+    with h5py.File(path, "w") as f:
+        bank = f.create_group("entry").create_group("bank1_events")
+        bank.create_dataset("event_id", data=np.zeros(n_events, dtype=np.int32))
+        bank.create_dataset("event_time_offset", data=np.zeros(n_events, dtype=np.float64))
+
+    ticks = []
+    load_event_nexus(
+        path,
+        detector_shape=(_DETECTOR, _DETECTOR),
+        progress=lambda event: ticks.append(event.completed) if not event.detail else None,
+        **kwargs,
+    )
+
+    assert ticks == list(range(1, LOAD_EVENT_NEXUS_STEPS + 1)), f"{label}: {ticks}"
+
+
+def test_progress_false_never_imports_tqdm(tmp_path):
+    """Every pipeline's `progress` docstring says the default is free. `tqdm` is the expensive part —
+    importing `tqdm.auto` probes for ipywidgets — so a full run with reporting off must never load it.
+
+    Run in a fresh interpreter: within the test session other tests have already imported tqdm, so
+    checking `sys.modules` here would pass no matter what the pipeline does.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        f"""
+        import sys
+        import numpy as np
+        from pathlib import Path
+        from PIL import Image
+        from neunorm.pipelines.mars_ccd import run_mars_ccd_pipeline
+
+        directory = Path({str(tmp_path)!r})
+
+        def tiffs(prefix, count, value):
+            paths = []
+            for index in range(count):
+                image = Image.fromarray(np.full((16, 16), float(value + index), dtype=np.float32))
+                exif = image.getexif()
+                exif[65027] = "ExposureTime:30.000000"
+                exif[65022] = f"RunNo:{{1000 + index}}"
+                exif[65025] = "ManufacturerStr:DW936_BV"
+                for tag in (65052, 65054, 65056, 65058):
+                    exif[tag] = "MotSlitVB.RBV:42.3"
+                path = directory / f"{{prefix}}_{{index}}.tiff"
+                image.save(path, exif=exif)
+                paths.append(path)
+            return paths
+
+        run_mars_ccd_pipeline(
+            sample_paths=[tiffs("s", 2, 81)],
+            ob_paths=[tiffs("o", 2, 99)],
+            output_path=directory / "off.h5",
+        )
+        print("TQDM_LOADED" if "tqdm" in sys.modules else "TQDM_ABSENT")
+        """
+    )
+
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert "TQDM_ABSENT" in result.stdout, f"progress=False imported tqdm: {result.stdout}"
+
+
 def test_a_progress_value_a_pipeline_cannot_use_fails_before_the_run_starts(mars_ccd_inputs, tmp_path):
     """A typo'd progress argument must fail loudly, and must fail BEFORE the first file is read.
 
