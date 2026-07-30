@@ -400,6 +400,31 @@ def test_venus_ccd_pipeline_reports_every_stage_end_to_end(venus_ccd_inputs, tmp
     )
 
 
+@pytest.mark.parametrize(
+    ("label", "with_dark", "expected_normalize_total"),
+    [("background ROI + dark", True, 4), ("background ROI only", False, 2)],
+)
+def test_venus_ccd_background_roi_replaces_the_proton_charge_steps(
+    venus_ccd_inputs, tmp_path, label, with_dark, expected_normalize_total
+):
+    """A background ROI is the alternative to proton charge, not an addition, so it declares FEWER
+    normalization steps than the proton-charge route — one flux coefficient instead of two divisions."""
+    events, sink = _collect()
+
+    run_venus_ccd_pipeline(
+        sample_paths=venus_ccd_inputs["sample_paths"],
+        ob_paths=venus_ccd_inputs["ob_paths"],
+        dark_paths=venus_ccd_inputs["dark_paths"] if with_dark else None,
+        output_path=tmp_path / f"vbranch_{label.replace(' ', '_')}.h5",
+        background_roi=(0, 0, 8, 8),
+        progress=sink,
+    )
+
+    normalize = _by_stage(events)[STAGE_NORMALIZE]
+    assert {e.total for e in normalize} == {expected_normalize_total}, label
+    assert max(e.completed for e in normalize) == expected_normalize_total, label
+
+
 def test_venus_ccd_progress_does_not_change_the_output(venus_ccd_inputs, tmp_path):
     without = run_venus_ccd_pipeline(
         sample_paths=venus_ccd_inputs["sample_paths"],
@@ -457,6 +482,30 @@ def test_mars_tpx3_pipeline_counts_allocations_per_file(mars_tpx3_inputs, tmp_pa
     for stage in (STAGE_NORMALIZE, STAGE_EXPORT, STAGE_COMBINE_RUNS, STAGE_GAMMA_FILTER):
         counts = [e.completed for e in stages[stage]]
         assert max(counts) == stages[stage][0].total, f"{stage} stopped at {max(counts)}"
+
+
+@pytest.mark.parametrize(
+    ("label", "background_roi", "expected_normalize_total"),
+    [("no correction", None, 1), ("background ROI", (0, 0, 8, 8), 2)],
+)
+def test_mars_tpx3_normalize_total_follows_the_correction_requested(
+    mars_tpx3_inputs, tmp_path, label, background_roi, expected_normalize_total
+):
+    """MARS TPX3 has no dark and no proton charge, so its only variable is the background ROI."""
+    events, sink = _collect()
+
+    run_mars_tpx3_pipeline(
+        sample_paths=mars_tpx3_inputs["sample_paths"],
+        ob_paths=mars_tpx3_inputs["ob_paths"],
+        output_path=tmp_path / f"tbranch_{label.replace(' ', '_')}.h5",
+        detector_shape=(_DETECTOR, _DETECTOR),
+        background_roi=background_roi,
+        progress=sink,
+    )
+
+    normalize = _by_stage(events)[STAGE_NORMALIZE]
+    assert {e.total for e in normalize} == {expected_normalize_total}, label
+    assert max(e.completed for e in normalize) == expected_normalize_total, label
 
 
 def test_mars_tpx3_progress_does_not_change_the_output(mars_tpx3_inputs, tmp_path):
@@ -628,6 +677,26 @@ def test_venus_tpx3_histogram_reports_the_tof_rebin(venus_histogram_inputs, tmp_
     rebin = _by_stage(events)[STAGE_REBIN_TOF]
     assert [e.detail for e in rebin if e.detail] == ["rebinning sample TOF", "rebinning open beam TOF"]
     assert max(e.completed for e in rebin) == 2
+
+
+def test_venus_tpx3_histogram_per_image_export_counts_files(venus_histogram_inputs, tmp_path):
+    """The same computed export count on a second pipeline, so the helper is not exercised through one
+    call site only. Five TOF frames, no rebin, five files."""
+    events, sink = _collect()
+
+    run_venus_tpx3_histogram_pipeline(
+        sample_hdf5_paths=venus_histogram_inputs["sample_hdf5_paths"],
+        ob_hdf5_paths=venus_histogram_inputs["ob_hdf5_paths"],
+        sample_tiff_paths=venus_histogram_inputs["sample_tiff_paths"],
+        ob_tiff_paths=venus_histogram_inputs["ob_tiff_paths"],
+        output_path=tmp_path / "hist_frames.tiff",
+        tiff_one_file_per_image=True,
+        progress=sink,
+    )
+
+    export = _by_stage(events)[STAGE_EXPORT]
+    assert {e.total for e in export} == {5}
+    assert [e.detail for e in export] == [f"hist_frames_{i:05d}.tiff" for i in range(5)]
 
 
 def test_venus_tpx3_histogram_progress_does_not_change_the_output(venus_histogram_inputs, tmp_path):
