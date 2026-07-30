@@ -40,6 +40,11 @@ def load_stack(
         tell the three loads of a run apart.
     """
 
+    # Materialise before indexing: this function subscripts `paths[0]` and iterates it twice, so a
+    # generator would raise TypeError. The leaf loaders accept one, so this does too.
+    if not hasattr(paths, "__len__"):
+        paths = list(paths)
+
     if not paths:
         raise ValueError("No file paths provided")
 

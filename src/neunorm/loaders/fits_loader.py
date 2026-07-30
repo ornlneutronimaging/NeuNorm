@@ -63,22 +63,24 @@ def load_fits_stack(  # noqa: C901
           along the stack dimension.
     """
 
-    if not paths:
-        raise ValueError("No file paths provided")
-
     # Load data and metadata
     data_list = []
     headers = []
 
     # A non-sized iterable (Path.glob(), a generator) was accepted before this function reported
     # progress and must still be: materialise once so the count has a denominator. Wrapped so an
-    # iterator that raises is logged like any other read failure.
+    # iterator that raises is logged like any other read failure. This runs BEFORE the emptiness
+    # check because a generator is always truthy — an empty glob would otherwise skip the check and
+    # die later with IndexError on `data_list[0]`.
     if not hasattr(paths, "__len__"):
         try:
             paths = list(paths)
         except Exception as e:
             logger.error("Failed to load FITS files: {}", e)
             raise
+
+    if not paths:
+        raise ValueError("No file paths provided")
 
     with resolve_progress(progress, stage, total=len(paths)) as report:
         for path in paths:

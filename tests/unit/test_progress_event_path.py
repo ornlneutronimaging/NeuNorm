@@ -16,6 +16,7 @@ import h5py
 import numpy as np
 import pytest
 import scipp as sc
+from loguru import logger
 
 from neunorm.data_models.core import EventData
 from neunorm.data_models.tof import BinningConfig
@@ -99,19 +100,56 @@ def test_event_loader_announces_each_allocation(nexus_file):
     assert any("converting tof" in d for d in details), details
 
 
-def test_event_loader_counts_its_four_allocation_steps(nexus_file):
-    """The loader has a known step sequence, so it counts 1..4 rather than reporting a single step.
+def test_event_loader_names_each_step_then_counts_it(nexus_file):
+    """Each allocation is NAMED before it runs and COUNTED after it returns.
 
-    A `total=1` bar never renders a completion: tqdm draws it at 0% and, with `leave=False`, clears
-    the line at close before the lone update can be redrawn. Counting the steps makes the bar move
-    through 25/50/75/100% and names which allocation is running at each point.
+    Naming first is what makes a stalled bar diagnostic — it says which allocation is thrashing.
+    Counting only on success is what keeps the count honest: advancing first would report work that a
+    failed read never did. See test_event_loader_count_does_not_overstate_a_failed_read.
     """
     events, sink = _collect()
 
     load_event_nexus(nexus_file, detector_shape=DETECTOR, progress=sink)
 
-    assert [e.completed for e in events] == [1, 2, 3, 4]
+    # note(name) at the current count, then an advancing tick with no detail
+    assert [(e.completed, bool(e.detail)) for e in events] == [
+        (0, True),
+        (1, False),
+        (1, True),
+        (2, False),
+        (2, True),
+        (3, False),
+        (3, True),
+        (4, False),
+    ]
     assert {e.total for e in events} == {4}
+    named = [e.detail for e in events if e.detail]
+    assert named == [
+        f"reading {400:,} events",
+        f"reading {400:,} time offsets",
+        "unrolling event ids to x, y",
+        "converting tof to ns",
+    ]
+
+
+def test_event_loader_count_does_not_overstate_a_failed_read(tmp_path):
+    """A step that raises must not have been counted.
+
+    Regression: the four steps used to advance BEFORE their work, so a failed slab read left the bar
+    claiming a completed step that never happened.
+    """
+    path = tmp_path / "bad_offsets.nxs.h5"
+    with h5py.File(path, "w") as hf:
+        bank = hf.create_group("entry/bank1_events")
+        bank.create_dataset("event_id", data=np.arange(8, dtype=np.int64))
+        bank.create_dataset("event_time_offset", data=np.array([b"x"] * 8, dtype="S1"))
+
+    events, sink = _collect()
+    with pytest.raises(ValueError):
+        load_event_nexus(path, detector_shape=DETECTOR, progress=sink)
+
+    # step 1 (event_id) succeeded; step 2 (time offsets) raised, so the count must stop at 1
+    assert max(e.completed for e in events) == 1
 
 
 def test_event_loader_stage_is_selectable(nexus_file):
@@ -192,15 +230,22 @@ def test_converter_emits_per_chunk_and_notes_the_variance_attach(convert):
 
 
 @pytest.mark.parametrize("convert", [_convert_3d, _convert_2d], ids=["3d", "2d"])
-def test_converter_emits_one_event_per_chunk_when_chunked(convert):
-    """With a chunk size that forces several passes the count really progresses."""
+@pytest.mark.parametrize("n_events", [300, 250, 100, 1], ids=["exact", "remainder", "one-chunk", "one-event"])
+def test_converter_emits_one_event_per_chunk_when_chunked(convert, n_events):
+    """One event per chunk, and `total` must equal the real number of iterations.
+
+    `n_chunks = ceil(n_events / chunk_size)` has to match `range(0, n_events, chunk_size)` exactly or
+    the last chunk reads "chunk N of N-1". Parametrised over an exact split, a split with a remainder
+    (250/100 -> 3), a single full chunk and a single event, since only the exact case was covered.
+    """
+    expected = -(-n_events // 100)
     events, sink = _collect()
 
-    convert(_events(300), chunk_size=100, progress=sink)
+    convert(_events(n_events), chunk_size=100, progress=sink)
 
     per_chunk = [e for e in events if e.detail.startswith("chunk")]
-    assert [e.completed for e in per_chunk] == [1, 2, 3]
-    assert {e.total for e in per_chunk} == {3}
+    assert [e.completed for e in per_chunk] == list(range(1, expected + 1))
+    assert {e.total for e in per_chunk} == {expected}
 
 
 @pytest.mark.parametrize("convert", [_convert_3d, _convert_2d], ids=["3d", "2d"])
@@ -251,15 +296,32 @@ def test_converter_does_not_close_a_caller_supplied_sink(convert):
     assert sink._bars == {}
 
 
-def test_the_ad_hoc_percent_printer_is_gone():
-    """The old `logger.info` chunk-percent print is replaced by the callback, not duplicated.
+def test_chunk_progress_goes_to_the_callback_not_the_log():
+    """A multi-chunk conversion reports through the callback and logs no per-chunk progress line.
 
-    It fired only every tenth chunk with n_chunks > 1, i.e. never below 5 billion events, so it was
-    dead code for every real run — and it wrote to a channel a caller cannot redirect or disable.
+    Replaces a source grep, which tested text rather than behaviour: it passed if an equivalent
+    percent print were reintroduced with different wording, and it read the source by a CWD-relative
+    path so it failed outright when pytest ran from anywhere but the repo root.
+
+    The old print fired only every tenth chunk when there was more than one — never below five
+    billion events — and wrote to a channel a caller cannot redirect or disable.
     """
-    source = Path("src/neunorm/tof/event_converter.py").read_text()
-    assert "Progress:" not in source
-    assert "progress = (i + 1) / n_chunks" not in source
+    captured = io.StringIO()
+    sink_id = logger.add(captured, level="INFO", format="{message}")
+    try:
+        events, sink = _collect()
+        _convert_3d(_events(300), chunk_size=100, progress=sink)
+        logged = captured.getvalue()
+    finally:
+        logger.remove(sink_id)
+
+    # positive control: this conversion DOES log, so an empty capture would not prove anything
+    assert "Converting" in logged, f"the loguru sink captured nothing at all:\n{logged}"
+    # ...but not a per-chunk progress line
+    assert "Progress:" not in logged
+    assert "chunks (" not in logged
+    # the per-chunk information went to the callback instead
+    assert [e.completed for e in events if e.detail.startswith("chunk")] == [1, 2, 3]
 
 
 # --------------------------------------------------------------------------------------
@@ -274,26 +336,21 @@ def _render(fn):
     return buffer.getvalue()
 
 
-def test_rendered_event_loader_bar_is_drawn_with_the_right_shape(nexus_file):
-    """The bar must be drawn, with this stage's name and its four-step denominator.
+def test_rendered_event_loader_bar_reaches_100_percent(nexus_file):
+    """The completed state must be drawn, on any fixture size.
 
-    Deliberately NOT asserting that it reaches 100% here: the four steps over a 400-event fixture
-    finish inside tqdm's 0.1 s `mininterval`, so tqdm draws only the opening frame and `leave=False`
-    clears the line at close. That is tqdm behaving as designed, not a defect, and asserting 100%
-    would make this test a hostage to fixture size.
-
-    Completion IS covered where the work is slow enough to redraw — see
-    test_rendered_bar_reaches_100_percent_and_never_goes_backwards in test_progress_load_path.py,
-    over 1000 files. Verified by hand on a 40,000,000-event, 610 MiB NeXus file, where this bar
-    rendered:
-        load_sample:   0%|          | 0/4 [00:00<?, ?item/s]
-        load_sample:  50%|#####     | 2/4 [00:00<00:00, 17.78item/s, reading 40,000,000 events]
-        load_sample: 100%|##########| 4/4 [00:00<00:00,  7.64item/s, unrolling event ids to x, y]
+    This became assertable only once `close()` refreshes each bar before retiring it. Before that,
+    tqdm suppressed the final tick inside its 0.1 s `mininterval` and a fast four-step load rendered
+    `0% -> 25% -> 50% -> 75%` and then vanished — indistinguishable from a stall. Found by rendering a
+    20,000,000-event file; no event-level assertion could see it, because the events were correct.
     """
     out = _render(lambda: load_event_nexus(nexus_file, detector_shape=DETECTOR, progress=True))
 
     assert "load_sample" in out, f"no bar was drawn at all:\n{out}"
     assert "0/4" in out, f"bar has the wrong denominator (expected 4 steps):\n{out}"
+    assert "100%" in out, f"bar never rendered its completion:\n{out}"
+    percents = [int(m) for m in re.findall(r"(\d+)%\|", out)]
+    assert percents == sorted(percents), f"rendered progress went backwards: {percents}"
 
 
 @pytest.mark.parametrize("convert", [_convert_3d, _convert_2d], ids=["3d", "2d"])

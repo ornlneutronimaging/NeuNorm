@@ -52,13 +52,14 @@ def _check_advance(advance: int) -> None:
         raise ValueError(f"advance must be >= 1, got {advance}")
 
 
-# Stage labels. These are the shared vocabulary between the functions that emit progress and the
-# tests that assert on the emitted sequence; keep them stable, they reach users through events.
+# Stage labels: the shared vocabulary between the functions that emit progress and the tests that
+# assert on the emitted sequence. Keep them stable — they reach users through events. One bar is kept
+# per label, so two different kinds of work must not share one; whole-stack allocations inside a stage
+# are reported with `note()` on that stage instead of inventing a label for each.
 STAGE_LOAD_SAMPLE = "load_sample"
 STAGE_LOAD_OB = "load_ob"
 STAGE_LOAD_DARK = "load_dark"
-STAGE_STACK_FRAMES = "stack_frames"
-STAGE_ATTACH_VARIANCES = "attach_variances"
+STAGE_HISTOGRAM = "histogram"
 STAGE_COMBINE_RUNS = "combine_runs"
 STAGE_GAMMA_FILTER = "gamma_filter"
 STAGE_REBIN_TOF = "rebin_tof"
@@ -66,16 +67,15 @@ STAGE_NORMALIZE = "normalize"
 STAGE_EXPORT = "export"
 
 __all__ = [
-    "STAGE_ATTACH_VARIANCES",
     "STAGE_COMBINE_RUNS",
     "STAGE_EXPORT",
     "STAGE_GAMMA_FILTER",
+    "STAGE_HISTOGRAM",
     "STAGE_LOAD_DARK",
     "STAGE_LOAD_OB",
     "STAGE_LOAD_SAMPLE",
     "STAGE_NORMALIZE",
     "STAGE_REBIN_TOF",
-    "STAGE_STACK_FRAMES",
     "NULL_REPORTER",
     "Progress",
     "ProgressCallback",
@@ -356,8 +356,14 @@ class _TqdmSink:
         must invoke it in a ``finally``. A stage with an indeterminate total never reaches a
         completion point and an abandoned stage never finishes, so without this they would stay open
         until garbage collection.
+
+        Each bar is refreshed once before closing. tqdm suppresses redraws inside its ``mininterval``,
+        so the final tick of a fast stage was often never drawn: a four-step load rendered
+        ``0% -> 25% -> 50% -> 75%`` and then vanished, which reads as a stall rather than a finish.
+        Refreshing writes the true final state exactly once.
         """
         for bar in self._bars.values():
+            bar.refresh()
             bar.close()
         self._bars.clear()
 

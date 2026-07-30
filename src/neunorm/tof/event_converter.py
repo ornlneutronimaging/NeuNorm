@@ -13,7 +13,7 @@ from neunorm.data_models.core import EventData
 from neunorm.data_models.tof import BinningConfig
 from neunorm.processing.uncertainty_calculator import attach_poisson_variance
 from neunorm.tof.binning import create_tof_bins
-from neunorm.utils.progress import STAGE_NORMALIZE, ProgressLike, resolve_progress
+from neunorm.utils.progress import STAGE_HISTOGRAM, ProgressLike, resolve_progress
 
 
 def convert_events_to_histogram(
@@ -27,7 +27,7 @@ def convert_events_to_histogram(
     detector_time_offset: sc.Variable = sc.scalar(0, unit="us"),
     *,
     progress: ProgressLike = False,
-    stage: str = STAGE_NORMALIZE,
+    stage: str = STAGE_HISTOGRAM,
 ) -> sc.DataArray:
     """
     Convert event-mode data to 3D TOF histogram.
@@ -167,7 +167,7 @@ def convert_events_to_2d_histogram(
     chunk_size: int = 500_000_000,
     *,
     progress: ProgressLike = False,
-    stage: str = STAGE_NORMALIZE,
+    stage: str = STAGE_HISTOGRAM,
 ) -> sc.DataArray:
     """Convert events to 2D spatial histogram (no TOF).
 
@@ -213,12 +213,14 @@ def convert_events_to_2d_histogram(
     )
 
     n_events = len(events)
-    if n_events == 0:
-        # No events: just attach variance to the empty histogram and return.
-        return attach_poisson_variance(hist_2d)
-
+    # A zero-event run still reports, matching the 3-D converter: two sibling functions must not give
+    # a caller two different contracts for the same input.
     n_chunks = int(np.ceil(n_events / chunk_size))
     with resolve_progress(progress, stage, total=n_chunks) as report:
+        if n_events == 0:
+            # No events: just attach variance to the empty histogram and return.
+            report.note("attaching Poisson variance")
+            return attach_poisson_variance(hist_2d)
         # Process events in chunks to keep memory usage bounded.
         for index, start in enumerate(range(0, n_events, chunk_size), start=1):
             end = min(start + chunk_size, n_events)

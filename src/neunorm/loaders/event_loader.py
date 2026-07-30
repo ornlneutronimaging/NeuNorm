@@ -138,6 +138,16 @@ def load_event_nexus(  # noqa: C901
     max_events : int, optional
         Maximum number of events to load (for testing/memory limits)
         If None, loads all events
+    progress : bool or callable, optional
+        Progress reporting, off by default. ``True`` draws a :mod:`tqdm` bar; a callable receives a
+        :class:`~neunorm.utils.progress.ProgressEvent`. There is no item axis here, so this counts
+        the four full-event-length allocations — two HDF5 slab reads, the event-id unroll and the TOF
+        conversion — naming each before it runs and counting it only after it returns, so a failed
+        read never reports work that did not happen. Those allocations are where the event path peaks
+        in memory. See :mod:`neunorm.utils.progress`.
+    stage : str, optional
+        Stage label the events carry. Defaults to ``STAGE_LOAD_SAMPLE``; pass ``STAGE_LOAD_OB`` or
+        ``STAGE_LOAD_DARK`` when loading those, so a callback can tell the loads of a run apart.
 
     Returns
     -------
@@ -211,29 +221,32 @@ def load_event_nexus(  # noqa: C901
                 n_events = total_events_in_file
                 logger.info(f"  Loading {n_events:,} events")
 
-            # There is no item axis to count here — one h5py slab read followed by four numpy passes,
-            # each allocating a full event-length array. That is where the event path peaks in memory,
-            # so each step is announced before it runs: a bar parked on one of these names is the only
-            # way a user learns which allocation is thrashing.
-            report(detail=f"reading {n_events:,} events")
+            # No item axis, but a known four-step sequence: two h5py slab reads then two numpy
+            # passes, each allocating a full event-length array. That is where the event path peaks
+            # in memory.
+            #
+            # Each step is NAMED before it runs and COUNTED after it returns. The name is what makes
+            # a stalled bar diagnostic — it says which allocation is thrashing — while counting only
+            # on success means a failed read never reports work that did not happen.
+            report.note(f"reading {n_events:,} events")
             event_id = event_bank_group["event_id"][:n_events].astype(np.int32)
-            report(detail=f"reading {n_events:,} time offsets")
+            report()
+            report.note(f"reading {n_events:,} time offsets")
             tof_raw = event_bank_group["event_time_offset"][:n_events].astype(np.float64)
+            report()
 
         # Unroll event_id to x, y pixel coordinates
         # event_id is linearized: pixel_id = y * y_bins + x
         x_bins, y_bins = detector_shape
-        report(detail="unrolling event ids to x, y")
+        report.note("unrolling event ids to x, y")
         y = ((event_id - event_id_offset) // y_bins).astype(np.int32)
         x = ((event_id - event_id_offset) % y_bins).astype(np.int32)
+        report()
 
         # Convert TOF from microseconds to nanoseconds
-        report(detail="converting tof to ns")
+        report.note("converting tof to ns")
         tof_ns = (tof_raw * 1000).astype(np.int64)
-
-        logger.info(f"  TOF range: {tof_ns.min():,} - {tof_ns.max():,} ns")
-        logger.info(f"  X range: [{x.min()}, {x.max()}]")
-        logger.info(f"  Y range: [{y.min()}, {y.max()}]")
+        report()
 
         # Create EventData model
         events = EventData(

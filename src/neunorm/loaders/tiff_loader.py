@@ -57,21 +57,23 @@ def load_tiff_stack(  # noqa: C901
           float-convertible or differ across files).
     """
 
-    if not paths:
-        raise ValueError("No file paths provided")
-
     data_list = []
     metadata_list = []
 
     # A non-sized iterable (Path.glob(), a generator) was accepted before this function reported
     # progress and must still be: materialise once so the count has a denominator. Wrapped so an
-    # iterator that raises is logged like any other read failure.
+    # iterator that raises is logged like any other read failure. This runs BEFORE the emptiness
+    # check because a generator is always truthy — an empty glob would otherwise skip the check and
+    # die later with IndexError on `data_list[0]`.
     if not hasattr(paths, "__len__"):
         try:
             paths = list(paths)
         except Exception as e:
             logger.error("Error loading TIFF stack: {}", e)
             raise
+
+    if not paths:
+        raise ValueError("No file paths provided")
 
     with resolve_progress(progress, stage, total=len(paths)) as report:
         for path in paths:
