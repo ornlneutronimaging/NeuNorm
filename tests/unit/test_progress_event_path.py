@@ -117,16 +117,30 @@ def test_event_loader_progress_false_loads_identical_events(nexus_file):
     assert without.total_events == with_progress.total_events
 
 
-def test_event_loader_releases_owned_bars_on_a_missing_file(tmp_path):
-    """A failed open must not leave a bar open. The reporter is resolved before the file is touched,
-    so only the context manager can release it."""
+def test_event_loader_releases_owned_bars_when_the_read_fails(tmp_path):
+    """A failure AFTER the first event is emitted must still release the bar.
+
+    Getting this test to mean anything took three attempts, recorded so it is not weakened later:
+      - a MISSING file raises before `resolve_progress` runs, so no reporter exists;
+      - a file with no event bank raises before the first `report(...)`, and a bar is only built when
+        the sink is first CALLED, so still nothing exists to leak.
+    Both passed with the release deleted. Only a failure past the first emit exercises the context
+    manager, so here `event_time_offset` holds strings: the first step reports, then `.astype(float)`
+    raises with a live bar.
+    """
+    path = tmp_path / "bad_offsets.nxs.h5"
+    with h5py.File(path, "w") as hf:
+        bank = hf.create_group("entry/bank1_events")
+        bank.create_dataset("event_id", data=np.arange(8, dtype=np.int64))
+        bank.create_dataset("event_time_offset", data=np.array([b"x"] * 8, dtype="S1"))
+
     sink = _TqdmSink()
-    reporter = ProgressReporter(sink, STAGE_NORMALIZE, total=1, owns_sink=True)
+    reporter = ProgressReporter(sink, STAGE_NORMALIZE, total=4, owns_sink=True)
 
-    with pytest.raises(FileNotFoundError):
-        load_event_nexus(tmp_path / "absent.nxs.h5", progress=reporter)
+    with pytest.raises(ValueError):
+        load_event_nexus(path, detector_shape=DETECTOR, progress=reporter)
 
-    assert sink._bars == {}
+    assert sink._bars == {}, "a bar opened before the failure was not released"
 
 
 # --------------------------------------------------------------------------------------
