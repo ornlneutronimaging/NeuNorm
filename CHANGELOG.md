@@ -28,7 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handlers that `add()` cannot faithfully restore, and silently rewriting an application's log format
   is worse than a corrupted bar. Routing NeuNorm's log records around a bar is the caller's to do,
   in their own application; the progress documentation will cover how.
-  **No pipeline accepts `progress` yet** — wiring it through the six pipelines is follow-up work.
   This entry also corrects the long-stale `neunorm.utils` docstring, which advertised "progress
   reporting" that did not exist and "validation helpers" that never have.
 
@@ -132,7 +131,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-run job, and `rebin_tof`, whose median reduction is one of the slowest stages in a TOF run.
   What is still not reported, deliberately: the ROI crop, the open-beam/dark averaging, dead/hot pixel
   detection, the spatial rebin and the air-region correction — single whole-array passes between named
-  stages. The `progress` docstring of each pipeline says so rather than leaving it to be inferred.
+  stages. Each pipeline's `progress` docstring lists what its own run leaves unreported, so it is not
+  left to be inferred from a bar that seems to pause — the lists differ, because the pipelines do:
+  VENUS TPX1 detects dead pixels but not hot ones, MARS CCD and MARS TPX3 have no air-region correction,
+  and only the TOF pipelines rebin.
 
 - **Per-image TIFF export** — `write_tiff_stack(..., one_file_per_image=True)`, exposed on the
   VENUS TOF pipelines as `tiff_one_file_per_image=True`, writes **one scitiff file per spectral

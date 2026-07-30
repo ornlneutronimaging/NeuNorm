@@ -159,13 +159,29 @@ def _render(call):
 
 
 def _rendered_bars(output):
-    """Per-stage rendered percentages, in the order tqdm drew them."""
+    """Per-stage rendered percentages, in the order tqdm drew them.
+
+    Only stages with a known total appear here — those are the ones that can reach 100%. A stage with
+    ``total=None`` renders as a plain step counter with no percentage and no bar, so it is invisible to
+    this and belongs to :func:`_rendered_counters` instead. That split is deliberate: a helper that
+    silently skipped the counters would make "every bar completed" pass while a stage drew nothing.
+    """
     bars = {}
     for line in output.replace("\r", "\n").split("\n"):
         match = re.match(r"^([a-z_]+):\s+(\d+)%\|", line.strip())
         if match:
             bars.setdefault(match.group(1), []).append(int(match.group(2)))
     return bars
+
+
+def _rendered_counters(output):
+    """Per-stage rendered step counts for the stages whose total is not knowable in advance."""
+    counters = {}
+    for line in output.replace("\r", "\n").split("\n"):
+        match = re.match(r"^([a-z_]+):\s+(\d+)step", line.strip())
+        if match:
+            counters.setdefault(match.group(1), []).append(int(match.group(2)))
+    return counters
 
 
 # --------------------------------------------------------------------------------------
@@ -479,9 +495,44 @@ def test_mars_tpx3_pipeline_counts_allocations_per_file(mars_tpx3_inputs, tmp_pa
     histogram_counts = [e.completed for e in stages[STAGE_HISTOGRAM]]
     assert histogram_counts == sorted(histogram_counts), histogram_counts
     assert max(histogram_counts) >= 4, "one chunk per file across both families"
-    for stage in (STAGE_NORMALIZE, STAGE_EXPORT, STAGE_COMBINE_RUNS, STAGE_GAMMA_FILTER):
+    # Independent expected numbers, not `stages[stage][0].total` — comparing a count against the total
+    # the same code declared would pass however wrong both were.
+    for stage, expected in ((STAGE_NORMALIZE, 1), (STAGE_EXPORT, 4), (STAGE_COMBINE_RUNS, 2), (STAGE_GAMMA_FILTER, 4)):
         counts = [e.completed for e in stages[stage]]
-        assert max(counts) == stages[stage][0].total, f"{stage} stopped at {max(counts)}"
+        assert {e.total for e in stages[stage]} == {expected}, f"{stage} declared {stages[stage][0].total}"
+        assert max(counts) == expected, f"{stage} stopped at {max(counts)} of {expected}"
+
+
+def test_mars_tpx3_rendered_output_includes_the_unknown_total_stage(mars_tpx3_inputs, tmp_path):
+    """The event path renders two shapes at once, and the one without a total is easy to lose.
+
+    Histogramming has no knowable total, so tqdm draws it as a plain step counter — no percentage, no
+    bar glyph. I missed it in a hand-written render check whose filter only matched `NN%|`, which is
+    exactly how a stage that draws nothing would go unnoticed. Both shapes are asserted here.
+    """
+    output = _render(
+        lambda: run_mars_tpx3_pipeline(
+            sample_paths=mars_tpx3_inputs["sample_paths"],
+            ob_paths=mars_tpx3_inputs["ob_paths"],
+            output_path=tmp_path / "tpx3_rendered.h5",
+            detector_shape=(_DETECTOR, _DETECTOR),
+            progress=True,
+        )
+    )
+
+    bars = _rendered_bars(output)
+    counters = _rendered_counters(output)
+
+    assert {STAGE_LOAD_SAMPLE, STAGE_LOAD_OB, STAGE_COMBINE_RUNS, STAGE_GAMMA_FILTER, STAGE_NORMALIZE} <= set(bars)
+    for stage, percents in bars.items():
+        assert percents == sorted(percents), f"{stage} rendered backwards: {percents}"
+        assert percents[-1] == 100, f"{stage} never rendered 100%: {percents}"
+
+    assert STAGE_HISTOGRAM in counters, f"the histogram stage drew nothing: {sorted(counters)}"
+    steps = counters[STAGE_HISTOGRAM]
+    assert steps == sorted(steps), f"the histogram counter went backwards: {steps}"
+    assert max(steps) >= 4, f"one chunk per file across both families, got {steps}"
+    assert STAGE_HISTOGRAM not in bars, "a stage with no total must not render a percentage"
 
 
 @pytest.mark.parametrize(
@@ -600,6 +651,30 @@ def test_venus_tpx3_event_per_image_tiff_export_counts_files(venus_event_inputs,
     assert {e.total for e in export} == {5}, "five TOF bins, five files"
     assert [e.completed for e in export] == [1, 2, 3, 4, 5]
     assert [e.detail for e in export] == [f"frames_{i:05d}.tiff" for i in range(5)]
+
+
+def test_venus_tpx3_event_accepts_an_unsized_path_sequence(venus_event_inputs, tmp_path):
+    """A generator of paths must not abort the run.
+
+    Regression: this pipeline computed its load total with a bare `len()`, so a generator or
+    `Path.glob(...)` raised TypeError before a single file was opened — including with the default
+    `progress=False` — where the pre-progress version simply ran. Its five siblings never did, because
+    they route through `total_across_groups`.
+    """
+    events, sink = _collect()
+
+    run_venus_tpx3_event_pipeline(
+        sample_paths=(path for path in venus_event_inputs["sample_paths"]),
+        ob_paths=(path for path in venus_event_inputs["ob_paths"]),
+        binning=venus_event_inputs["binning"],
+        output_path=tmp_path / "unsized.h5",
+        detector_shape=(_DETECTOR, _DETECTOR),
+        progress=sink,
+    )
+
+    load = _by_stage(events)[STAGE_LOAD_SAMPLE]
+    assert {e.total for e in load} == {None}, "an unsized input must report an unknown total"
+    assert max(e.completed for e in load) == 4, "the file was still read, four allocations reported"
 
 
 def test_venus_tpx3_event_progress_does_not_change_the_output(venus_event_inputs, tmp_path):

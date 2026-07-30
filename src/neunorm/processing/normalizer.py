@@ -58,8 +58,16 @@ def normalize_with_dark_step_count(background_roi=None, proton_charge_sample=Non
     """How many progress steps :func:`normalize_with_dark` will report for these arguments.
 
     Its two dark subtractions plus whatever the delegate reports, so a pipeline declaring this as one
-    stage of a run gets one continuous count instead of a bar that stops short. See
-    :func:`normalize_step_count`.
+    stage of a run gets one continuous count instead of a bar that stops short.
+
+    Parameters
+    ----------
+    background_roi : optional
+        The ``background_roi`` that will be passed to :func:`normalize_with_dark`, or ``None``.
+        Forwarded verbatim to :func:`normalize_step_count`.
+    proton_charge_sample : optional
+        The ``proton_charge_sample`` that will be passed, or ``None``. Ignored when ``background_roi``
+        is given, since the two corrections are mutually exclusive.
 
     Returns
     -------

@@ -154,8 +154,9 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         all input runs rather than restarting per run — then the run combine, the TOF rebin when one is
         requested, the normalization, and the export, which is per file with
         ``tiff_one_file_per_image=True``. Not every operation in between is reported: the metadata
-        reads, the ROI crop, the dead/hot pixel detection and the spatial rebin are single passes that
-        run between named stages. See :mod:`neunorm.utils.progress`.
+        reads, the ROI crop, the dead-pixel detection, the statistics analysis, the spatial rebin and the
+        air-region correction are single passes that run between named stages. See
+        :mod:`neunorm.utils.progress`.
 
     Notes
     -----

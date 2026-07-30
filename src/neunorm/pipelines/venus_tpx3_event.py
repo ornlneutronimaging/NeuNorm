@@ -44,6 +44,7 @@ from neunorm.utils.progress import (
     STAGE_REBIN_TOF,
     Progress,
     resolve_progress,
+    total_across_groups,
 )
 
 
@@ -147,8 +148,10 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
         allocations it performs, so a single huge file still shows movement. Histogramming is counted per
         event chunk with no total — the chunk count follows from a file's event count, which is not known
         until it is read. Then the run combine, the TOF rebin when one is requested, the normalization
-        and the export, which is per file with ``tiff_one_file_per_image=True``. See
-        :mod:`neunorm.utils.progress`.
+        and the export, which is per file with ``tiff_one_file_per_image=True``. Not every operation in
+        between is reported: the metadata reads, the ROI crop, the dead/hot pixel detection, the
+        statistics analysis, the spatial rebin and the air-region correction are single passes that run
+        between named stages. See :mod:`neunorm.utils.progress`.
 
     Notes
     -----
@@ -182,8 +185,21 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
         # the chunk count follows from a file's event count, which is not known until it is read — and one
         # reporter serves both families, whose borrowed views share its counter cell so chunks accumulate
         # into a single monotonic count.
-        load_sample = run_progress.for_stage(STAGE_LOAD_SAMPLE, total=LOAD_EVENT_NEXUS_STEPS * len(sample_paths))
-        load_ob = run_progress.for_stage(STAGE_LOAD_OB, total=LOAD_EVENT_NEXUS_STEPS * len(ob_paths))
+        #
+        # The file counts go through `total_across_groups`, which returns None for an input with no
+        # length rather than calling len() on it. A bare len() here made a generator or `Path.glob(...)`
+        # abort the whole run — on the default `progress=False` path too — where before it simply ran.
+        # `[paths]` wraps each flat sequence as a single group, since this pipeline takes one file per
+        # run rather than a group per run.
+        n_sample_files = total_across_groups([sample_paths])
+        n_ob_files = total_across_groups([ob_paths])
+        load_sample = run_progress.for_stage(
+            STAGE_LOAD_SAMPLE,
+            total=None if n_sample_files is None else LOAD_EVENT_NEXUS_STEPS * n_sample_files,
+        )
+        load_ob = run_progress.for_stage(
+            STAGE_LOAD_OB, total=None if n_ob_files is None else LOAD_EVENT_NEXUS_STEPS * n_ob_files
+        )
         histogram = run_progress.for_stage(STAGE_HISTOGRAM)
 
         samples = []

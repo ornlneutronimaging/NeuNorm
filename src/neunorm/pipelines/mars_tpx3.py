@@ -98,8 +98,9 @@ def run_mars_tpx3_pipeline(  # noqa: C901
         cheap item: each file is named as it is opened and then counted in the four full-event-length
         allocations it performs, so a single huge file still shows movement. Histogramming is counted per
         event chunk with no total — the chunk count is only known once a file's event count is read.
-        Then the run combine, the gamma filter, the normalization and the export. See
-        :mod:`neunorm.utils.progress`.
+        Then the run combine, the gamma filter, the normalization and the export. Not every operation in
+        between is reported: the ROI crop, the open-beam averaging and the dead/hot pixel detection are
+        single whole-array passes that run between named stages. See :mod:`neunorm.utils.progress`.
 
     Notes
     -----
