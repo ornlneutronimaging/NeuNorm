@@ -81,6 +81,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   completion the caller's next event would rebuild it from zero — a pipeline's bar flickering back to
   0% on every instrumented call it makes.
 
+- **Progress reporting through export, and through the dark-corrected normalizer** — `write_hdf5`,
+  `write_tiff_stack` and `normalize_with_dark` accept a keyword-only `progress` and `stage`. HDF5 is
+  the primary output format and `write_hdf5` has no item axis — the bulk data leaves in one or two
+  whole-array writes — so it reports named steps and can never be per-image: the transmission
+  dataset, the uncertainty dataset, the coordinate/mask section, and the metadata section. Its total
+  is computed, because the uncertainty write happens only for variance-bearing data and the metadata
+  section only when metadata is supplied. Every emit sits **outside** the writer's five best-effort
+  `except Exception` handlers: those exist so one un-writable metadata key cannot abort the bulk-data
+  write, and a tick placed inside one would swallow a cancelling callback's exception, turning a
+  user's abort into a silently skipped metadata key. `write_tiff_stack` in `one_file_per_image` mode
+  is the one export path with a determinate item count and emits one event per file, naming it; stack
+  mode reports its single multi-page write as one step, so the default export path is not silent
+  either. `normalize_with_dark` — `normalize_transmission`'s sibling on the CCD path, which was
+  reporting nothing — reports its two dark subtractions and then hands its reporter to the normalizer,
+  so a dark-corrected run counts through both functions as **one continuous bar** rather than
+  restarting. Both totals come from one shared helper so they cannot drift apart. Reporting does not
+  change a single byte of any written file.
+
 - **Per-image TIFF export** — `write_tiff_stack(..., one_file_per_image=True)`, exposed on the
   VENUS TOF pipelines as `tiff_one_file_per_image=True`, writes **one scitiff file per spectral
   image** (one normalization per file) named `<stem>_00000.tiff`, `<stem>_00001.tiff`, … in spectral

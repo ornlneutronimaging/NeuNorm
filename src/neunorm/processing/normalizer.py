@@ -21,6 +21,21 @@ from neunorm.utils.progress import STAGE_NORMALIZE, ProgressLike, resolve_progre
 BackgroundROILike = RegionsLike
 
 
+def _normalize_step_count(background_roi, proton_charge_sample) -> int:
+    """How many progress steps :func:`normalize_transmission` will report for these arguments.
+
+    Shared with :func:`normalize_with_dark`, which reports its own dark subtractions and then hands its
+    reporter down: a borrowed reporter keeps the OUTER total, so the caller must declare the combined
+    count. Deriving both from one function is what stops the two drifting apart.
+    """
+    n_steps = 1  # the division itself always runs
+    if background_roi is not None:
+        n_steps += 1
+    elif proton_charge_sample is not None:
+        n_steps += 2  # sample and OB are separate full-array divisions
+    return n_steps
+
+
 def _as_plain_int_bounds(bounds: tuple) -> tuple[int, int, int, int]:
     """Coerce NumPy integer bounds to built-in ``int`` (JSON provenance stays numeric)."""
     return tuple(int(v) if isinstance(v, np.integer) else v for v in bounds)
@@ -442,13 +457,7 @@ def normalize_transmission(  # noqa: C901
     # of the stack. The count is computed from the arguments because the work varies — the
     # background-ROI and proton-charge corrections are mutually exclusive, and either may be absent —
     # so a literal total would leave the bar short or overshooting.
-    n_steps = 1  # the division itself always runs
-    if background_roi is not None:
-        n_steps += 1
-    elif proton_charge_sample is not None:
-        n_steps += 2  # sample and OB are separate full-array divisions
-
-    with resolve_progress(progress, stage, total=n_steps) as report:
+    with resolve_progress(progress, stage, total=_normalize_step_count(background_roi, proton_charge_sample)) as report:
         # Background-ROI flux normalization: when no proton charge is available
         # (e.g. MARS), scale each image by its pooled mean counts in one or more sample-free ROIs so
         # per-image beam-flux differences cancel: T = (S/mean(S[B])) / (O/mean(O[B])). First-order UQ.
@@ -590,6 +599,9 @@ def normalize_with_dark(
     pc_uncertainty: float = 0.005,
     background_roi: Optional[BackgroundROILike] = None,
     background_roi_strict: bool = True,
+    *,
+    progress: ProgressLike = False,
+    stage: str = STAGE_NORMALIZE,
 ) -> sc.DataArray:
     """Dark-correct and normalize in one step, treating the shared dark frame correctly.
 
@@ -626,6 +638,12 @@ def normalize_with_dark(
     background_roi_strict : bool, optional
         See ``normalize_transmission``: ``False`` skips the strictly-positive/finite pooled-mean
         guard and lets zeros propagate (legacy 1.x semantics).
+    progress : bool or callable, optional
+        Progress reporting, off by default. Reports the two dark subtractions, then hands the reporter
+        to ``normalize_transmission`` so its steps continue the same count instead of restarting. The
+        declared total therefore covers both. See :mod:`neunorm.utils.progress`.
+    stage : str, optional
+        Stage label the events carry. Defaults to ``STAGE_NORMALIZE``.
 
     Returns
     -------
@@ -634,17 +652,28 @@ def normalize_with_dark(
     """
     roi_list = as_region_list(background_roi, arg_name="background_roi") if background_roi is not None else None
 
-    sample_dc = subtract_dark(sample, dark)
-    ob_dc = subtract_dark(ob, dark)
-    transmission = normalize_transmission(
-        sample_dc,
-        ob_dc,
-        proton_charge_sample,
-        proton_charge_ob,
-        pc_uncertainty,
-        background_roi=background_roi,
-        background_roi_strict=background_roi_strict,
-    )
+    # Two dark subtractions of our own, then whatever normalize_transmission will report. It receives
+    # this reporter and borrows it, and a borrowed reporter keeps the OUTER total, so the combined
+    # count has to be declared here or the bar would stop short.
+    n_steps = 2 + _normalize_step_count(background_roi, proton_charge_sample)
+    with resolve_progress(progress, stage, total=n_steps) as report:
+        report.note("dark-correcting sample")
+        sample_dc = subtract_dark(sample, dark)
+        report()
+        report.note("dark-correcting open beam")
+        ob_dc = subtract_dark(ob, dark)
+        report()
+        transmission = normalize_transmission(
+            sample_dc,
+            ob_dc,
+            proton_charge_sample,
+            proton_charge_ob,
+            pc_uncertainty,
+            background_roi=background_roi,
+            background_roi_strict=background_roi_strict,
+            progress=report,
+            stage=stage,
+        )
 
     # Correct the shared-dark double-count. normalize_transmission propagated
     # Var(dark) through BOTH numerator and denominator as if they were independent; the true

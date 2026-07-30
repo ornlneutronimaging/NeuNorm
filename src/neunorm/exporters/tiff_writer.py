@@ -13,6 +13,8 @@ import scipp as sc
 from scitiff import DAQMetadata
 from scitiff.io import save_scitiff
 
+from neunorm.utils.progress import STAGE_EXPORT, ProgressLike, resolve_progress
+
 
 def _json_default(value):
     """JSON fallback for metadata leaves: keep NumPy scalars numeric; stringify the rest (e.g. Path)."""
@@ -102,6 +104,8 @@ def write_tiff_stack(
     *,
     one_file_per_image: bool = False,
     concat_stdevs_and_mask: Optional[bool] = None,
+    progress: ProgressLike = False,
+    stage: str = STAGE_EXPORT,
 ) -> list[Path]:
     """Write transmission as TIFF using scitiff.
 
@@ -161,6 +165,14 @@ def write_tiff_stack(
         carries **no uncertainty** — read it from the HDF5 output (the primary format) instead. Masks
         and metadata travel either way.
 
+    progress : bool or callable, optional
+        Progress reporting, off by default. With ``one_file_per_image=True`` this emits one event per
+        file written, naming it — the only export path with a determinate item count. In stack mode it
+        reports the single multi-page write as one step, so the default path is not silent either.
+        See :mod:`neunorm.utils.progress`.
+    stage : str, optional
+        Stage label the events carry. Defaults to ``STAGE_EXPORT``.
+
     Returns
     -------
     list[Path]
@@ -198,14 +210,23 @@ def write_tiff_stack(
         # plane and an all-zero mask. Uncertainty lives in the HDF5 output; opt back in explicitly.
         concat = False if concat_stdevs_and_mask is None else concat_stdevs_and_mask
         written: list[Path] = []
-        for index in range(n_images):
-            frame_path = output_path.with_name(f"{output_path.stem}_{index:0{width}d}{output_path.suffix}")
-            dg = _build_scitiff_datagroup(image[spectral_dim, index], metadata, daqmetadata)
-            save_scitiff(dg, frame_path, concat_stdevs_and_mask=concat)
-            written.append(frame_path)
-        return written
+        # Genuinely iterable: one file per spectral image, and at a flat per-file cost this is the one
+        # export path where a determinate bar is possible.
+        with resolve_progress(progress, stage, total=n_images) as report:
+            for index in range(n_images):
+                frame_path = output_path.with_name(f"{output_path.stem}_{index:0{width}d}{output_path.suffix}")
+                dg = _build_scitiff_datagroup(image[spectral_dim, index], metadata, daqmetadata)
+                save_scitiff(dg, frame_path, concat_stdevs_and_mask=concat)
+                written.append(frame_path)
+                report(detail=frame_path.name)
+            return written
 
     # Stack mode: write transmission, stdevs, and masks into one multi-page file (unchanged default).
+    # One whole-array write, so a single step — but reported all the same, so the default export path
+    # is not silent while a large multi-page file goes to disk.
     concat = True if concat_stdevs_and_mask is None else concat_stdevs_and_mask
-    save_scitiff(_build_scitiff_datagroup(image, metadata, daqmetadata), output_path, concat_stdevs_and_mask=concat)
-    return [output_path]
+    with resolve_progress(progress, stage, total=1) as report:
+        report.note(f"writing {output_path.name}")
+        save_scitiff(_build_scitiff_datagroup(image, metadata, daqmetadata), output_path, concat_stdevs_and_mask=concat)
+        report()
+        return [output_path]

@@ -30,6 +30,7 @@ import inspect
 
 import pytest
 
+from neunorm.exporters.hdf5_writer import write_hdf5
 from neunorm.exporters.tiff_writer import write_tiff_stack
 from neunorm.filters.gamma_filter import apply_gamma_filter
 from neunorm.loaders.event_loader import load_event_data, load_event_nexus
@@ -43,7 +44,7 @@ from neunorm.pipelines.venus_ccd import run_venus_ccd_pipeline
 from neunorm.pipelines.venus_tpx1 import run_venus_tpx1_pipeline
 from neunorm.pipelines.venus_tpx3_event import run_venus_tpx3_event_pipeline
 from neunorm.pipelines.venus_tpx3_histogram import run_venus_tpx3_histogram_pipeline
-from neunorm.processing.normalizer import normalize_transmission
+from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
 from neunorm.tof.event_converter import (
     convert_events_to_2d_histogram,
     convert_events_to_histogram,
@@ -159,6 +160,23 @@ RELEASED_POSITIONAL = {
     "apply_gamma_filter": (
         apply_gamma_filter,
         ["data", "threshold_sigma", "kernel_size", "preserve_variance"],
+    ),
+    "write_hdf5": (
+        write_hdf5,
+        ["output_path", "transmission", "dead_pixel_mask", "hot_pixel_mask", "metadata"],
+    ),
+    "normalize_with_dark": (
+        normalize_with_dark,
+        [
+            "sample",
+            "ob",
+            "dark",
+            "proton_charge_sample",
+            "proton_charge_ob",
+            "pc_uncertainty",
+            "background_roi",
+            "background_roi_strict",
+        ],
     ),
     "normalize_transmission": (
         normalize_transmission,

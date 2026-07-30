@@ -12,6 +12,8 @@ import numpy as np
 import scipp as sc
 from loguru import logger
 
+from neunorm.utils.progress import STAGE_EXPORT, ProgressLike, resolve_progress
+
 
 def _is_nested_sequence(value) -> bool:
     """Return True if ``value`` is a list/tuple that contains a list/tuple element.
@@ -88,6 +90,9 @@ def write_hdf5(  # noqa: C901
     dead_pixel_mask: str = "dead",
     hot_pixel_mask: str = "hot",
     metadata: Optional[dict] = None,
+    *,
+    progress: ProgressLike = False,
+    stage: str = STAGE_EXPORT,
 ) -> None:
     """Write processed data to HDF5 with full provenance.
 
@@ -136,6 +141,14 @@ def write_hdf5(  # noqa: C901
         Name of the hot pixel mask in transmission.masks (default: "hot")
     metadata : Optional[dict]
         Dictionary of metadata to store in the file (default: None)
+    progress : bool or callable, optional
+        Progress reporting, off by default. HDF5 is the primary output format and this function has no
+        item axis — the bulk data goes out in one or two whole-array writes — so it reports named
+        steps, never per image: the transmission dataset, the uncertainty dataset when the data carries
+        variances, the coordinate/mask section, and the metadata section when metadata is supplied.
+        See :mod:`neunorm.utils.progress`.
+    stage : str, optional
+        Stage label the events carry. Defaults to ``STAGE_EXPORT``.
     """
 
     # Ensure output directory exists
@@ -145,16 +158,32 @@ def write_hdf5(  # noqa: C901
     if not os.access(output_path.parent, os.W_OK):
         raise PermissionError(f"No write permission for directory: {output_path.parent}")
 
-    with h5py.File(output_path, "w") as f:
+    # HDF5 is the primary output format and this function has no item axis: the bulk data goes out in
+    # one or two whole-array `create_dataset` calls, so it can never be reported per image. What is
+    # worth naming is which of those writes is running — they are the only expensive parts — plus the
+    # small coordinate/mask and metadata sections. The total is computed because the uncertainty write
+    # happens only for variance-bearing data and the metadata section only when metadata is supplied.
+    n_steps = 2  # the transmission dataset, then coordinates and masks
+    if transmission.variances is not None:
+        n_steps += 1
+    if metadata:
+        n_steps += 1
+
+    with resolve_progress(progress, stage, total=n_steps) as report, h5py.File(output_path, "w") as f:
         # Write transmission data and unit
+        report.note("writing transmission")
         f.create_dataset("transmission", data=transmission.values.astype("float32"))
         f["transmission"].attrs["units"] = str(transmission.unit)
+        report()
 
         # Write uncertainty if available
         if transmission.variances is not None:
+            report.note("writing uncertainty")
             f.create_dataset("uncertainty", data=np.sqrt(transmission.variances).astype("float32"))
+            report()
 
         # Write coordinates
+        report.note("writing coordinates and masks")
         for coord in transmission.coords:
             try:
                 f.create_dataset(f"/{coord}", data=transmission.coords[coord].values)
@@ -184,12 +213,18 @@ def write_hdf5(  # noqa: C901
                     "rename it (it must not reuse the canonical 'dead'/'hot' names unless it is the designated mask)"
                 )
             f.create_dataset(path, data=transmission.masks[mask_name].values)
+        report()
 
         # Write metadata. Provenance is best-effort: a single un-writable key — a bad value
         # (ragged/unserializable) or a malformed/colliding name — must never abort the write or
         # leave a corrupt, partially-written file. Nested list/tuple values are
         # serialized as round-trippable JSON (read back with json.loads(dataset.asstr()[()])).
+        #
+        # The progress emits stay OUTSIDE the per-key try below. That handler deliberately swallows
+        # everything so one bad key cannot abort the bulk-data write — which would also swallow a
+        # cancelling callback's exception, turning a user's abort into a silently skipped metadata key.
         if metadata:
+            report.note("writing metadata")
             for key, value in metadata.items():
                 name = None
                 created_here = False
@@ -204,5 +239,6 @@ def write_hdf5(  # noqa: C901
                     _write_metadata_value(f, name, value)
                 except Exception as exc:  # noqa: BLE001 - metadata is best-effort; never abort the bulk-data write
                     _discard_failed_metadata(f, name, key, exc, created_here)
+            report()
 
     logger.info("HDF5 file written to {}", output_path)
