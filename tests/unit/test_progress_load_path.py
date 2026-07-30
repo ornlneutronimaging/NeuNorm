@@ -7,7 +7,9 @@ from `np.stack` plus the variances copy) lands *after* the last file. Without th
 100% and then goes silent through the part that can exhaust RAM.
 """
 
+import contextlib
 import io
+import re
 from pathlib import Path
 
 import pytest
@@ -321,3 +323,64 @@ def test_loader_releases_owned_bars_on_a_read_failure(paths_fn):
         loader([paths[0], missing], progress=reporter)
 
     assert sink._bars == {}, "loader left a bar open after a failed read"
+
+
+# --------------------------------------------------------------------------------------
+# what the bar actually RENDERS — no event-level test can see this
+# --------------------------------------------------------------------------------------
+
+
+def _render(loader, paths):
+    """Return the text tqdm draws for a real `progress=True` load.
+
+    `contextlib.redirect_stderr` works here because tqdm resolves `sys.stderr` when it builds the
+    bar. (It does NOT work for loguru, which holds its own stream reference — see the cancellation
+    test, which uses a loguru sink for that reason.)
+    """
+    buffer = io.StringIO()
+    with contextlib.redirect_stderr(buffer):
+        loader(paths, progress=True)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize("paths_fn", [_tiffs, _fits], ids=["tiff", "fits"])
+def test_rendered_bar_reaches_100_percent_and_never_goes_backwards(paths_fn):
+    """Regression, found by watching a real 1000-file load rather than by any event assertion.
+
+    The sink used to close and forget a bar at completion, so the two allocation notes that follow
+    the read loop each built a NEW bar at 0% and closed it again. The rendered count ran
+    0% -> 32% -> 64% -> 0% -> 0%, i.e. it appeared to restart twice at the very end of the load.
+    Every event-level test passed throughout, because the events themselves were correct.
+    """
+    paths = paths_fn()
+    loader = load_tiff_stack if paths[0].suffix == ".tif" else load_fits_stack
+
+    out = _render(loader, paths)
+
+    assert "100%" in out, f"bar never reached 100%:\n{out}"
+    percents = [int(m) for m in re.findall(r"(\d+)%\|", out)]
+    assert percents == sorted(percents), f"rendered progress went backwards: {percents}"
+
+
+@pytest.mark.parametrize("paths_fn", [_tiffs, _fits], ids=["tiff", "fits"])
+def test_rendered_bar_shows_the_allocation_notes(paths_fn):
+    """The notes exist to name the phase a stalled bar is stuck in, so they must be VISIBLE.
+
+    They were previously erased: each landed on a freshly-built bar that was closed immediately,
+    and `leave=False` clears a closed bar's line.
+    """
+    paths = paths_fn()
+    loader = load_tiff_stack if paths[0].suffix == ".tif" else load_fits_stack
+
+    out = _render(loader, paths)
+
+    assert "stacking" in out, f"the stack-build note never rendered:\n{out}"
+    assert "attaching variances" in out, f"the variances note never rendered:\n{out}"
+
+
+# Not asserted here: that the per-file detail is VISIBLE mid-load. Whether tqdm redraws between two
+# items is its own `mininterval` policy, not NeuNorm's contract, and on this 3-file fixture the load
+# finishes inside one interval so only the first and last frames are ever drawn. Delivery of the
+# detail is covered by test_loader_emits_one_event_per_file; its rendering was confirmed by hand on
+# a 1000-file load, where the bar read
+#   load_sample:  32%|###2  | 322/1000 [00:00<00:00, 3217.59item/s, frame_00320.tif]

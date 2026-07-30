@@ -319,16 +319,21 @@ class _TqdmSink:
         if event.detail:
             # A note advances nothing, so nothing would redraw it; refresh explicitly in that case.
             bar.set_postfix_str(event.detail, refresh=not advanced)
-        if event.total is not None and event.completed >= event.total:
-            bar.close()
-            del self._bars[event.stage]
+
+        # A bar is deliberately NOT closed when it reaches its total: :meth:`close` is the only thing
+        # that retires one. Closing here looked tidier but rendered badly — a stage that reports
+        # anything after its last item (a note about the allocations that follow a read loop, say)
+        # found its bar gone, built a fresh one at 0%, and closed that too. Watching a real 1000-file
+        # load showed the count run 0% -> 31% -> 70% and then jump back to 0% twice, with the notes
+        # erased before they could be read, because `leave=False` clears each closed line.
 
     def close(self) -> None:
-        """Close and forget every bar still open.
+        """Close and forget every bar.
 
-        A stage with an indeterminate total never reaches a completion point, and a stage abandoned
-        by an early error never finishes, so without this those bars stay open until garbage
-        collection.
+        The only thing that retires a bar, including one that has reached its total, so a caller
+        must invoke it in a ``finally``. A stage with an indeterminate total never reaches a
+        completion point and an abandoned stage never finishes, so without this they would stay open
+        until garbage collection.
         """
         for bar in self._bars.values():
             bar.close()

@@ -238,24 +238,32 @@ def test_tqdm_sink_adopts_a_total_that_becomes_known_late():
     bar.close()
 
 
-def test_tqdm_sink_closes_and_forgets_a_finished_bar():
-    """A completed stage really closes its bar, and a stage label used again gets a NEW bar rather
-    than writes to the closed one. Asserting `disable is True` and object identity rather than the
-    private `_bars` bookkeeping, which would only mirror the `del` in the implementation."""
+def test_tqdm_sink_keeps_a_completed_bar_so_later_events_land_on_it():
+    """A bar that reaches its total must SURVIVE, so a later event for that stage updates it.
+
+    It used to be closed and forgotten at completion, which looked tidy and rendered badly: a note
+    arriving after the last item found no bar, built a fresh one at 0%, and closed that too. A real
+    1000-file load showed the count run 0% -> 32% -> 64% and then snap back to 0% twice, with the
+    notes erased before they could be read. `close()` is now the only thing that retires a bar.
+    """
     from neunorm.utils.progress import _TqdmSink
 
     sink = _TqdmSink()
     sink(ProgressEvent(STAGE_LOAD_SAMPLE, 1, 2))
-    first = sink._bars[STAGE_LOAD_SAMPLE]
+    bar = sink._bars[STAGE_LOAD_SAMPLE]
     sink(ProgressEvent(STAGE_LOAD_SAMPLE, 2, 2))
 
-    assert first.disable is True, "a finished bar must actually be closed"
+    assert bar.disable is False, "a completed bar must stay open until close()"
+    assert sink._bars[STAGE_LOAD_SAMPLE] is bar
 
-    sink(ProgressEvent(STAGE_LOAD_SAMPLE, 1, 2))  # reused label must not write to the closed bar
-    second = sink._bars[STAGE_LOAD_SAMPLE]
-    assert second is not first
-    assert second.disable is False
+    # a note after completion updates the SAME bar rather than spawning another
+    sink(ProgressEvent(STAGE_LOAD_SAMPLE, 2, 2, "stacking 2 frames"))
+    assert sink._bars[STAGE_LOAD_SAMPLE] is bar
+    assert bar.n == 2
+
     sink.close()
+    assert bar.disable is True
+    assert sink._bars == {}
 
 
 def test_tqdm_sink_close_finalizes_indeterminate_and_abandoned_bars():
