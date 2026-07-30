@@ -7,10 +7,12 @@ from `np.stack` plus the variances copy) lands *after* the last file. Without th
 100% and then goes silent through the part that can exhaust RAM.
 """
 
+import io
 from pathlib import Path
 
 import numpy as np
 import pytest
+from loguru import logger
 
 from neunorm.loaders.fits_loader import load_fits_stack
 from neunorm.loaders.stack_loader import load_stack
@@ -139,23 +141,40 @@ def test_callback_raising_mid_load_propagates(loader, paths_fn):
     ],
     ids=["tiff", "fits"],
 )
-def test_cancelling_is_not_reported_as_a_read_failure(loader, paths_fn, message, caplog):
+def test_cancelling_is_not_reported_as_a_read_failure(loader, paths_fn, message):
     """A cancelling callback must not be logged as an I/O error.
 
     Both loaders wrap their read in `except Exception: logger.error(...); raise`. If the tick were
-    emitted inside that try, cancelling would tell the user their files failed to load. Pinning the
-    tick's placement, not just its existence.
+    emitted inside that try, cancelling would tell the user their files failed to load. This pins
+    the tick's placement, not merely its existence.
+
+    Captured through a loguru sink, NOT pytest's `caplog`: loguru does not route to stdlib logging,
+    so `caplog.text` is always empty here and any `not in caplog.text` assertion would pass no
+    matter where the tick sat. The first half of this test is a positive control proving the sink
+    really does capture the message, so the negative half cannot pass by the sink being broken.
     """
+    captured = io.StringIO()
+    sink_id = logger.add(captured, level="ERROR", format="{message}")
+    try:
+        # Positive control: a real read failure MUST reach the sink.
+        with pytest.raises(Exception, match=".*"):
+            loader([Path("no-such-directory") / "missing.tif"], progress=False)
+        assert message in captured.getvalue(), "the loguru sink is not capturing the loader's error"
 
-    def cancel(event):
-        if event.completed == 1:
-            raise _CancelledError("stop")
+        captured.seek(0)
+        captured.truncate()
 
-    with caplog.at_level("ERROR"):
+        # The actual assertion: cancelling must not produce that same error line.
+        def cancel(event):
+            if event.completed == 1:
+                raise _CancelledError("stop")
+
         with pytest.raises(_CancelledError):
             loader(paths_fn(), progress=cancel)
 
-    assert message not in caplog.text
+        assert message not in captured.getvalue()
+    finally:
+        logger.remove(sink_id)
 
 
 # --------------------------------------------------------------------------------------
