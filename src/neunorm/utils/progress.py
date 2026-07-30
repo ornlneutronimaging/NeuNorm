@@ -132,7 +132,7 @@ class ProgressReporter:
     progress bars.
     """
 
-    __slots__ = ("_completed", "_offset", "_owns_sink", "_sink", "_stage", "_total")
+    __slots__ = ("_counter", "_offset", "_owns_sink", "_sink", "_stage", "_total")
 
     def __init__(
         self,
@@ -141,12 +141,18 @@ class ProgressReporter:
         offset: int = 0,
         total: Optional[int] = None,
         owns_sink: bool = False,
+        counter: Optional[list] = None,
     ) -> None:
         self._sink = sink
         self._stage = stage
         self._offset = int(offset)
         self._total = None if total is None else int(total)
-        self._completed = 0
+        # The count lives in a one-element cell rather than an int so a borrowed view can SHARE it.
+        # A callee that advances must move the same number its caller reads, or the caller's next
+        # advance re-emits a position the callee already reported and the absolute count goes
+        # backwards — `bar.update(event.completed - bar.n)` would then compute a negative delta.
+        # `for_stage` and `with_offset` deliberately start fresh cells: those are new counts.
+        self._counter = [0] if counter is None else counter
         # Only a sink NeuNorm built may be closed by close(). A caller's callback might be a
         # reusable object that happens to have a close() method, and closing it would release
         # something NeuNorm does not own.
@@ -165,7 +171,7 @@ class ProgressReporter:
     @property
     def completed(self) -> int:
         """The absolute count last emitted (offset plus items advanced here)."""
-        return self._offset + self._completed
+        return self._offset + self._counter[0]
 
     def __call__(self, advance: int = 1, detail: str = "") -> None:
         """Advance by ``advance`` items and emit one event.
@@ -182,11 +188,11 @@ class ProgressReporter:
             If ``advance`` is not positive. A count that can move backwards is not a progress count.
         """
         _check_advance(advance)
-        self._completed += int(advance)
+        self._counter[0] += int(advance)
         self._sink(
             ProgressEvent(
                 stage=self._stage,
-                completed=self._offset + self._completed,
+                completed=self._offset + self._counter[0],
                 total=self._total,
                 detail=detail,
             )
@@ -198,7 +204,14 @@ class ProgressReporter:
         Handed to a callee so it can report without retiring bars its caller still needs. Everything
         the callee cares about — sink, stage, offset, total — is preserved; only ownership is dropped.
         """
-        return ProgressReporter(self._sink, self._stage, offset=self.completed, total=self._total, owns_sink=False)
+        return ProgressReporter(
+            self._sink,
+            self._stage,
+            offset=self._offset,
+            total=self._total,
+            owns_sink=False,
+            counter=self._counter,
+        )
 
     def note(self, detail: str) -> None:
         """Emit an event at the current count, advancing nothing.
@@ -215,7 +228,7 @@ class ProgressReporter:
         self._sink(
             ProgressEvent(
                 stage=self._stage,
-                completed=self._offset + self._completed,
+                completed=self._offset + self._counter[0],
                 total=self._total,
                 detail=detail,
             )

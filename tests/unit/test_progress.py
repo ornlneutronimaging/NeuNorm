@@ -100,6 +100,31 @@ def test_resolve_progress_borrows_an_existing_reporter_without_rebinding_it():
     assert borrowed._owns_sink is False
 
 
+def test_a_borrowed_reporter_shares_the_caller_s_count():
+    """A callee's advances must move the SAME count the caller reads.
+
+    Regression: `_borrowed()` used to snapshot the caller's position into a fresh counter, so after a
+    callee advanced, the caller's next advance re-emitted a number the callee had already reported —
+    the sequence went [1, 2, 3, 4, 3]. `ProgressEvent.completed` is documented absolute, and the
+    documented adapter `bar.update(event.completed - bar.n)` would compute a NEGATIVE delta there.
+    """
+    events, sink = _collect()
+    caller = resolve_progress(sink, STAGE_LOAD_SAMPLE, total=6)
+    caller()
+    caller()
+
+    callee = resolve_progress(caller)  # borrowed view handed to an inner function
+    callee()
+    callee()
+
+    caller()  # the caller carries on afterwards
+
+    counts = [e.completed for e in events]
+    assert counts == [1, 2, 3, 4, 5], counts
+    assert counts == sorted(counts), "the absolute count went backwards"
+    assert caller.completed == 5, "the caller must see work the callee did"
+
+
 def test_a_borrowed_reporter_close_does_not_touch_the_owner_s_sink():
     """Closing a borrowed reporter is a no-op; closing the owning one releases the bars."""
     from neunorm.utils.progress import _TqdmSink
