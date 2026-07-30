@@ -38,7 +38,22 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable, Iterator, Optional, Union
 
+import numpy as np
 from loguru import logger
+
+
+def _check_advance(advance: int) -> None:
+    """Reject an advance that is not a positive integer.
+
+    Checked on the ``progress=False`` path too, deliberately. Almost every test in the suite runs
+    with progress disabled, so validating only when reporting is enabled would let a bad emit site
+    ship and surface for the first time in a user's session with ``progress=True``.
+    """
+    if isinstance(advance, bool) or not isinstance(advance, (int, np.integer)):
+        raise TypeError(f"advance must be an int, got {type(advance).__name__}")
+    if advance < 1:
+        raise ValueError(f"advance must be >= 1, got {advance}")
+
 
 # Stage labels. These are the shared vocabulary between the functions that emit progress and the
 # tests that assert on the emitted sequence; keep them stable, they reach users through events.
@@ -155,7 +170,16 @@ class ProgressReporter:
 
         Stages with no item axis report named steps instead: build the reporter with
         ``total=None`` and call this once per step with a ``detail``, so something still moves.
+
+        Raises
+        ------
+        TypeError
+            If ``advance`` is not an integer. A float would be truncated, so ``advance=0.9`` would
+            silently emit an event that advanced nothing.
+        ValueError
+            If ``advance`` is not positive. A count that can move backwards is not a progress count.
         """
+        _check_advance(advance)
         self._completed += int(advance)
         self._sink(
             ProgressEvent(
@@ -174,6 +198,18 @@ class ProgressReporter:
         """A reporter for the same stage and total that starts counting from ``offset``."""
         return ProgressReporter(self._sink, self._stage, offset=offset, total=self._total)
 
+    def close(self) -> None:
+        """Release anything the sink is holding open.
+
+        Only meaningful for ``progress=True``, where NeuNorm owns tqdm bars: a stage with an
+        indeterminate total never reaches a completion point, and a stage abandoned by an early
+        error never finishes, so neither closes on its own. Call this from a ``finally`` around the
+        run. Safe and free for a user callback or for ``progress=False``.
+        """
+        closer = getattr(self._sink, "close", None)
+        if closer is not None:
+            closer()
+
 
 def _null_sink(event: ProgressEvent) -> None:  # noqa: ARG001 - signature must match the sink type
     """Discard an event."""
@@ -191,8 +227,14 @@ class _NullReporter(ProgressReporter):
     def __init__(self) -> None:
         super().__init__(_null_sink)
 
-    def __call__(self, advance: int = 1, detail: str = "") -> None:  # noqa: ARG002 - no-op by design
-        """Do nothing."""
+    def __call__(self, advance: int = 1, detail: str = "") -> None:  # noqa: ARG002 - detail unused by design
+        """Validate the advance, then do nothing.
+
+        The validation is not skipped: it is what stops a bad emit site from passing unnoticed
+        through a suite that runs almost entirely with progress disabled. No event is built and no
+        counter is touched, so the per-item cost stays two comparisons.
+        """
+        _check_advance(advance)
 
     def for_stage(self, stage: str, total: Optional[int] = None) -> "ProgressReporter":  # noqa: ARG002 - no-op
         """Return this same no-op reporter."""
@@ -201,6 +243,9 @@ class _NullReporter(ProgressReporter):
     def with_offset(self, offset: int) -> "ProgressReporter":  # noqa: ARG002 - no-op by design
         """Return this same no-op reporter."""
         return self
+
+    def close(self) -> None:
+        """Nothing is held open."""
 
 
 #: Shared no-op reporter used whenever ``progress`` is ``False``.
@@ -238,6 +283,17 @@ class _TqdmSink:
             bar.close()
             del self._bars[event.stage]
 
+    def close(self) -> None:
+        """Close and forget every bar still open.
+
+        A stage with an indeterminate total never reaches a completion point, and a stage abandoned
+        by an early error never finishes, so without this those bars stay open until garbage
+        collection.
+        """
+        for bar in self._bars.values():
+            bar.close()
+        self._bars.clear()
+
 
 def resolve_progress(
     progress: Union[Progress, ProgressReporter],
@@ -246,20 +302,26 @@ def resolve_progress(
 ) -> ProgressReporter:
     """Turn a caller's ``progress`` argument into a :class:`ProgressReporter`.
 
-    Idempotent: passing a reporter back in returns it (re-staged if ``stage`` is given), so a
-    function can accept either a user's ``progress`` value or a reporter its caller already built
-    and treat both the same way.
+    Idempotent: an existing reporter is returned **unchanged**, so a function can accept either a
+    user's ``progress`` value or a reporter its caller already built and treat both the same way.
+
+    ``stage`` and ``total`` bind only when building a reporter from a bool or a callable. They are
+    deliberately ignored for an existing reporter, because that reporter already carries the offset
+    and the grand total its caller bound — re-binding them here would reset the offset to zero and
+    replace the run-wide total with a local one, so a count spanning several input runs would
+    restart per run and report the wrong denominator. A caller that genuinely wants a different
+    stage must ask for it explicitly with :meth:`ProgressReporter.for_stage`.
 
     Parameters
     ----------
     progress : bool, callable, or ProgressReporter
         ``False`` for no reporting, ``True`` to let NeuNorm drive tqdm, a callable to receive
-        :class:`ProgressEvent` objects, or an existing reporter to reuse.
+        :class:`ProgressEvent` objects, or an existing reporter, which is returned as-is.
     stage : str
-        Stage label to bind. Ignored when ``progress`` is ``False``.
+        Stage label to bind. Ignored when ``progress`` is ``False`` or already a reporter.
     total : Optional[int]
-        Item total to bind, or ``None`` when indeterminate. Applied together with ``stage``, so an
-        already-built reporter passed in without a ``stage`` keeps its own total.
+        Item total to bind, or ``None`` when indeterminate. Ignored when ``progress`` is ``False``
+        or already a reporter.
 
     Returns
     -------
@@ -272,7 +334,7 @@ def resolve_progress(
         If ``progress`` is neither a bool, nor callable, nor a reporter.
     """
     if isinstance(progress, ProgressReporter):
-        return progress.for_stage(stage, total) if stage else progress
+        return progress
     if progress is False:
         return NULL_REPORTER
     if progress is True:
@@ -297,13 +359,23 @@ def tqdm_safe_logging() -> Iterator[None]:
     Only used for ``progress=True``, where NeuNorm owns the bar. When a caller supplies their own
     callback NeuNorm leaves logging alone.
 
+    **Only loguru's own pristine default stderr handler is displaced.** A handler carrying any
+    custom configuration is left in place, even though it will corrupt the bar. loguru's public
+    ``add()`` cannot faithfully recreate one: a handler's format is stored as an opaque
+    ``ColoredFormat`` object, not a string, so re-adding it would silently substitute loguru's
+    defaults and permanently discard the host's format, filter, serialization and colour policy.
+    A shredded bar is a cosmetic problem; silently rewriting an application's logging is not.
+
     Notes
     -----
-    - If no handler is writing to ``sys.stderr`` — a host application has taken over loguru
-      configuration — this does nothing rather than fight for the stream.
-    - loguru exposes no public API for enumerating handlers or reading a handler's format, so
-      discovery uses ``logger._core.handlers`` and restoration re-adds ``sys.stderr`` with the
-      original level only. Handler ids change across the context; nothing may depend on them.
+    - Does nothing when there is no pristine default stderr handler — including when a host
+      application has taken loguru over, which is exactly when it must not interfere.
+    - Detection and inspection use ``logger._core.handlers`` and the handler's private attributes;
+      loguru exposes no public API for either. Handler ids change across the context, so nothing
+      may depend on them.
+    - Restoration is guaranteed: it runs before the temporary sink is removed, and removing that
+      sink tolerates its prior disappearance. Otherwise a failure there would leave the session
+      with no stderr handler at all, silently swallowing every later log record.
     - ``contextlib.redirect_stderr`` does **not** capture loguru output, so it is not an
       alternative to this.
     """
@@ -311,27 +383,38 @@ def tqdm_safe_logging() -> Iterator[None]:
 
     core = getattr(logger, "_core", None)
     handlers = dict(getattr(core, "handlers", {})) if core is not None else {}
-    stderr_levels = {
-        handler_id: getattr(handler, "_levelno", 0)
+    # loguru's untouched default: stderr sink, DEBUG, no filter, no serialization, no queue, and a
+    # static format. Anything else cannot be put back as it was, so it is not taken away.
+    pristine = [
+        handler_id
         for handler_id, handler in handlers.items()
         if getattr(getattr(handler, "_sink", None), "_stream", None) is sys.stderr
-    }
+        and getattr(handler, "_levelno", None) == logger.level("DEBUG").no
+        and getattr(handler, "_filter", "?") is None
+        and getattr(handler, "_serialize", True) is False
+        and getattr(handler, "_enqueue", True) is False
+        and getattr(handler, "_is_formatter_dynamic", True) is False
+    ]
 
-    if not stderr_levels:
+    if not pristine:
         yield
         return
 
-    for handler_id in stderr_levels:
+    for handler_id in pristine:
         logger.remove(handler_id)
-    # Keep the most permissive of the levels we displaced so nothing is dropped meanwhile.
     sink_id = logger.add(
         lambda message: tqdm.write(message, end="", file=sys.stderr),
-        level=min(stderr_levels.values()),
-        colorize=True,
+        # Match the default handler's own colour behavior rather than forcing ANSI into a pipe.
+        colorize=sys.stderr.isatty(),
     )
     try:
         yield
     finally:
-        logger.remove(sink_id)
-        for level in stderr_levels.values():
-            logger.add(sys.stderr, level=level)
+        # Restore FIRST, so no failure below can leave the session without a stderr handler.
+        for _ in pristine:
+            logger.add(sys.stderr)
+        try:
+            logger.remove(sink_id)
+        except ValueError:
+            # Something inside the context reconfigured loguru and took the sink with it.
+            pass

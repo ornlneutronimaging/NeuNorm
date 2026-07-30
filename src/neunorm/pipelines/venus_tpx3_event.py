@@ -44,12 +44,13 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     roi: Optional[ROILike] = None,
     air_roi: Optional[RegionLike] = None,
     rebin_by_tof: Optional[bool | int | list | tuple] = False,
-    rebin_reduction: Optional[Literal["mean", "sum", "median"]] = None,
     rebin_by_spatial: Optional[int | tuple[int, int]] = None,
     detector_shape: tuple[int, int] = (514, 514),
     event_id_offset: int = 1_000_000,
     bank_name: str = "bank100",
     flight_path: sc.Variable = sc.scalar(VENUS_FLIGHT_PATH_M, unit="m"),
+    *,
+    rebin_reduction: Optional[Literal["mean", "sum", "median"]] = None,
     tiff_one_file_per_image: bool = False,
 ) -> sc.DataArray:
     """Execute VENUS TPX3 event normalization pipeline.

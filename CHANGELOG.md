@@ -27,17 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   follow-up work; this entry adds only the contract, and fixes the long-stale `neunorm.utils`
   docstring that already advertised "progress reporting".
 
-### Changed
-
-- **Public signatures of all six pipelines and `write_tiff_stack` are now guarded by tests**
-  (`tests/unit/test_public_signatures.py`). Each pins its released positional parameter order, so a
-  parameter can no longer be inserted mid-signature and silently re-bind every argument after it.
-  This is a regression that already shipped: `rebin_reduction` was added immediately after
-  `rebin_by_tof` in the three VENUS TOF pipelines, shifting every later positional parameter — five
-  of them in `venus_tpx3_event`. No signature changes in this entry, only the guard; new parameters
-  must be **appended**, preferably keyword-only. Callers passing optional arguments positionally
-  should switch to keywords, which every in-repo and documented call site already does.
-
 - **Per-image TIFF export** — `write_tiff_stack(..., one_file_per_image=True)`, exposed on the
   VENUS TOF pipelines as `tiff_one_file_per_image=True`, writes **one scitiff file per spectral
   image** (one normalization per file) named `<stem>_00000.tiff`, `<stem>_00001.tiff`, … in spectral
@@ -96,6 +85,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a pointer to the region-statistics parameters. Output-file provenance records a JSON summary
   (shape, selected-pixel count, source, sha256), including `air_roi`. Rectangle-only inputs are
   bit-identical to 2.2.x.
+
+### Changed
+
+- **Parameters added since v2.2.3 are now keyword-only, and the released positional order is guarded
+  by tests.** `rebin_reduction` and `tiff_one_file_per_image` on the three VENUS TOF pipelines, and
+  `one_file_per_image` and `concat_stdevs_and_mask` on `write_tiff_stack`, are keyword-only. All four
+  had been added positionally on `next`, and `rebin_reduction` in particular was inserted immediately
+  after `rebin_by_tof`, shifting every later positional parameter — five of them in
+  `venus_tpx3_event`. None of it had been released, so the shift is undone rather than frozen: the
+  positional signatures of all six pipelines and of `write_tiff_stack` are now byte-for-byte those of
+  v2.2.3, and `tests/unit/test_public_signatures.py` pins them against the tag (not against the
+  current code) plus asserts that anything added since is keyword-only and that no released parameter
+  becomes positional-only. **No action is needed for any released caller** — this restores v2.2.3's
+  order rather than departing from it. Callers written against `next` since 3bd2b07 that passed those
+  four arguments positionally must switch to keywords; every in-repo and documented call site already
+  used keywords.
 
 ### Fixed
 

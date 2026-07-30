@@ -99,6 +99,7 @@ def write_tiff_stack(
     transmission: sc.DataArray,
     metadata: Optional[dict] = None,
     daqmetadata: Optional[dict] = None,
+    *,
     one_file_per_image: bool = False,
     concat_stdevs_and_mask: Optional[bool] = None,
 ) -> list[Path]:

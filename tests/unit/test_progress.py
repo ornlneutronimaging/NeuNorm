@@ -76,17 +76,40 @@ def test_progress_rejects_anything_else(bad):
         resolve_progress(bad)
 
 
-def test_resolve_progress_is_idempotent():
-    """A reporter passed back in is reused, so a function can accept either a user's `progress`
-    value or a reporter its caller already built."""
-    events, sink = _collect()
+def test_resolve_progress_returns_an_existing_reporter_untouched():
+    """An existing reporter must come back unchanged even when a stage and total are supplied.
+
+    Re-binding here would reset the offset and replace the run-wide total with a local one — see
+    test_leaf_resolving_a_reporter_keeps_the_flat_count for the count that used to break.
+    """
+    _, sink = _collect()
     original = resolve_progress(sink, STAGE_LOAD_SAMPLE, total=5)
 
     assert resolve_progress(original) is original
+    assert resolve_progress(original, STAGE_NORMALIZE, total=99) is original
+    assert (original.stage, original.total) == (STAGE_LOAD_SAMPLE, 5)
 
-    restaged = resolve_progress(original, STAGE_NORMALIZE)
-    assert restaged is not original
-    assert (restaged.stage, restaged.total) == (STAGE_NORMALIZE, None)
+
+def test_leaf_resolving_a_reporter_keeps_the_flat_count():
+    """Regression: a leaf that resolves the reporter its caller passed down must not restart the
+    count or shrink the denominator.
+
+    This is the exact pattern the module docstring prescribes — a pipeline binds the grand total and
+    a per-run offset, and each leaf call resolves what it was handed. It previously emitted
+    completed=[1, 2, 1, 2] with total=2 throughout, instead of [1, 2, 3, 4] with total=4.
+    """
+    events, sink = _collect()
+    base = resolve_progress(sink, STAGE_LOAD_SAMPLE, total=4)
+
+    offset = 0
+    for run_files in (["a", "b"], ["c", "d"]):
+        leaf = resolve_progress(base.with_offset(offset), STAGE_LOAD_SAMPLE, total=len(run_files))
+        for name in run_files:
+            leaf(detail=name)
+        offset += len(run_files)
+
+    assert [e.completed for e in events] == [1, 2, 3, 4]
+    assert {e.total for e in events} == {4}
 
 
 # --------------------------------------------------------------------------------------
@@ -162,6 +185,25 @@ def test_advance_greater_than_one():
     assert events[-1].completed == 4
 
 
+@pytest.mark.parametrize("bad", [0, -1, 0.9, 2.5, "3", None, True])
+def test_advance_must_be_a_positive_int(bad):
+    """A float would be truncated (advance=0.9 -> an event that advanced nothing) and a negative
+    would drive the absolute count backwards, so a bad emit site must fail at the call."""
+    _, sink = _collect()
+    reporter = resolve_progress(sink, STAGE_LOAD_SAMPLE, total=10)
+    with pytest.raises((TypeError, ValueError)):
+        reporter(advance=bad)
+
+
+@pytest.mark.parametrize("bad", [0, -1, 0.9, "3"])
+def test_noop_reporter_validates_advance_too(bad):
+    """The progress=False path must reject a bad advance as well. Nearly the whole suite runs with
+    progress disabled, so validating only when reporting is enabled would let a broken emit site
+    ship and first surface in a user's session with progress=True."""
+    with pytest.raises((TypeError, ValueError)):
+        NULL_REPORTER(advance=bad)
+
+
 # --------------------------------------------------------------------------------------
 # the contract that makes progress libraries work
 # --------------------------------------------------------------------------------------
@@ -199,18 +241,51 @@ def test_tqdm_sink_adopts_a_total_that_becomes_known_late():
 
 
 def test_tqdm_sink_closes_and_forgets_a_finished_bar():
-    """A completed stage closes its bar and drops it, so a later stage of the same name starts a
-    fresh one instead of writing to a closed bar."""
+    """A completed stage really closes its bar, and a stage label used again gets a NEW bar rather
+    than writes to the closed one. Asserting `disable is True` and object identity rather than the
+    private `_bars` bookkeeping, which would only mirror the `del` in the implementation."""
     from neunorm.utils.progress import _TqdmSink
 
     sink = _TqdmSink()
     sink(ProgressEvent(STAGE_LOAD_SAMPLE, 1, 2))
+    first = sink._bars[STAGE_LOAD_SAMPLE]
     sink(ProgressEvent(STAGE_LOAD_SAMPLE, 2, 2))
-    assert STAGE_LOAD_SAMPLE not in sink._bars
 
-    sink(ProgressEvent(STAGE_LOAD_SAMPLE, 1, 2))  # must not raise on a reused stage label
-    assert STAGE_LOAD_SAMPLE in sink._bars
-    sink._bars[STAGE_LOAD_SAMPLE].close()
+    assert first.disable is True, "a finished bar must actually be closed"
+
+    sink(ProgressEvent(STAGE_LOAD_SAMPLE, 1, 2))  # reused label must not write to the closed bar
+    second = sink._bars[STAGE_LOAD_SAMPLE]
+    assert second is not first
+    assert second.disable is False
+    sink.close()
+
+
+def test_tqdm_sink_close_finalizes_indeterminate_and_abandoned_bars():
+    """A total=None step stage never reaches a completion point and an abandoned stage never
+    finishes, so close() is the only thing that can release them."""
+    from neunorm.utils.progress import _TqdmSink
+
+    sink = _TqdmSink()
+    sink(ProgressEvent(STAGE_NORMALIZE, 1, None, "step one"))  # indeterminate: never self-closes
+    sink(ProgressEvent(STAGE_LOAD_SAMPLE, 1, 10))  # abandoned partway
+    step_bar = sink._bars[STAGE_NORMALIZE]
+    partial_bar = sink._bars[STAGE_LOAD_SAMPLE]
+    assert (step_bar.disable, partial_bar.disable) == (False, False)
+
+    sink.close()
+
+    assert step_bar.disable is True
+    assert partial_bar.disable is True
+    assert sink._bars == {}
+
+
+def test_reporter_close_is_safe_for_callbacks_and_noop():
+    """close() is exposed on the reporter so a pipeline can call it in a finally regardless of which
+    progress form the caller chose; it must be harmless when there is no sink to close."""
+    _, sink = _collect()
+    resolve_progress(sink, STAGE_LOAD_SAMPLE, total=2).close()
+    NULL_REPORTER.close()
+    resolve_progress(True, STAGE_LOAD_SAMPLE, total=2).close()
 
 
 def test_callback_exception_propagates_for_cancellation():
@@ -275,8 +350,7 @@ def test_tqdm_safe_logging_swaps_stderr_handlers_and_restores():
 def test_tqdm_safe_logging_leaves_a_reconfigured_logger_alone():
     """If a host application has taken loguru over and nothing writes to stderr, NeuNorm must not
     fight for the stream — and must not crash trying to remove handler 0, which no longer exists."""
-    handlers = logger._core.handlers
-    saved = dict(handlers)
+    saved = dict(logger._core.handlers)
     buffer = io.StringIO()
     for handler_id in list(saved):
         logger.remove(handler_id)
@@ -289,3 +363,70 @@ def test_tqdm_safe_logging_leaves_a_reconfigured_logger_alone():
     finally:
         logger.remove(app_sink)
         logger.add(sys.stderr, level="DEBUG")
+
+
+def test_tqdm_safe_logging_does_not_touch_a_customized_stderr_handler():
+    """A host's stderr handler carrying a custom format and filter must be left completely alone.
+
+    loguru stores a handler's format as an opaque ColoredFormat object, so `add()` cannot recreate
+    it — displacing such a handler would silently replace the host's format, filter, serialization
+    and colour policy with loguru defaults. Asserting the format and filter still WORK afterwards,
+    not merely that some stderr handler exists, which is what the count-only assertion missed.
+    """
+    saved = dict(logger._core.handlers)
+    captured = io.StringIO()
+    for handler_id in list(saved):
+        logger.remove(handler_id)
+    # Not a real stderr stream, but the same shape of customization: a format and a drop filter.
+    host = logger.add(
+        captured,
+        level="INFO",
+        format="HOSTFMT {level} {message}",
+        filter=lambda record: "drop-me" not in record["message"],
+    )
+    try:
+        with tqdm_safe_logging():
+            logger.info("inside")
+        logger.info("after")
+        logger.info("drop-me should never appear")
+
+        text = captured.getvalue()
+        assert "HOSTFMT INFO after" in text, "the host's format must survive"
+        assert "drop-me" not in text, "the host's filter must survive"
+        assert host in logger._core.handlers, "the host's handler must not be replaced"
+    finally:
+        logger.remove(host)
+        logger.add(sys.stderr, level="DEBUG")
+
+
+def test_tqdm_safe_logging_restores_stderr_even_if_the_sink_vanishes():
+    """Regression: restoration must happen before the temporary sink is removed, and removing it
+    must tolerate having already been removed.
+
+    Previously the finally removed the tqdm sink FIRST, so code inside the context that reconfigured
+    loguru (`logger.remove()` is the canonical loguru idiom) made that removal raise, the restoration
+    loop never ran, and the session was left with NO stderr handler — silently swallowing every
+    later log record. The raised ValueError also replaced the body's own exception.
+    """
+
+    def stderr_handler_count():
+        return sum(
+            1
+            for handler in logger._core.handlers.values()
+            if getattr(getattr(handler, "_sink", None), "_stream", None) is sys.stderr
+        )
+
+    assert stderr_handler_count() == 1
+
+    with tqdm_safe_logging():
+        logger.remove()  # host reconfiguration mid-run: takes the tqdm sink with it
+
+    assert stderr_handler_count() == 1, "a stderr handler must exist after the context, regardless"
+
+    # And a body exception must propagate as itself, not be masked by a loguru id error.
+    with pytest.raises(RuntimeError, match="body failed"):
+        with tqdm_safe_logging():
+            logger.remove()
+            raise RuntimeError("body failed")
+
+    assert stderr_handler_count() == 1
