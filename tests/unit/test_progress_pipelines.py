@@ -705,6 +705,111 @@ _PIPELINES = {
 }
 
 
+def test_a_generator_of_input_runs_is_not_consumed_by_counting_it(mars_ccd_inputs, tmp_path):
+    """The load total must not be computed by exhausting the caller's input.
+
+    `total_across_groups` iterates the outer container to sum the group lengths. Handed a *generator*
+    of groups it would consume it, and the pipeline would then load nothing while reporting a total —
+    so it refuses to iterate a container with no length and reports an unknown total instead.
+    """
+    groups = (group for group in mars_ccd_inputs["sample_paths"])
+    events, sink = _collect()
+
+    run_mars_ccd_pipeline(
+        sample_paths=groups,
+        ob_paths=mars_ccd_inputs["ob_paths"],
+        output_path=tmp_path / "generator.h5",
+        progress=sink,
+    )
+
+    loaded = [e.detail for e in events if e.stage == STAGE_LOAD_SAMPLE and e.detail.endswith(".tiff")]
+    assert loaded == [p.name for group in mars_ccd_inputs["sample_paths"] for p in group], (
+        "the generator was consumed before the load"
+    )
+    assert {e.total for e in events if e.stage == STAGE_LOAD_SAMPLE} == {None}, (
+        "an unsized input must report an unknown total, not a wrong one"
+    )
+
+
+def test_every_pipeline_can_be_cancelled_from_its_first_event(
+    mars_ccd_inputs,
+    venus_ccd_inputs,
+    mars_tpx3_inputs,
+    venus_event_inputs,
+    venus_histogram_inputs,
+    venus_tpx1_inputs,
+    tmp_path,
+):
+    """Cancellation is a property of all six, not just the one with the most tests.
+
+    Raising on the very first event is the strictest form: whatever stage that is, the run must abort
+    there rather than complete, and nothing may be written.
+    """
+
+    class _CancelledError(RuntimeError):
+        pass
+
+    def cancel(_event):
+        raise _CancelledError("stop")
+
+    calls = {
+        "run_mars_ccd_pipeline": lambda out, progress: run_mars_ccd_pipeline(
+            sample_paths=mars_ccd_inputs["sample_paths"],
+            ob_paths=mars_ccd_inputs["ob_paths"],
+            output_path=out,
+            progress=progress,
+        ),
+        "run_venus_ccd_pipeline": lambda out, progress: run_venus_ccd_pipeline(
+            sample_paths=venus_ccd_inputs["sample_paths"],
+            ob_paths=venus_ccd_inputs["ob_paths"],
+            output_path=out,
+            progress=progress,
+        ),
+        "run_mars_tpx3_pipeline": lambda out, progress: run_mars_tpx3_pipeline(
+            sample_paths=mars_tpx3_inputs["sample_paths"],
+            ob_paths=mars_tpx3_inputs["ob_paths"],
+            output_path=out,
+            detector_shape=(_DETECTOR, _DETECTOR),
+            progress=progress,
+        ),
+        "run_venus_tpx3_event_pipeline": lambda out, progress: run_venus_tpx3_event_pipeline(
+            sample_paths=venus_event_inputs["sample_paths"],
+            ob_paths=venus_event_inputs["ob_paths"],
+            binning=venus_event_inputs["binning"],
+            output_path=out,
+            detector_shape=(_DETECTOR, _DETECTOR),
+            progress=progress,
+        ),
+        "run_venus_tpx3_histogram_pipeline": lambda out, progress: run_venus_tpx3_histogram_pipeline(
+            sample_hdf5_paths=venus_histogram_inputs["sample_hdf5_paths"],
+            ob_hdf5_paths=venus_histogram_inputs["ob_hdf5_paths"],
+            sample_tiff_paths=venus_histogram_inputs["sample_tiff_paths"],
+            ob_tiff_paths=venus_histogram_inputs["ob_tiff_paths"],
+            output_path=out,
+            progress=progress,
+        ),
+        "run_venus_tpx1_pipeline": lambda out, progress: run_venus_tpx1_pipeline(
+            sample_hdf5_paths=venus_tpx1_inputs["sample_hdf5_paths"],
+            ob_hdf5_paths=venus_tpx1_inputs["ob_hdf5_paths"],
+            sample_tiff_paths=venus_tpx1_inputs["sample_tiff_paths"],
+            ob_tiff_paths=venus_tpx1_inputs["ob_tiff_paths"],
+            output_path=out,
+            progress=progress,
+        ),
+    }
+    assert set(calls) == set(_PIPELINES), "a pipeline is missing from the cancellation coverage"
+
+    for name, call in calls.items():
+        output = tmp_path / f"cancel_{name}.h5"
+        with pytest.raises(_CancelledError):
+            call(output, cancel)
+        assert not output.exists(), f"{name}: cancelled but still wrote {output.name}"
+        # and the same call without cancelling does produce the file, so the raise is what stopped it
+        completed = tmp_path / f"ok_{name}.h5"
+        call(completed, False)
+        assert completed.exists(), f"{name}: the uncancelled run did not write its output"
+
+
 @pytest.mark.parametrize("name", sorted(_PIPELINES))
 def test_every_pipeline_takes_progress_keyword_only_and_last(name):
     """`progress` must be keyword-only, so it can never shift a released positional argument, and last,

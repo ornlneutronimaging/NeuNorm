@@ -97,16 +97,21 @@ def total_across_groups(groups) -> Optional[int]:
     returns ``None`` instead: the stage then reports its items without a denominator, which is what a
     genuinely unknown count looks like.
 
+    The outer container is checked for a length **before** it is iterated, and is not iterated at all
+    without one. A one-shot outer iterable — a generator of groups — would otherwise be exhausted here,
+    leaving the caller nothing to load: it would report a total and then process zero runs.
+
     Parameters
     ----------
     groups : iterable
-        The per-run groups, e.g. ``sample_paths``. The outer sequence is iterated; each group's
-        ``len()`` is taken.
+        The per-run groups, e.g. ``sample_paths``. Iterated only if it has a ``len()`` of its own;
+        each group's ``len()`` is then taken.
 
     Returns
     -------
     Optional[int]
-        The summed item count, or ``None`` if any group has no ``len()``.
+        The summed item count, or ``None`` if the container or any group has no ``len()``. Nothing is
+        consumed in either case.
 
     Examples
     --------
@@ -114,7 +119,16 @@ def total_across_groups(groups) -> Optional[int]:
     3
     >>> total_across_groups([(p for p in "ab")]) is None
     True
+    >>> groups = (g for g in [["a"], ["b"]])
+    >>> total_across_groups(groups) is None
+    True
+    >>> [list(g) for g in groups]  # untouched: a generator of groups is not consumed
+    [['a'], ['b']]
     """
+    if not hasattr(groups, "__len__"):
+        # A one-shot outer iterable: counting it would consume the very runs the caller is about to
+        # load. An unknown total is the honest answer.
+        return None
     total = 0
     for group in groups:
         try:
