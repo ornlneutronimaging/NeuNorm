@@ -9,10 +9,15 @@ import scipp as sc
 
 from neunorm.loaders.fits_loader import load_fits_stack
 from neunorm.loaders.tiff_loader import load_tiff_stack
-from neunorm.utils.progress import Progress
+from neunorm.utils.progress import STAGE_LOAD_SAMPLE, ProgressLike
 
 
-def load_stack(paths: Sequence[str | Path], *, progress: Progress = False) -> sc.DataArray:
+def load_stack(
+    paths: Sequence[str | Path],
+    *,
+    progress: ProgressLike = False,
+    stage: str = STAGE_LOAD_SAMPLE,
+) -> sc.DataArray:
     """
     Load a stack of images from the given file paths, supporting both TIFF and FITS formats.
 
@@ -29,6 +34,10 @@ def load_stack(paths: Sequence[str | Path], *, progress: Progress = False) -> sc
         Passed straight through to the chosen leaf loader, which emits one event per file. This
         pass-through is what gives the CCD pipelines per-file progress: they call ``load_stack``
         rather than the leaf loaders directly. See :mod:`neunorm.utils.progress`.
+    stage : str, optional
+        Stage label the events carry, also forwarded. Defaults to ``STAGE_LOAD_SAMPLE``; pass
+        ``STAGE_LOAD_OB`` or ``STAGE_LOAD_DARK`` when loading those, so a caller's callback can
+        tell the three loads of a run apart.
     """
 
     if not paths:
@@ -39,12 +48,12 @@ def load_stack(paths: Sequence[str | Path], *, progress: Progress = False) -> sc
         for path in paths:
             if Path(path).suffix.lower() != first_ext:
                 raise ValueError(f"All files must have the same extension. Found mixed extensions: {paths}")
-        return load_tiff_stack(paths, progress=progress)
+        return load_tiff_stack(paths, progress=progress, stage=stage)
     elif first_ext in (".fits", ".fit", ".fts"):
         for path in paths:
             if Path(path).suffix.lower() != first_ext:
                 raise ValueError(f"All files must have the same extension. Found mixed extensions: {paths}")
-        return load_fits_stack(paths, progress=progress)
+        return load_fits_stack(paths, progress=progress, stage=stage)
     else:
         raise ValueError(
             f"Unsupported file format: {first_ext}. Supported are TIFF (.tiff, .tif) and FITS (.fits, .fit, .fts)."

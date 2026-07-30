@@ -79,6 +79,7 @@ __all__ = [
     "NULL_REPORTER",
     "Progress",
     "ProgressCallback",
+    "ProgressLike",
     "ProgressEvent",
     "ProgressReporter",
     "resolve_progress",
@@ -112,7 +113,7 @@ class ProgressEvent:
 
 ProgressCallback = Callable[[ProgressEvent], None]
 
-#: What an instrumented function accepts for ``progress``: ``False``, ``True``, or a callable.
+#: What a CALLER passes for ``progress``: ``False``, ``True``, or a callable.
 Progress = Union[bool, ProgressCallback]
 
 
@@ -191,8 +192,34 @@ class ProgressReporter:
             )
         )
 
+    def note(self, detail: str) -> None:
+        """Emit an event at the current count, advancing nothing.
+
+        For announcing work that has no item of its own — a large allocation about to happen, say —
+        where the point is to name what is starting rather than to count something finished. The
+        count stays absolute and monotonic, so a note cannot corrupt a bar or double-count; it
+        changes the label and leaves the position alone.
+
+        Prefer this over ``for_stage(..., total=None)`` for a step that recurs on every call of an
+        inner function: a fresh stage reporter restarts at 1 each time, which contradicts
+        :attr:`ProgressEvent.completed` being run-wide and leaves a bar stuck at its first tick.
+        """
+        self._sink(
+            ProgressEvent(
+                stage=self._stage,
+                completed=self._offset + self._completed,
+                total=self._total,
+                detail=detail,
+            )
+        )
+
     def for_stage(self, stage: str, total: Optional[int] = None) -> "ProgressReporter":
-        """A fresh reporter on the same sink for a different stage."""
+        """A fresh reporter on the same sink for a different stage.
+
+        The new reporter starts its count at zero, so this is for moving between the phases of one
+        run — not for a step inside a function called repeatedly, which would restart the count on
+        every call. Use :meth:`note` for that.
+        """
         return ProgressReporter(self._sink, stage, offset=0, total=total, owns_sink=self._owns_sink)
 
     def with_offset(self, offset: int) -> "ProgressReporter":
@@ -212,6 +239,11 @@ class ProgressReporter:
         """
         if self._owns_sink:
             self._sink.close()
+
+
+#: What an instrumented function ACCEPTS for ``progress``: anything a caller may pass, plus a
+#: pre-bound :class:`ProgressReporter`, which is what an outer function threads to an inner one.
+ProgressLike = Union[Progress, ProgressReporter]
 
 
 def _null_sink(event: ProgressEvent) -> None:  # noqa: ARG001 - signature must match the sink type
@@ -238,6 +270,9 @@ class _NullReporter(ProgressReporter):
         counter is touched, so the per-item cost stays two comparisons.
         """
         _check_advance(advance)
+
+    def note(self, detail: str) -> None:  # noqa: ARG002 - no-op by design
+        """Do nothing."""
 
     def for_stage(self, stage: str, total: Optional[int] = None) -> "ProgressReporter":  # noqa: ARG002 - no-op
         """Return this same no-op reporter."""
@@ -278,10 +313,12 @@ class _TqdmSink:
             )
         if bar.total is None and event.total is not None:
             bar.total = event.total
-        if event.completed > bar.n:
+        advanced = event.completed > bar.n
+        if advanced:
             bar.update(event.completed - bar.n)
         if event.detail:
-            bar.set_postfix_str(event.detail, refresh=False)
+            # A note advances nothing, so nothing would redraw it; refresh explicitly in that case.
+            bar.set_postfix_str(event.detail, refresh=not advanced)
         if event.total is not None and event.completed >= event.total:
             bar.close()
             del self._bars[event.stage]
@@ -299,7 +336,7 @@ class _TqdmSink:
 
 
 def resolve_progress(
-    progress: Union[Progress, ProgressReporter],
+    progress: ProgressLike,
     stage: str = "",
     total: Optional[int] = None,
 ) -> ProgressReporter:

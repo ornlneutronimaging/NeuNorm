@@ -1,8 +1,8 @@
 """Unit tests for neunorm.utils.progress — the progress-reporting contract (#195).
 
 Covers the False/True/callable dispatch, event immutability, the offset arithmetic that lets a
-per-run leaf function contribute to one count spanning the whole run, and the loguru/tqdm
-stream handoff.
+per-run leaf function contribute to one count spanning the whole run, sink ownership, and the tqdm
+bar lifecycle.
 """
 
 import io

@@ -26,11 +26,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Note that NeuNorm's log records and a `tqdm` bar both go to stderr, so log lines will corrupt a
   bar. NeuNorm does not manage that for you: routing loguru through `tqdm.write` means displacing
   handlers that `add()` cannot faithfully restore, and silently rewriting an application's log format
-  is worse than a corrupted bar. The workflow guides document the caller-side remedy.
-  **No pipeline emits progress yet** — the instrumentation and the `progress` parameter land in
-  follow-up work; this entry adds only the contract, and corrects the long-stale `neunorm.utils`
-  docstring, which advertised "progress reporting" that did not exist and "validation helpers" that
-  never have.
+  is worse than a corrupted bar. Routing NeuNorm's log records around a bar is the caller's to do,
+  in their own application; the progress documentation will cover how.
+  **No pipeline accepts `progress` yet** — wiring it through the six pipelines is follow-up work.
+  This entry also corrects the long-stale `neunorm.utils` docstring, which advertised "progress
+  reporting" that did not exist and "validation helpers" that never have.
+
+- **Progress reporting through the image load path** — `load_tiff_stack`, `load_fits_stack` and
+  `load_stack` accept a keyword-only `progress` (and a `stage` label, so a direct open-beam or dark
+  load is not reported as `load_sample`). Each emits one event per file read, naming the file, then
+  announces the two whole-stack allocations that follow the read loop — the stack build and the
+  variances copy. Those two are where the memory actually peaks: the read loop only appends to a
+  list, so without them a bar reaches 100% at the last file and then goes silent through the part
+  that can exhaust RAM and start swapping. They are emitted as *notes*, which carry a label without
+  advancing the count, so a bar shows what is running without the count restarting on each call.
+  `load_stack` forwards both arguments to whichever leaf loader it dispatches to, which is what
+  gives the CCD pipelines per-file progress at all — they call `load_stack`, not the leaves.
+  A progress callback that raises propagates, and is not reported as a failed file read. All three
+  loaders again accept a non-sized iterable such as `Path.glob(...)`, as they did before reporting
+  was added.
 
 - **Per-image TIFF export** — `write_tiff_stack(..., one_file_per_image=True)`, exposed on the
   VENUS TOF pipelines as `tiff_one_file_per_image=True`, writes **one scitiff file per spectral
