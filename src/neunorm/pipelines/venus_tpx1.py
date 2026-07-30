@@ -188,17 +188,17 @@ def run_venus_tpx1_pipeline(  # noqa: C901
 
     # One reporter for the whole run, resolved exactly once: a second resolve of `progress=True`
     # would build a second tqdm sink and a duplicate set of bars. Each stage below takes its own
-    # view via `run.for_stage(...)`, and the leaves it calls borrow that view, so only this
+    # view via `run_progress.for_stage(...)`, and the leaves it calls borrow that view, so only this
     # context manager retires the bars — on the way out of a clean run and of a failed one alike.
-    with resolve_progress(progress) as run:
+    with resolve_progress(progress) as run_progress:
         samples = []
         ob = []
 
         # One reporter per input family, reused for every run in it: a borrowed view shares its counter
         # cell, so N calls accumulate into one count across the whole run instead of restarting per run.
-        load_sample = run.for_stage(STAGE_LOAD_SAMPLE, total=total_across_groups(sample_tiff_paths))
-        load_ob = run.for_stage(STAGE_LOAD_OB, total=total_across_groups(ob_tiff_paths))
-        combine = run.for_stage(STAGE_COMBINE_RUNS, total=2)
+        load_sample = run_progress.for_stage(STAGE_LOAD_SAMPLE, total=total_across_groups(sample_tiff_paths))
+        load_ob = run_progress.for_stage(STAGE_LOAD_OB, total=total_across_groups(ob_tiff_paths))
+        combine = run_progress.for_stage(STAGE_COMBINE_RUNS, total=2)
 
         # Load data from TIFF files and metadata from HDF5 files
         for hdf5_path, tiff_paths in zip(sample_hdf5_paths, sample_tiff_paths):
@@ -291,7 +291,7 @@ def run_venus_tpx1_pipeline(  # noqa: C901
                 )
             # rebin_tof takes no progress argument of its own, so the pipeline names the two calls
             # around it: with a median reduction this is one of the slowest stages in the run.
-            rebin = run.for_stage(STAGE_REBIN_TOF, total=2)
+            rebin = run_progress.for_stage(STAGE_REBIN_TOF, total=2)
             rebin.note("rebinning sample TOF")
             sample = rebin_tof(sample, spec, reduction=rebin_reduction)
             rebin()
@@ -305,7 +305,7 @@ def run_venus_tpx1_pipeline(  # noqa: C901
             ob=ob,
             proton_charge_sample=sample.coords["proton_charge"],
             proton_charge_ob=ob.coords["proton_charge"],
-            progress=run.for_stage(
+            progress=run_progress.for_stage(
                 STAGE_NORMALIZE,
                 total=normalize_step_count(proton_charge_sample=sample.coords["proton_charge"]),
             ),
@@ -349,7 +349,7 @@ def run_venus_tpx1_pipeline(  # noqa: C901
                 transmission,
                 dead_pixel_mask="dead_pixels",
                 metadata=metadata,
-                progress=run.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(transmission, metadata)),
+                progress=run_progress.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(transmission, metadata)),
             )
         elif output_path.suffix.lower() in (".tiff", ".tif"):
             rename_map = {}
@@ -389,7 +389,7 @@ def run_venus_tpx1_pipeline(  # noqa: C901
                 metadata=metadata,
                 daqmetadata=daqmetadata,
                 one_file_per_image=tiff_one_file_per_image,
-                progress=run.for_stage(
+                progress=run_progress.for_stage(
                     STAGE_EXPORT,
                     total=tiff_export_step_count(transmission, one_file_per_image=tiff_one_file_per_image),
                 ),

@@ -120,9 +120,9 @@ def run_mars_tpx3_pipeline(  # noqa: C901
 
     # One reporter for the whole run, resolved exactly once: a second resolve of `progress=True`
     # would build a second tqdm sink and a duplicate set of bars. Each stage below takes its own
-    # view via `run.for_stage(...)`, and the leaves it calls borrow that view, so only this
+    # view via `run_progress.for_stage(...)`, and the leaves it calls borrow that view, so only this
     # context manager retires the bars — on the way out of a clean run and of a failed one alike.
-    with resolve_progress(progress) as run:
+    with resolve_progress(progress) as run_progress:
         # Load data and convert to histogram. Written as loops rather than comprehensions so each file
         # can be named as it is opened: on the event path one file is not one cheap item, and a run of
         # 40-million-event files spends minutes per file.
@@ -133,16 +133,16 @@ def run_mars_tpx3_pipeline(  # noqa: C901
         # follows from each file's event count, which is not known until the file is read.
         n_sample_files = total_across_groups(sample_paths)
         n_ob_files = total_across_groups(ob_paths)
-        load_sample = run.for_stage(
+        load_sample = run_progress.for_stage(
             STAGE_LOAD_SAMPLE,
             total=None if n_sample_files is None else LOAD_EVENT_NEXUS_STEPS * n_sample_files,
         )
-        load_ob = run.for_stage(
+        load_ob = run_progress.for_stage(
             STAGE_LOAD_OB, total=None if n_ob_files is None else LOAD_EVENT_NEXUS_STEPS * n_ob_files
         )
         # One histogram reporter for both families: a borrowed view shares its counter cell, so chunks
         # accumulate into a single monotonic count across every file of the run.
-        histogram = run.for_stage(STAGE_HISTOGRAM)
+        histogram = run_progress.for_stage(STAGE_HISTOGRAM)
 
         def _load_runs(path_groups, load_report):
             """Read each file, histogram it, and concatenate one image stack per run."""
@@ -159,7 +159,7 @@ def run_mars_tpx3_pipeline(  # noqa: C901
         samples = _load_runs(sample_paths, load_sample)
         obs = _load_runs(ob_paths, load_ob)
 
-        combine = run.for_stage(STAGE_COMBINE_RUNS, total=2)
+        combine = run_progress.for_stage(STAGE_COMBINE_RUNS, total=2)
 
         # Combine runs if there are multiple runs
         combine.note(f"combining {len(samples)} sample run(s)")
@@ -185,14 +185,16 @@ def run_mars_tpx3_pipeline(  # noqa: C901
 
         # Gamma filtering (optional)
         if gamma_filter:
-            sample = apply_gamma_filter(sample, progress=run.for_stage(STAGE_GAMMA_FILTER, total=GAMMA_FILTER_STEPS))
+            sample = apply_gamma_filter(
+                sample, progress=run_progress.for_stage(STAGE_GAMMA_FILTER, total=GAMMA_FILTER_STEPS)
+            )
 
         # Normalization (background_roi flux proxy when provided)
         transmission = normalize_transmission(
             sample,
             ob,
             background_roi=background_roi,
-            progress=run.for_stage(STAGE_NORMALIZE, total=normalize_step_count(background_roi)),
+            progress=run_progress.for_stage(STAGE_NORMALIZE, total=normalize_step_count(background_roi)),
         )
 
         # Write output
@@ -217,7 +219,7 @@ def run_mars_tpx3_pipeline(  # noqa: C901
                 dead_pixel_mask="dead_pixels",
                 hot_pixel_mask="hot_pixels",
                 metadata=metadata,
-                progress=run.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(transmission, metadata)),
+                progress=run_progress.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(transmission, metadata)),
             )
         elif output_path.suffix.lower() in (".tiff", ".tif"):
             rename_map = {}
@@ -250,7 +252,7 @@ def run_mars_tpx3_pipeline(  # noqa: C901
                 transmission,
                 metadata=metadata,
                 daqmetadata=daqmetadata,
-                progress=run.for_stage(STAGE_EXPORT, total=tiff_export_step_count(transmission)),
+                progress=run_progress.for_stage(STAGE_EXPORT, total=tiff_export_step_count(transmission)),
             )
         else:
             raise ValueError(f"Unsupported output file format: {output_path.suffix}")

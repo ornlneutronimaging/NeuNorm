@@ -146,20 +146,20 @@ def run_venus_ccd_pipeline(  # noqa: C901
 
     # One reporter for the whole run, resolved exactly once: a second resolve of `progress=True`
     # would build a second tqdm sink and a duplicate set of bars. Each stage below takes its own
-    # view via `run.for_stage(...)`, and the leaves it calls borrow that view, so only this
+    # view via `run_progress.for_stage(...)`, and the leaves it calls borrow that view, so only this
     # context manager retires the bars — on the way out of a clean run and of a failed one alike.
-    with resolve_progress(progress) as run:
+    with resolve_progress(progress) as run_progress:
         # Load data. One reporter per input family, reused for every run in it: a borrowed view shares
         # its counter cell, so N calls accumulate into one count across the whole run instead of
         # restarting per run.
-        load_sample = run.for_stage(STAGE_LOAD_SAMPLE, total=total_across_groups(sample_paths))
+        load_sample = run_progress.for_stage(STAGE_LOAD_SAMPLE, total=total_across_groups(sample_paths))
         samples = [load_stack(paths, progress=load_sample) for paths in sample_paths]
-        load_ob = run.for_stage(STAGE_LOAD_OB, total=total_across_groups(ob_paths))
+        load_ob = run_progress.for_stage(STAGE_LOAD_OB, total=total_across_groups(ob_paths))
         ob = [load_stack(paths, progress=load_ob) for paths in ob_paths]
 
         # Combining runs is the largest operation here that no instrumented leaf covers, and VENUS
         # relies on it, so it is reported as named steps rather than left silent.
-        combine = run.for_stage(STAGE_COMBINE_RUNS, total=3 if dark_paths else 2)
+        combine = run_progress.for_stage(STAGE_COMBINE_RUNS, total=3 if dark_paths else 2)
 
         # Before combining, check that all sample runs have the same shape and some metadata keys match
         # Keys to check ManufacturerStr. IntegratedPCharge is included in metadata checks and is
@@ -189,7 +189,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
         # Dark current is optional: only load/combine it when dark paths are provided.
         dark = None
         if dark_paths:
-            load_dark = run.for_stage(STAGE_LOAD_DARK, total=total_across_groups(dark_paths))
+            load_dark = run_progress.for_stage(STAGE_LOAD_DARK, total=total_across_groups(dark_paths))
             dark_runs = [load_stack(paths, progress=load_dark) for paths in dark_paths]
             combine.note(f"combining {len(dark_runs)} dark run(s)")
             dark = combine_runs(
@@ -218,7 +218,9 @@ def run_venus_ccd_pipeline(  # noqa: C901
         # Gamma filtering (optional). The step count comes from the filter's own constant: a
         # handed-down reporter keeps the total its caller bound, so a literal here could drift.
         if gamma_filter:
-            sample = apply_gamma_filter(sample, progress=run.for_stage(STAGE_GAMMA_FILTER, total=GAMMA_FILTER_STEPS))
+            sample = apply_gamma_filter(
+                sample, progress=run_progress.for_stage(STAGE_GAMMA_FILTER, total=GAMMA_FILTER_STEPS)
+            )
 
         # Dark correction (optional) + normalization. The proton-charge coords are cast to float32
         # so the division does not silently re-promote the float32 image data to float64 (the coord
@@ -235,14 +237,16 @@ def run_venus_ccd_pipeline(  # noqa: C901
                     ob,
                     dark,
                     background_roi=background_roi,
-                    progress=run.for_stage(STAGE_NORMALIZE, total=normalize_with_dark_step_count(background_roi)),
+                    progress=run_progress.for_stage(
+                        STAGE_NORMALIZE, total=normalize_with_dark_step_count(background_roi)
+                    ),
                 )
             else:
                 transmission = normalize_transmission(
                     sample,
                     ob,
                     background_roi=background_roi,
-                    progress=run.for_stage(STAGE_NORMALIZE, total=normalize_step_count(background_roi)),
+                    progress=run_progress.for_stage(STAGE_NORMALIZE, total=normalize_step_count(background_roi)),
                 )
             # IntegratedPCharge was neither used nor aggregated in this mode (pc_keys=()), so the
             # combined array still carries the first run's loaded value as an unaligned coord. Drop it
@@ -259,7 +263,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
                     dark,
                     proton_charge_sample=proton_charge_sample,
                     proton_charge_ob=proton_charge_ob,
-                    progress=run.for_stage(
+                    progress=run_progress.for_stage(
                         STAGE_NORMALIZE,
                         total=normalize_with_dark_step_count(proton_charge_sample=proton_charge_sample),
                     ),
@@ -271,7 +275,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
                     ob=ob,
                     proton_charge_sample=proton_charge_sample,
                     proton_charge_ob=proton_charge_ob,
-                    progress=run.for_stage(
+                    progress=run_progress.for_stage(
                         STAGE_NORMALIZE,
                         total=normalize_step_count(proton_charge_sample=proton_charge_sample),
                     ),
@@ -314,7 +318,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
                 transmission,
                 dead_pixel_mask="dead_pixels",
                 metadata=metadata,
-                progress=run.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(transmission, metadata)),
+                progress=run_progress.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(transmission, metadata)),
             )
         elif output_path.suffix.lower() in (".tiff", ".tif"):
             rename_map = {}
@@ -355,7 +359,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
                 transmission,
                 metadata=metadata,
                 daqmetadata=daqmetadata,
-                progress=run.for_stage(STAGE_EXPORT, total=tiff_export_step_count(transmission)),
+                progress=run_progress.for_stage(STAGE_EXPORT, total=tiff_export_step_count(transmission)),
             )
         else:
             raise ValueError(f"Unsupported output file format: {output_path.suffix}")

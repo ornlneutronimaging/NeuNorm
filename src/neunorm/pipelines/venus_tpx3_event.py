@@ -169,9 +169,9 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
 
     # One reporter for the whole run, resolved exactly once: a second resolve of `progress=True`
     # would build a second tqdm sink and a duplicate set of bars. Each stage below takes its own
-    # view via `run.for_stage(...)`, and the leaves it calls borrow that view, so only this
+    # view via `run_progress.for_stage(...)`, and the leaves it calls borrow that view, so only this
     # context manager retires the bars — on the way out of a clean run and of a failed one alike.
-    with resolve_progress(progress) as run:
+    with resolve_progress(progress) as run_progress:
         x_bins, y_bins = detector_shape
 
         # Load metadata before histogramming so the detector time offset can be applied to
@@ -182,9 +182,9 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
         # the chunk count follows from a file's event count, which is not known until it is read — and one
         # reporter serves both families, whose borrowed views share its counter cell so chunks accumulate
         # into a single monotonic count.
-        load_sample = run.for_stage(STAGE_LOAD_SAMPLE, total=LOAD_EVENT_NEXUS_STEPS * len(sample_paths))
-        load_ob = run.for_stage(STAGE_LOAD_OB, total=LOAD_EVENT_NEXUS_STEPS * len(ob_paths))
-        histogram = run.for_stage(STAGE_HISTOGRAM)
+        load_sample = run_progress.for_stage(STAGE_LOAD_SAMPLE, total=LOAD_EVENT_NEXUS_STEPS * len(sample_paths))
+        load_ob = run_progress.for_stage(STAGE_LOAD_OB, total=LOAD_EVENT_NEXUS_STEPS * len(ob_paths))
+        histogram = run_progress.for_stage(STAGE_HISTOGRAM)
 
         samples = []
         for run_path in sample_paths:
@@ -237,7 +237,7 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
             obs.append(ob)
 
         # Combine runs if there are multiple runs
-        combine = run.for_stage(STAGE_COMBINE_RUNS, total=2)
+        combine = run_progress.for_stage(STAGE_COMBINE_RUNS, total=2)
         combine.note(f"combining {len(samples)} sample run(s)")
         sample = combine_runs(
             samples,
@@ -291,7 +291,7 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
                 )
             # rebin_tof takes no progress argument of its own, so the pipeline names the two calls
             # around it: with a median reduction this is one of the slowest stages in the run.
-            rebin = run.for_stage(STAGE_REBIN_TOF, total=2)
+            rebin = run_progress.for_stage(STAGE_REBIN_TOF, total=2)
             rebin.note("rebinning sample TOF")
             sample = rebin_tof(sample, spec, reduction=rebin_reduction)
             rebin()
@@ -305,7 +305,7 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
             ob=ob,
             proton_charge_sample=sample.coords["proton_charge"],
             proton_charge_ob=ob.coords["proton_charge"],
-            progress=run.for_stage(
+            progress=run_progress.for_stage(
                 STAGE_NORMALIZE,
                 total=normalize_step_count(proton_charge_sample=sample.coords["proton_charge"]),
             ),
@@ -348,7 +348,7 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
                 dead_pixel_mask="dead_pixels",
                 hot_pixel_mask="hot_pixels",
                 metadata=metadata,
-                progress=run.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(transmission, metadata)),
+                progress=run_progress.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(transmission, metadata)),
             )
         elif output_path.suffix.lower() in (".tiff", ".tif"):
             rename_map = {}
@@ -383,7 +383,7 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
                 metadata=metadata,
                 daqmetadata=daqmetadata,
                 one_file_per_image=tiff_one_file_per_image,
-                progress=run.for_stage(
+                progress=run_progress.for_stage(
                     STAGE_EXPORT,
                     total=tiff_export_step_count(transmission, one_file_per_image=tiff_one_file_per_image),
                 ),
