@@ -33,55 +33,10 @@ Notes
   stages that have no item axis at all and instead report named steps).
 """
 
-import sys
-from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, Iterator, Optional, Union
+from typing import Callable, Optional, Union
 
 import numpy as np
-from loguru import logger
-
-#: Handler attributes that together describe everything a caller can configure through
-#: ``logger.add()`` and that we would fail to reproduce. Compared as a whole against a handler
-#: loguru builds with no arguments, so this cannot drift from the installed loguru version.
-_HANDLER_SHAPE_ATTRS = (
-    "_levelno",
-    "_filter",
-    "_serialize",
-    "_enqueue",
-    "_is_formatter_dynamic",
-    "_decolorized_format",
-    "_colorize",
-)
-
-
-def _handler_shape(handler: object) -> tuple:
-    """The configuration fingerprint of a loguru handler."""
-    return tuple(getattr(handler, name, NotImplemented) for name in _HANDLER_SHAPE_ATTRS)
-
-
-def _default_stderr_shape() -> tuple:
-    """Fingerprint and colour setting of the handler loguru builds for ``sys.stderr`` by default.
-
-    Measured by adding one and reading it back, so "default" always means what this loguru version
-    actually does. The probe is removed immediately and writes nothing.
-    """
-    probe_id = logger.add(sys.stderr)
-    try:
-        handler = logger._core.handlers[probe_id]
-        return _handler_shape(handler), getattr(handler, "_colorize", False)
-    finally:
-        logger.remove(probe_id)
-
-
-def _is_default_stderr_handler(handler: object, default_shape: tuple) -> bool:
-    """True when ``handler`` writes to ``sys.stderr`` and is configured exactly as loguru's default.
-
-    The stream must be a real stream: with ``sys.stderr`` set to ``None`` an absent ``_stream``
-    would compare equal and match handlers that are not streams at all.
-    """
-    stream = getattr(getattr(handler, "_sink", None), "_stream", None)
-    return stream is not None and stream is sys.stderr and _handler_shape(handler) == default_shape
 
 
 def _check_advance(advance: int) -> None:
@@ -127,7 +82,6 @@ __all__ = [
     "ProgressEvent",
     "ProgressReporter",
     "resolve_progress",
-    "tqdm_safe_logging",
 ]
 
 
@@ -394,94 +348,3 @@ def resolve_progress(
         "progress must be False (no reporting), True (NeuNorm drives a tqdm bar), or a callable "
         f"accepting a ProgressEvent; got {type(progress).__name__}"
     )
-
-
-@contextmanager
-def tqdm_safe_logging() -> Iterator[None]:
-    """Route loguru's stderr output through ``tqdm.write`` so it does not shred a progress bar.
-
-    NeuNorm's log records and a tqdm bar both go to stderr, so log lines land on the bar's
-    un-terminated line and corrupt it. Inside this context, handlers writing to ``sys.stderr`` are
-    replaced by one that hands each record to ``tqdm.write``, which clears the bar, writes the
-    line, and redraws.
-
-    Only used for ``progress=True``, where NeuNorm owns the bar. When a caller supplies their own
-    callback NeuNorm leaves logging alone.
-
-    **Only a handler indistinguishable from loguru's own default is displaced.** Anything a host
-    application configured is left in place, even though it will corrupt the bar, because loguru's
-    public ``add()`` cannot faithfully recreate it: a handler's format lives in an opaque
-    ``ColoredFormat``, so re-adding it would substitute loguru's defaults and permanently discard
-    the host's format, filter, serialization and colour policy. A shredded bar is cosmetic;
-    silently rewriting an application's logging is not.
-
-    What counts as "loguru's default" is measured from loguru itself — a throwaway handler is added
-    with no arguments and its shape read back — rather than from a hand-written list of attributes.
-    An earlier version of this compared level, filter, serialization, queueing and
-    formatter-dynamism but not the format *content*, so a handler added as
-    ``logger.add(sys.stderr, format="...")`` matched on every checked attribute and had its format
-    silently replaced.
-
-    Notes
-    -----
-    - Does nothing when there is no default-shaped stderr handler — including when a host
-      application has taken loguru over, which is exactly when it must not interfere.
-    - Does nothing when ``sys.stderr`` is ``None`` (pythonw, or fd 2 closed). Without that guard the
-      stream comparison degenerates to ``None is None`` and matches handlers that are not streams
-      at all, such as a host's file sink.
-    - Detection uses ``logger._core.handlers`` and private handler attributes; loguru exposes no
-      public API for either. Handler ids change across the context, so nothing may depend on them.
-    - Every mutation is inside the ``try``, and restoration runs before the temporary sink is
-      removed and tolerates that sink having already vanished. A failure anywhere therefore cannot
-      leave the session without a stderr handler, silently swallowing later records.
-    - Restoration adds back only the shortfall. Code inside the context that reconfigures loguru
-      with the usual ``logger.remove()`` then ``logger.add(sys.stderr)`` would otherwise end up
-      with two default stderr handlers, emitting every subsequent record twice.
-    - ``contextlib.redirect_stderr`` does **not** capture loguru output, so it is not an
-      alternative to this.
-    """
-    from tqdm.auto import tqdm
-
-    if sys.stderr is None:
-        yield
-        return
-
-    core = getattr(logger, "_core", None)
-    if core is None:
-        yield
-        return
-
-    default_shape, default_colorize = _default_stderr_shape()
-    displaced = [
-        handler_id
-        for handler_id, handler in dict(core.handlers).items()
-        if _is_default_stderr_handler(handler, default_shape)
-    ]
-
-    if not displaced:
-        yield
-        return
-
-    def _default_stderr_count() -> int:
-        return sum(1 for handler in dict(core.handlers).values() if _is_default_stderr_handler(handler, default_shape))
-
-    sink_id = None
-    try:
-        for handler_id in displaced:
-            logger.remove(handler_id)
-        sink_id = logger.add(
-            lambda message: tqdm.write(message, end="", file=sys.stderr),
-            colorize=default_colorize,
-        )
-        yield
-    finally:
-        # Restore before removing the temporary sink, and only the shortfall, so neither a failure
-        # here nor a reconfiguration inside the context can lose or duplicate a stderr handler.
-        for _ in range(max(0, len(displaced) - _default_stderr_count())):
-            logger.add(sys.stderr)
-        if sink_id is not None:
-            try:
-                logger.remove(sink_id)
-            except ValueError:
-                # Something inside the context reconfigured loguru and took the sink with it.
-                pass

@@ -20,14 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   count to it would overshoot. `total` is `None` where an item count is not knowable in advance.
   Events are emitted synchronously from the calling thread, and a callback that raises is not
   caught — that is how a caller cancels a run. `tqdm` is imported lazily, so the default
-  `progress=False` path never pays for it. Also included: `tqdm_safe_logging()`, which routes
-  loguru's stderr records through `tqdm.write` so they do not corrupt a bar. It displaces **only** a
-  handler indistinguishable from loguru's own default — measured against loguru rather than
-  hardcoded — because a handler a host application configured cannot be faithfully put back through
-  the public `add()` API, and silently replacing an application's log format is worse than a
-  corrupted bar. It is also inert when `sys.stderr` is `None`, restores before removing its own sink,
-  and adds back only the shortfall so a reconfiguration inside the context cannot end up emitting
-  every record twice.
+  `progress=False` path never pays for it. `close()` releases the bars NeuNorm opened — a stage with
+  an indeterminate total has no completion point, and an abandoned stage never finishes — and never
+  touches a caller's callback, which may be a reusable object NeuNorm does not own.
+  Note that NeuNorm's log records and a `tqdm` bar both go to stderr, so log lines will corrupt a
+  bar. NeuNorm does not manage that for you: routing loguru through `tqdm.write` means displacing
+  handlers that `add()` cannot faithfully restore, and silently rewriting an application's log format
+  is worse than a corrupted bar. The workflow guides document the caller-side remedy.
   **No pipeline emits progress yet** — the instrumentation and the `progress` parameter land in
   follow-up work; this entry adds only the contract, and corrects the long-stale `neunorm.utils`
   docstring, which advertised "progress reporting" that did not exist and "validation helpers" that

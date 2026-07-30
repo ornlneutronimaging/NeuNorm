@@ -5,13 +5,11 @@ per-run leaf function contribute to one count spanning the whole run, and the lo
 stream handoff.
 """
 
-import contextlib
 import io
 import subprocess
 import sys
 
 import pytest
-from loguru import logger
 
 from neunorm.utils.progress import (
     NULL_REPORTER,
@@ -20,7 +18,6 @@ from neunorm.utils.progress import (
     ProgressEvent,
     ProgressReporter,
     resolve_progress,
-    tqdm_safe_logging,
 )
 
 
@@ -318,140 +315,6 @@ def test_tqdm_is_not_imported_when_progress_is_unused():
     assert out.stdout.strip() == "False", f"tqdm.auto imported eagerly: {out.stdout!r}"
 
 
-# --------------------------------------------------------------------------------------
-# loguru / bar stream handoff
-# --------------------------------------------------------------------------------------
-
-
-def test_tqdm_safe_logging_swaps_stderr_handlers_and_restores():
-    """Inside the context, loguru's stderr handler is replaced (so records go through tqdm.write
-    instead of landing on the bar's line); afterwards a stderr handler exists again."""
-
-    def stderr_ids():
-        # `logger._core.handlers` must be re-read every time: loguru's remove()/add() REPLACE the
-        # dict rather than mutating it, so a captured reference goes stale and would still show the
-        # displaced handler. (No public API for this; see the function's docstring.)
-        return {
-            handler_id
-            for handler_id, handler in logger._core.handlers.items()
-            if getattr(getattr(handler, "_sink", None), "_stream", None) is sys.stderr
-        }
-
-    before = stderr_ids()
-    assert before, "expected loguru's default stderr handler to be present"
-
-    with tqdm_safe_logging():
-        assert not stderr_ids(), "the stderr handler should be displaced inside the context"
-
-    after = stderr_ids()
-    assert after, "a stderr handler must be restored on exit"
-    assert len(after) == len(before)
-
-
-def test_tqdm_safe_logging_leaves_a_reconfigured_logger_alone():
-    """If a host application has taken loguru over and nothing writes to stderr, NeuNorm must not
-    fight for the stream — and must not crash trying to remove handler 0, which no longer exists."""
-    buffer = io.StringIO()
-    with _isolated_loguru():
-        app_sink = logger.add(buffer, level="INFO")
-        with tqdm_safe_logging():
-            logger.info("host application still owns the stream")
-        assert "host application still owns the stream" in buffer.getvalue()
-        assert app_sink in logger._core.handlers
-
-
-class _FakeStderr(io.StringIO):
-    """A stand-in for sys.stderr that loguru accepts as a real stream."""
-
-    def isatty(self):
-        return False
-
-
-@contextlib.contextmanager
-def _isolated_loguru(monkeypatch=None, fake_stderr=None):
-    """Give a test loguru's handler table to itself, then put the original back.
-
-    The real `sys.stderr` object is captured BEFORE any patching, because under pytest it is a
-    capture object rather than `sys.__stderr__`; restoring onto `sys.__stderr__` would leave the
-    rest of the suite with a handler on a stream nothing else considers stderr.
-    """
-    real_stderr = sys.stderr
-    for handler_id in list(logger._core.handlers):
-        logger.remove(handler_id)
-    try:
-        if fake_stderr is not None:
-            monkeypatch.setattr(sys, "stderr", fake_stderr)
-        yield
-    finally:
-        for handler_id in list(logger._core.handlers):
-            logger.remove(handler_id)
-        logger.add(real_stderr, level="DEBUG")
-
-
-def test_tqdm_safe_logging_does_not_touch_a_customized_stderr_handler(monkeypatch):
-    """A host's stderr handler with a CUSTOM FORMAT must be left completely alone.
-
-    The handler is installed on the patched `sys.stderr` itself, so the stream-identity check passes
-    and the code actually reaches the default-shape comparison. The previous version of this test put
-    the handler on a plain StringIO, which failed the stream check first — so it never entered the
-    path it claimed to guard and passed identically against the unfixed code, which is exactly why
-    the custom-format hole survived the last round.
-
-    A custom static format is the dangerous case: level, filter, serialization, queueing and
-    formatter-dynamism all look identical to loguru's default, so only comparing the format content
-    distinguishes it.
-    """
-    fake = _FakeStderr()
-    with _isolated_loguru(monkeypatch, fake):
-        host = logger.add(sys.stderr, format="HOSTFMT {level} {message}")
-        with tqdm_safe_logging():
-            pass
-        logger.info("after the context")
-
-        assert host in logger._core.handlers, "the host's handler must not be displaced at all"
-        assert "HOSTFMT INFO after the context" in fake.getvalue(), "the host's custom format must survive"
-
-
-def test_tqdm_safe_logging_does_displace_a_default_stderr_handler(monkeypatch):
-    """Counterpart to the test above: a handler that IS loguru's default must be displaced, else
-    that test would pass merely because nothing is ever displaced."""
-    fake = _FakeStderr()
-    with _isolated_loguru(monkeypatch, fake):
-        host = logger.add(sys.stderr)  # loguru defaults
-        with tqdm_safe_logging():
-            assert host not in logger._core.handlers, "a default-shaped handler should be displaced"
-        assert any(
-            getattr(getattr(h, "_sink", None), "_stream", None) is fake for h in logger._core.handlers.values()
-        ), "a stderr handler must be restored"
-
-
-def test_tqdm_safe_logging_does_not_duplicate_when_the_body_reconfigures(monkeypatch):
-    """If the body does the canonical remove-then-add, restoration must not add a second stderr
-    handler — otherwise every later record is emitted twice for the rest of the session."""
-    fake = _FakeStderr()
-    with _isolated_loguru(monkeypatch, fake):
-        logger.add(sys.stderr)
-        with tqdm_safe_logging():
-            logger.remove()
-            logger.add(sys.stderr)
-        logger.info("once")
-
-        assert fake.getvalue().count("once") == 1, "record emitted more than once: handler duplicated"
-
-
-def test_tqdm_safe_logging_is_inert_when_stderr_is_none(monkeypatch):
-    """With sys.stderr None (pythonw, or fd 2 closed) the stream comparison would degenerate to
-    `None is None` and match handlers that are not streams at all, such as a host's file sink."""
-    captured = io.StringIO()
-    with _isolated_loguru():
-        host = logger.add(captured, level="INFO")
-        monkeypatch.setattr(sys, "stderr", None)
-        with tqdm_safe_logging():
-            logger.info("still here")
-        assert host in logger._core.handlers, "a non-stderr handler must never be displaced"
-        assert "still here" in captured.getvalue()
-
-
 def test_reporter_never_closes_a_caller_supplied_callback():
     """close() must not release something the caller owns. A callback can be a reusable object that
     happens to have a close() method; only the tqdm sink NeuNorm built is NeuNorm's to close."""
@@ -474,36 +337,3 @@ def test_reporter_never_closes_a_caller_supplied_callback():
 
     assert sink.events, "the callback should still have received its event"
     assert sink.closed is False, "NeuNorm closed a sink it does not own"
-
-
-def test_tqdm_safe_logging_restores_stderr_even_if_the_sink_vanishes():
-    """Regression: restoration must happen before the temporary sink is removed, and removing it
-    must tolerate having already been removed.
-
-    Previously the finally removed the tqdm sink FIRST, so code inside the context that reconfigured
-    loguru (`logger.remove()` is the canonical loguru idiom) made that removal raise, the restoration
-    loop never ran, and the session was left with NO stderr handler — silently swallowing every
-    later log record. The raised ValueError also replaced the body's own exception.
-    """
-
-    def stderr_handler_count():
-        return sum(
-            1
-            for handler in logger._core.handlers.values()
-            if getattr(getattr(handler, "_sink", None), "_stream", None) is sys.stderr
-        )
-
-    assert stderr_handler_count() == 1
-
-    with tqdm_safe_logging():
-        logger.remove()  # host reconfiguration mid-run: takes the tqdm sink with it
-
-    assert stderr_handler_count() == 1, "a stderr handler must exist after the context, regardless"
-
-    # And a body exception must propagate as itself, not be masked by a loguru id error.
-    with pytest.raises(RuntimeError, match="body failed"):
-        with tqdm_safe_logging():
-            logger.remove()
-            raise RuntimeError("body failed")
-
-    assert stderr_handler_count() == 1
