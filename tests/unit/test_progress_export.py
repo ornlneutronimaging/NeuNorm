@@ -163,6 +163,25 @@ def test_hdf5_cancellation_is_not_swallowed_by_the_best_effort_handlers(tmp_path
         write_hdf5(tmp_path / "cancelled.h5", _transmission(), metadata={"a": 1}, progress=cancel)
 
 
+def test_hdf5_cancellation_on_the_metadata_tick_also_propagates(tmp_path):
+    """Cancel on the *tick* that closes the metadata section, not the note that opens it.
+
+    The note above is emitted before the per-key loop, so cancelling on it would still pass if the
+    closing tick were later moved inside the per-key `except Exception`. This one cancels on the final
+    tick itself, so it fails if that emit ever lands inside a swallowing handler.
+    """
+
+    class _CancelledError(RuntimeError):
+        pass
+
+    def cancel(event):
+        if not event.detail and event.completed == event.total:
+            raise _CancelledError("stop")
+
+    with pytest.raises(_CancelledError):
+        write_hdf5(tmp_path / "cancelled.h5", _transmission(), metadata={"a": 1}, progress=cancel)
+
+
 # --------------------------------------------------------------------------------------
 # write_tiff_stack — both modes
 # --------------------------------------------------------------------------------------
@@ -327,14 +346,24 @@ def test_dark_normalizer_does_not_close_a_caller_supplied_sink():
     assert tqdm_sink._bars == {}
 
 
-def test_dark_normalizer_output_is_pinned_to_values():
-    """Pinned to computed values, not to a second call of the same function.
+def test_dark_normalizer_output_is_pinned_to_hand_computed_values_and_variances():
+    """Pinned analytically, values AND variances — not to a second call of the code under test.
 
-    T = (60 - 10) / (110 - 10) = 0.5. Instrumenting must not touch that.
+    The numerical body was re-indented into the progress context, and the variance path is what that
+    most risks, so the oracle has to be independent of the function. With S = 60 +- 60, O = 110 +- 110
+    and D = 10 +- 10 (counting statistics, Var = counts):
+
+        dark-corrected     S' = 50, Var 70      O' = 100, Var 120
+        transmission       T  = S'/O' = 0.5
+        naive variance     T^2 (Var_S'/S'^2 + Var_O'/O'^2) = 0.25 (70/2500 + 120/10000) = 0.01
+        shared-dark term   2 k^2 S' Var(D) / O'^3 = 2 * 50 * 10 / 1e6 = 0.001   (k = 1: no flux correction)
+        corrected variance 0.01 - 0.001 = 0.009
     """
     out = normalize_with_dark(_stack(60), _stack(110), _stack(10))
 
-    assert np.allclose(out.values, 0.5)
+    np.testing.assert_allclose(out.values, 0.5)
+    np.testing.assert_allclose(out.variances, 0.009, rtol=1e-12)
+    # supplemental only: reporting changes nothing, coords and masks included
     assert sc.identical(out, normalize_with_dark(_stack(60), _stack(110), _stack(10), progress=lambda _e: None))
 
 
