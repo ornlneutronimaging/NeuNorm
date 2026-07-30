@@ -146,7 +146,11 @@ def write_hdf5(  # noqa: C901
         item axis — the bulk data goes out in one or two whole-array writes — so it reports named
         steps, never per image: the transmission dataset, the uncertainty dataset when the data carries
         variances, the coordinate/mask section, and the metadata section when metadata is supplied.
-        See :mod:`neunorm.utils.progress`.
+        A callback that raises aborts the export, and leaves a **partially-written file** at
+        ``output_path`` — an openable HDF5 file holding only the datasets written so far. That is not
+        specific to cancellation: any error raised part-way through (a mask name collision, for
+        instance) does the same, because the file is written in place rather than staged and renamed.
+        Delete or overwrite the file after an aborted export. See :mod:`neunorm.utils.progress`.
     stage : str, optional
         Stage label the events carry. Defaults to ``STAGE_EXPORT``.
     """

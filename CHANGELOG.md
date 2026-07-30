@@ -87,10 +87,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole-array writes — so it reports named steps and can never be per-image: the transmission
   dataset, the uncertainty dataset, the coordinate/mask section, and the metadata section. Its total
   is computed, because the uncertainty write happens only for variance-bearing data and the metadata
-  section only when metadata is supplied. Every emit sits **outside** the writer's five best-effort
-  `except Exception` handlers: those exist so one un-writable metadata key cannot abort the bulk-data
+  section only when metadata is supplied. Every emit sits **outside** the writer's five non-re-raising
+  handlers (three `except Exception`, one `except (TypeError, ValueError)`, one `except TypeError`):
+  those exist so one un-writable metadata key or unserializable coordinate cannot abort the bulk-data
   write, and a tick placed inside one would swallow a cancelling callback's exception, turning a
-  user's abort into a silently skipped metadata key. `write_tiff_stack` in `one_file_per_image` mode
+  user's abort into a silently skipped metadata key. Cancelling — or any mid-write error, which was
+  already possible — leaves a partially-written file at the output path; that is now documented on the
+  parameter, since supporting cancellation makes it reachable on purpose. `write_tiff_stack` in `one_file_per_image` mode
   is the one export path with a determinate item count and emits one event per file, naming it; stack
   mode reports its single multi-page write as one step, so the default export path is not silent
   either. `normalize_with_dark` — `normalize_transmission`'s sibling on the CCD path, which was

@@ -423,6 +423,15 @@ def normalize_transmission(  # noqa: C901
         ``ValueError``. ``False`` skips only that guard and lets zeros propagate through the
         division (inf/nan output) — the legacy 1.x semantics, for downstreams reproducing 1.x
         outputs bit for bit. Structural errors (bad ROI bounds, missing dims) always raise.
+    progress : bool or callable, optional
+        Progress reporting, off by default. This function has no item axis, so it reports named
+        whole-array steps — the flux correction (background-ROI or proton-charge) and the division —
+        with the total computed from the correction actually requested. Work conditional on a value
+        only known mid-run is announced without advancing the count. Accepts an existing
+        ``ProgressReporter``, which is how ``normalize_with_dark`` makes its steps continue one count
+        rather than opening a second bar. See :mod:`neunorm.utils.progress`.
+    stage : str, optional
+        Stage label the events carry. Defaults to ``STAGE_NORMALIZE``.
 
     Returns
     -------

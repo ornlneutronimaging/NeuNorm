@@ -15,6 +15,7 @@ import filecmp
 import io
 import re
 
+import h5py
 import numpy as np
 import pytest
 import scipp as sc
@@ -147,7 +148,8 @@ def test_hdf5_output_is_byte_identical_with_and_without_reporting(tmp_path):
 def test_hdf5_cancellation_is_not_swallowed_by_the_best_effort_handlers(tmp_path):
     """A cancelling callback must propagate.
 
-    `write_hdf5` has five `except Exception` handlers with no re-raise — deliberate, so one bad
+    `write_hdf5` has five non-re-raising handlers — three `except Exception`, one
+    `except (TypeError, ValueError)`, one `except TypeError` — deliberate, so one bad
     metadata key cannot abort the bulk write. A tick placed inside any of them would turn a user's
     abort into a silently skipped metadata key, so every emit sits outside them.
     """
@@ -180,6 +182,32 @@ def test_hdf5_cancellation_on_the_metadata_tick_also_propagates(tmp_path):
 
     with pytest.raises(_CancelledError):
         write_hdf5(tmp_path / "cancelled.h5", _transmission(), metadata={"a": 1}, progress=cancel)
+
+
+def test_cancelled_hdf5_export_leaves_a_partial_file_that_is_closed_and_openable(tmp_path):
+    """What a cancelled export leaves behind, pinned rather than assumed.
+
+    The file is written in place, not staged and renamed, so an abort leaves the datasets written so
+    far — reachable on purpose now that a callback can cancel, though any mid-write error (a mask name
+    collision) always could. What must hold is that the file is *closed*: both context managers unwind,
+    so it is readable rather than a locked, half-flushed handle.
+    """
+
+    class _CancelledError(RuntimeError):
+        pass
+
+    def cancel(event):
+        if event.detail == "writing uncertainty":
+            raise _CancelledError("stop")
+
+    path = tmp_path / "partial.h5"
+    with pytest.raises(_CancelledError):
+        write_hdf5(path, _transmission(), progress=cancel)
+
+    assert path.exists()
+    with h5py.File(path, "r") as f:  # would raise if the writer had left the file open
+        assert "transmission" in f
+        assert "uncertainty" not in f
 
 
 # --------------------------------------------------------------------------------------
