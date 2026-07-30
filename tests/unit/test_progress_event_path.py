@@ -1,10 +1,11 @@
 """Progress reporting through the event-mode load path (#195, Task 4).
 
-The event path has no per-file loop the way a TIFF stack does: `load_event_nexus` is one h5py slab
-read followed by four numpy passes, each allocating a full event-length array, and the converters
-chunk at 500M events so a typical run is a single chunk. So the useful signal here is *which* of
-those allocations is running, not a count — reported as notes. That is also where the event path
-peaks in memory, which is the wait a user actually notices.
+The event path has no per-file loop the way a TIFF stack does: `load_event_nexus` performs two h5py
+slab reads and two numpy passes, four steps in all, each allocating a full event-length array; and the
+converters chunk at 500M events, so a typical run is a single chunk. The useful signal is therefore
+*which* allocation is running — each is named with a note before it runs and counted only after it
+returns, so a failed read never reports work that did not happen. Those allocations are where the
+event path peaks in memory, which is the wait a user actually notices.
 """
 
 import contextlib
@@ -26,6 +27,7 @@ from neunorm.tof.event_converter import (
     convert_events_to_histogram,
 )
 from neunorm.utils.progress import (
+    NULL_REPORTER,
     STAGE_LOAD_OB,
     STAGE_NORMALIZE,
     ProgressReporter,
@@ -376,4 +378,11 @@ def test_resolve_progress_is_usable_as_a_context_manager():
             raise RuntimeError("boom")
 
     assert sink._bars == {}, "__exit__ must release the bars even when the body raises"
-    assert resolve_progress(False).__enter__() is not None
+
+    # The no-op reporter must work as a context manager too, so an instrumented function can use one
+    # shape unconditionally. (`__enter__() is not None` asserted nothing — it returns self, which is
+    # not None for every possible object.)
+    with resolve_progress(False) as null_report:
+        assert null_report is NULL_REPORTER
+        null_report()
+        null_report.note("x")
