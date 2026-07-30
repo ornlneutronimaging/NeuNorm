@@ -21,11 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Events are emitted synchronously from the calling thread, and a callback that raises is not
   caught — that is how a caller cancels a run. `tqdm` is imported lazily, so the default
   `progress=False` path never pays for it. Also included: `tqdm_safe_logging()`, which routes
-  loguru's stderr records through `tqdm.write` so they do not corrupt a bar, and which leaves a host
-  application's logging configuration alone if nothing is writing to stderr.
+  loguru's stderr records through `tqdm.write` so they do not corrupt a bar. It displaces **only** a
+  handler indistinguishable from loguru's own default — measured against loguru rather than
+  hardcoded — because a handler a host application configured cannot be faithfully put back through
+  the public `add()` API, and silently replacing an application's log format is worse than a
+  corrupted bar. It is also inert when `sys.stderr` is `None`, restores before removing its own sink,
+  and adds back only the shortfall so a reconfiguration inside the context cannot end up emitting
+  every record twice.
   **No pipeline emits progress yet** — the instrumentation and the `progress` parameter land in
-  follow-up work; this entry adds only the contract, and fixes the long-stale `neunorm.utils`
-  docstring that already advertised "progress reporting".
+  follow-up work; this entry adds only the contract, and corrects the long-stale `neunorm.utils`
+  docstring, which advertised "progress reporting" that did not exist and "validation helpers" that
+  never have.
 
 - **Per-image TIFF export** — `write_tiff_stack(..., one_file_per_image=True)`, exposed on the
   VENUS TOF pipelines as `tiff_one_file_per_image=True`, writes **one scitiff file per spectral
@@ -89,13 +95,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Parameters added since v2.2.3 are now keyword-only, and the released positional order is guarded
-  by tests.** `rebin_reduction` and `tiff_one_file_per_image` on the three VENUS TOF pipelines, and
-  `one_file_per_image` and `concat_stdevs_and_mask` on `write_tiff_stack`, are keyword-only. All four
+  by tests.** `rebin_reduction` and `tiff_one_file_per_image` on the three VENUS TOF pipelines,
+  `one_file_per_image` and `concat_stdevs_and_mask` on `write_tiff_stack`, and `image_dir` on
+  `load_metadata`, are keyword-only. All of them
   had been added positionally on `next`, and `rebin_reduction` in particular was inserted immediately
   after `rebin_by_tof`, shifting every later positional parameter — five of them in
   `venus_tpx3_event`. None of it had been released, so the shift is undone rather than frozen: the
-  positional signatures of all six pipelines and of `write_tiff_stack` are now byte-for-byte those of
-  v2.2.3, and `tests/unit/test_public_signatures.py` pins them against the tag (not against the
+  positional parameter names and order of all six pipelines and of `write_tiff_stack` are again
+  exactly those of v2.2.3 (some type annotations have widened since, which does not affect binding), and `tests/unit/test_public_signatures.py` pins them against the tag (not against the
   current code) plus asserts that anything added since is keyword-only and that no released parameter
   becomes positional-only. **No action is needed for any released caller** — this restores v2.2.3's
   order rather than departing from it. Callers written against `next` since 3bd2b07 that passed those
