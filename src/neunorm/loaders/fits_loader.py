@@ -80,8 +80,7 @@ def load_fits_stack(  # noqa: C901
             logger.error("Failed to load FITS files: {}", e)
             raise
 
-    report = resolve_progress(progress, stage, total=len(paths))
-    try:
+    with resolve_progress(progress, stage, total=len(paths)) as report:
         for path in paths:
             # The try covers only the read: an exception raised by a progress callback (which is how a
             # caller cancels) must not be logged as a failed FITS read, so the tick is emitted outside.
@@ -170,5 +169,3 @@ def load_fits_stack(  # noqa: C901
                     da.coords.set_aligned(key, False)
 
         return da
-    finally:
-        report.close()

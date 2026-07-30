@@ -31,6 +31,7 @@ import inspect
 import pytest
 
 from neunorm.exporters.tiff_writer import write_tiff_stack
+from neunorm.loaders.event_loader import load_event_data, load_event_nexus
 from neunorm.loaders.fits_loader import load_fits_stack
 from neunorm.loaders.metadata_loader import load_metadata
 from neunorm.loaders.stack_loader import load_stack
@@ -41,6 +42,10 @@ from neunorm.pipelines.venus_ccd import run_venus_ccd_pipeline
 from neunorm.pipelines.venus_tpx1 import run_venus_tpx1_pipeline
 from neunorm.pipelines.venus_tpx3_event import run_venus_tpx3_event_pipeline
 from neunorm.pipelines.venus_tpx3_histogram import run_venus_tpx3_histogram_pipeline
+from neunorm.tof.event_converter import (
+    convert_events_to_2d_histogram,
+    convert_events_to_histogram,
+)
 
 # Positional order as released in v2.2.3. Sourced from the tag, NOT from the current code.
 _VENUS_HISTOGRAM_V223 = [
@@ -127,6 +132,28 @@ RELEASED_POSITIONAL = {
     "load_stack": (load_stack, ["paths"]),
     "load_tiff_stack": (load_tiff_stack, ["paths", "tof_edges"]),
     "load_fits_stack": (load_fits_stack, ["paths", "tof_edges"]),
+    "load_event_nexus": (
+        load_event_nexus,
+        ["file_path", "detector_bank", "detector_shape", "event_id_offset", "max_events"],
+    ),
+    "load_event_data": (load_event_data, ["file_path", "tof_clock", "max_events"]),
+    "convert_events_to_histogram": (
+        convert_events_to_histogram,
+        [
+            "events",
+            "binning",
+            "flight_path",
+            "x_bins",
+            "y_bins",
+            "chunk_size",
+            "compute_variance",
+            "detector_time_offset",
+        ],
+    ),
+    "convert_events_to_2d_histogram": (
+        convert_events_to_2d_histogram,
+        ["events", "detector_shape", "chunk_size"],
+    ),
 }
 
 

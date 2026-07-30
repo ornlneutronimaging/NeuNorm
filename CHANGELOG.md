@@ -46,6 +46,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loaders again accept a non-sized iterable such as `Path.glob(...)`, as they did before reporting
   was added.
 
+- **Progress reporting through the event-mode path** — `load_event_nexus` and both event converters
+  (`convert_events_to_histogram` and `convert_events_to_2d_histogram`) accept a keyword-only
+  `progress` and `stage`. The event path has no per-file loop, so what is reported is different in
+  kind: `load_event_nexus` counts its four full-event-length allocations (two h5py slab reads, the
+  event-id unroll, the TOF conversion), naming each before it runs, because that sequence is where
+  the event path peaks in memory. The converters emit one event per chunk — at the default 500M
+  events per chunk a typical run is a single tick, becoming a real progression only for
+  billion-event datasets. Both converters are instrumented deliberately: `mars_tpx3` uses the 2-D
+  one and `venus_tpx3_event` the 3-D one, so covering either alone would leave a pipeline silent.
+  This also **removes an ad-hoc `logger.info` chunk-percent print** that fired only every tenth
+  chunk when there was more than one, i.e. never below five billion events, and wrote to a channel
+  a caller could not redirect or disable.
+
+- **`ProgressReporter` is a context manager.** `with resolve_progress(...) as report:` releases the
+  progress bars on the way out whether the body returned or raised. Every instrumented function now
+  uses that shape, so a forgotten `finally` cannot leak an abandoned bar again — which it did once
+  already.
+
 - **Per-image TIFF export** — `write_tiff_stack(..., one_file_per_image=True)`, exposed on the
   VENUS TOF pipelines as `tiff_one_file_per_image=True`, writes **one scitiff file per spectral
   image** (one normalization per file) named `<stem>_00000.tiff`, `<stem>_00001.tiff`, … in spectral

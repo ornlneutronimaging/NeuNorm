@@ -12,6 +12,7 @@ import numpy as np
 from loguru import logger
 
 from neunorm.data_models.core import EventData
+from neunorm.utils.progress import STAGE_LOAD_SAMPLE, ProgressLike, resolve_progress
 
 
 def load_event_data(
@@ -110,6 +111,9 @@ def load_event_nexus(  # noqa: C901
     detector_shape: tuple[int, int] = (512, 512),
     event_id_offset: int = 0,
     max_events: Optional[int] = None,
+    *,
+    progress: ProgressLike = False,
+    stage: str = STAGE_LOAD_SAMPLE,
 ) -> EventData:
     """
     Load event-mode data from SNS NeXus HDF5 file.
@@ -166,69 +170,80 @@ def load_event_nexus(  # noqa: C901
 
     logger.info(f"Loading SNS NeXus event data from {file_path.name}")
 
-    with h5py.File(file_path, "r") as f:
-        # Navigate to entry group
-        if "entry" not in f:
-            raise KeyError("NeXus 'entry' group not found in file")
+    # No item axis, but a known step sequence: one h5py slab read per dataset, then two numpy passes,
+    # each allocating a full event-length array. Counting those four steps renders honestly (25, 50,
+    # 75, 100%) where a single-step total=1 bar would sit at 0% and never draw a completion.
+    with resolve_progress(progress, stage, total=4) as report:
+        with h5py.File(file_path, "r") as f:
+            # Navigate to entry group
+            if "entry" not in f:
+                raise KeyError("NeXus 'entry' group not found in file")
 
-        entry = f["entry"]
+            entry = f["entry"]
 
-        # Find event bank group
-        bank_key = f"{detector_bank}_events" if not detector_bank.endswith("_events") else detector_bank
+            # Find event bank group
+            bank_key = f"{detector_bank}_events" if not detector_bank.endswith("_events") else detector_bank
 
-        if bank_key not in entry:
-            raise KeyError(
-                f"Detector bank '{bank_key}' not found under 'entry'. Available groups: {list(entry.keys())}"
-            )
-        event_bank_group = entry[bank_key]
-
-        logger.info(f"  Using detector bank: {detector_bank}")
-
-        # Check for required datasets
-        required_fields = ["event_id", "event_time_offset"]
-        for field in required_fields:
-            if field not in event_bank_group:
+            if bank_key not in entry:
                 raise KeyError(
-                    f"Dataset '{field}' not found in {detector_bank}_events. Found: {list(event_bank_group.keys())}"
+                    f"Detector bank '{bank_key}' not found under 'entry'. Available groups: {list(entry.keys())}"
                 )
+            event_bank_group = entry[bank_key]
 
-        # Get total event count
-        total_events_in_file = event_bank_group["event_id"].shape[0]
+            logger.info(f"  Using detector bank: {detector_bank}")
 
-        # Determine how many events to load
-        if max_events is not None:
-            n_events = min(max_events, total_events_in_file)
-            logger.info(f"  Loading {n_events:,} / {total_events_in_file:,} events (max_events={max_events:,})")
-        else:
-            n_events = total_events_in_file
-            logger.info(f"  Loading {n_events:,} events")
+            # Check for required datasets
+            required_fields = ["event_id", "event_time_offset"]
+            for field in required_fields:
+                if field not in event_bank_group:
+                    raise KeyError(
+                        f"Dataset '{field}' not found in {detector_bank}_events. Found: {list(event_bank_group.keys())}"
+                    )
 
-        # Load event_id and time_offset
-        event_id = event_bank_group["event_id"][:n_events].astype(np.int32)
-        tof_raw = event_bank_group["event_time_offset"][:n_events].astype(np.float64)
+            # Get total event count
+            total_events_in_file = event_bank_group["event_id"].shape[0]
 
-    # Unroll event_id to x, y pixel coordinates
-    # event_id is linearized: pixel_id = y * y_bins + x
-    x_bins, y_bins = detector_shape
-    y = ((event_id - event_id_offset) // y_bins).astype(np.int32)
-    x = ((event_id - event_id_offset) % y_bins).astype(np.int32)
+            # Determine how many events to load
+            if max_events is not None:
+                n_events = min(max_events, total_events_in_file)
+                logger.info(f"  Loading {n_events:,} / {total_events_in_file:,} events (max_events={max_events:,})")
+            else:
+                n_events = total_events_in_file
+                logger.info(f"  Loading {n_events:,} events")
 
-    # Convert TOF from microseconds to nanoseconds
-    tof_ns = (tof_raw * 1000).astype(np.int64)
+            # There is no item axis to count here — one h5py slab read followed by four numpy passes,
+            # each allocating a full event-length array. That is where the event path peaks in memory,
+            # so each step is announced before it runs: a bar parked on one of these names is the only
+            # way a user learns which allocation is thrashing.
+            report(detail=f"reading {n_events:,} events")
+            event_id = event_bank_group["event_id"][:n_events].astype(np.int32)
+            report(detail=f"reading {n_events:,} time offsets")
+            tof_raw = event_bank_group["event_time_offset"][:n_events].astype(np.float64)
 
-    logger.info(f"  TOF range: {tof_ns.min():,} - {tof_ns.max():,} ns")
-    logger.info(f"  X range: [{x.min()}, {x.max()}]")
-    logger.info(f"  Y range: [{y.min()}, {y.max()}]")
+        # Unroll event_id to x, y pixel coordinates
+        # event_id is linearized: pixel_id = y * y_bins + x
+        x_bins, y_bins = detector_shape
+        report(detail="unrolling event ids to x, y")
+        y = ((event_id - event_id_offset) // y_bins).astype(np.int32)
+        x = ((event_id - event_id_offset) % y_bins).astype(np.int32)
 
-    # Create EventData model
-    events = EventData(
-        tof=tof_ns,
-        x=x,
-        y=y,
-        file_path=file_path,
-        total_events=n_events,
-    )
+        # Convert TOF from microseconds to nanoseconds
+        report(detail="converting tof to ns")
+        tof_ns = (tof_raw * 1000).astype(np.int64)
 
-    logger.success(f"✓ Loaded {events.total_events:,} events from {file_path.name}")
+        logger.info(f"  TOF range: {tof_ns.min():,} - {tof_ns.max():,} ns")
+        logger.info(f"  X range: [{x.min()}, {x.max()}]")
+        logger.info(f"  Y range: [{y.min()}, {y.max()}]")
 
-    return events
+        # Create EventData model
+        events = EventData(
+            tof=tof_ns,
+            x=x,
+            y=y,
+            file_path=file_path,
+            total_events=n_events,
+        )
+
+        logger.success(f"✓ Loaded {events.total_events:,} events from {file_path.name}")
+
+        return events

@@ -226,6 +226,20 @@ class ProgressReporter:
         """A reporter for the same stage and total that starts counting from ``offset``."""
         return ProgressReporter(self._sink, self._stage, offset=offset, total=self._total, owns_sink=self._owns_sink)
 
+    def __enter__(self) -> "ProgressReporter":
+        """Use as a context manager so :meth:`close` cannot be forgotten.
+
+        ``with resolve_progress(...) as report:`` is the preferred shape for an instrumented
+        function: it releases the bars on the way out whether the body returned or raised, without
+        a hand-written ``try``/``finally`` at every emit site — the omission of which left an
+        abandoned bar open once already.
+        """
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Release the bars, then let any exception propagate."""
+        self.close()
+
     def close(self) -> None:
         """Release the progress bars NeuNorm opened, if any.
 
