@@ -59,6 +59,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chunk when there was more than one, i.e. never below five billion events, and wrote to a channel
   a caller could not redirect or disable.
 
+- **Progress reporting through the two dominant compute stages** — `apply_gamma_filter` and
+  `normalize_transmission` accept a keyword-only `progress` and `stage`. Neither has an item axis, so
+  both report named steps: the gamma filter reports four, the third being the
+  `scipy.ndimage.median_filter` that is most of its cost; the normalizer reports its separable
+  whole-array operations — the flux correction (background-ROI or proton-charge) and the division.
+  Each step is named before it runs and counted after it returns, so a failure never reports work
+  that did not happen. These are the two places a run goes quiet for longest: the gamma filter is
+  **on by default** on both CCD pipelines and MARS TPX3 and is the slowest stage per frame there,
+  and the normalizer dominates the TOF paths — at 300 x 512² its proton-charge steps take seconds
+  each. Work that is conditional on a value only known mid-run (the per-outlier variance
+  recomputation, the background-ROI variance term) is announced without advancing the count, so the
+  declared total always matches the steps that actually run whichever arguments are given.
+
 - **`ProgressReporter` is a context manager.** `with resolve_progress(...) as report:` releases the
   progress bars on the way out whether the body returned or raised. Every instrumented function now
   uses that shape, so a forgotten `finally` cannot leak an abandoned bar again — which it did once

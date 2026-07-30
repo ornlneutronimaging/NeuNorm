@@ -31,6 +31,7 @@ import inspect
 import pytest
 
 from neunorm.exporters.tiff_writer import write_tiff_stack
+from neunorm.filters.gamma_filter import apply_gamma_filter
 from neunorm.loaders.event_loader import load_event_data, load_event_nexus
 from neunorm.loaders.fits_loader import load_fits_stack
 from neunorm.loaders.metadata_loader import load_metadata
@@ -42,6 +43,7 @@ from neunorm.pipelines.venus_ccd import run_venus_ccd_pipeline
 from neunorm.pipelines.venus_tpx1 import run_venus_tpx1_pipeline
 from neunorm.pipelines.venus_tpx3_event import run_venus_tpx3_event_pipeline
 from neunorm.pipelines.venus_tpx3_histogram import run_venus_tpx3_histogram_pipeline
+from neunorm.processing.normalizer import normalize_transmission
 from neunorm.tof.event_converter import (
     convert_events_to_2d_histogram,
     convert_events_to_histogram,
@@ -153,6 +155,22 @@ RELEASED_POSITIONAL = {
     "convert_events_to_2d_histogram": (
         convert_events_to_2d_histogram,
         ["events", "detector_shape", "chunk_size"],
+    ),
+    "apply_gamma_filter": (
+        apply_gamma_filter,
+        ["data", "threshold_sigma", "kernel_size", "preserve_variance"],
+    ),
+    "normalize_transmission": (
+        normalize_transmission,
+        [
+            "sample",
+            "ob",
+            "proton_charge_sample",
+            "proton_charge_ob",
+            "pc_uncertainty",
+            "background_roi",
+            "background_roi_strict",
+        ],
     ),
 }
 
