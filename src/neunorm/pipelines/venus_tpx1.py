@@ -114,11 +114,6 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         result is not a continuous spectrum. Prefer contiguous ranges when the data will be analysed
         as a spectrum; see :mod:`neunorm.tof.histogram_rebinner` for details. Values, variances and
         the per-bin ``spectra_tof`` are exact either way.
-    rebin_reduction : {"mean", "sum", "median"}, optional
-        How frames combine within each TOF bin. ``None`` (default) preserves existing behavior — a
-        uniform factor **sums**, a bin list takes the **mean** — while an explicit value applies to
-        either. A bin list or a mean/median reduction also attaches a ``spectra_tof`` per-bin
-        mean-time coordinate.
     rebin_by_spatial : Optional[int | tuple[int, int]]
         Whether to apply spatial rebinning. If an integer is provided, it is used as the
         rebinning factor for both spatial axes. A ``(x, y)`` tuple selects per-axis
@@ -127,6 +122,11 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         Source-to-detector flight path used for TOF→energy/wavelength coordinate labeling.
         Defaults to ``VENUS_FLIGHT_PATH_M`` (25 m); set it per detector/sample position.
 
+    rebin_reduction : {"mean", "sum", "median"}, optional
+        How frames combine within each TOF bin. ``None`` (default) preserves existing behavior — a
+        uniform factor **sums**, a bin list takes the **mean** — while an explicit value applies to
+        either. A bin list or a mean/median reduction also attaches a ``spectra_tof`` per-bin
+        mean-time coordinate.
     tiff_one_file_per_image : bool
         TIFF output only. When ``False`` (default) the stack is written as one multi-page scitiff
         file. When ``True`` each spectral image is written as its own scitiff file
