@@ -21,12 +21,30 @@ from neunorm.utils.progress import STAGE_NORMALIZE, ProgressLike, resolve_progre
 BackgroundROILike = RegionsLike
 
 
-def _normalize_step_count(background_roi, proton_charge_sample) -> int:
+def normalize_step_count(background_roi=None, proton_charge_sample=None) -> int:
     """How many progress steps :func:`normalize_transmission` will report for these arguments.
 
     Shared with :func:`normalize_with_dark`, which reports its own dark subtractions and then hands its
     reporter down: a borrowed reporter keeps the OUTER total, so the caller must declare the combined
     count. Deriving both from one function is what stops the two drifting apart.
+
+    Public for the same reason a pipeline needs :data:`~neunorm.filters.gamma_filter.GAMMA_FILTER_STEPS`:
+    a caller that hands in a pre-bound ``ProgressReporter`` must declare that stage's total itself,
+    because ``resolve_progress`` does not let a callee re-bind one.
+
+    Parameters
+    ----------
+    background_roi : optional
+        The ``background_roi`` that will be passed to :func:`normalize_transmission`, or ``None``.
+    proton_charge_sample : optional
+        The ``proton_charge_sample`` that will be passed, or ``None``. Ignored when
+        ``background_roi`` is given, since the two corrections are mutually exclusive.
+
+    Returns
+    -------
+    int
+        The number of counted steps. Work announced with a note (the background-ROI variance term)
+        is deliberately not included: it does not advance the count.
     """
     n_steps = 1  # the division itself always runs
     if background_roi is not None:
@@ -34,6 +52,21 @@ def _normalize_step_count(background_roi, proton_charge_sample) -> int:
     elif proton_charge_sample is not None:
         n_steps += 2  # sample and OB are separate full-array divisions
     return n_steps
+
+
+def normalize_with_dark_step_count(background_roi=None, proton_charge_sample=None) -> int:
+    """How many progress steps :func:`normalize_with_dark` will report for these arguments.
+
+    Its two dark subtractions plus whatever the delegate reports, so a pipeline declaring this as one
+    stage of a run gets one continuous count instead of a bar that stops short. See
+    :func:`normalize_step_count`.
+
+    Returns
+    -------
+    int
+        The number of counted steps, dark subtractions included.
+    """
+    return 2 + normalize_step_count(background_roi, proton_charge_sample)
 
 
 def _as_plain_int_bounds(bounds: tuple) -> tuple[int, int, int, int]:
@@ -466,7 +499,7 @@ def normalize_transmission(  # noqa: C901
     # of the stack. The count is computed from the arguments because the work varies — the
     # background-ROI and proton-charge corrections are mutually exclusive, and either may be absent —
     # so a literal total would leave the bar short or overshooting.
-    with resolve_progress(progress, stage, total=_normalize_step_count(background_roi, proton_charge_sample)) as report:
+    with resolve_progress(progress, stage, total=normalize_step_count(background_roi, proton_charge_sample)) as report:
         # Background-ROI flux normalization: when no proton charge is available
         # (e.g. MARS), scale each image by its pooled mean counts in one or more sample-free ROIs so
         # per-image beam-flux differences cancel: T = (S/mean(S[B])) / (O/mean(O[B])). First-order UQ.
@@ -664,7 +697,7 @@ def normalize_with_dark(
     # Two dark subtractions of our own, then whatever normalize_transmission will report. It receives
     # this reporter and borrows it, and a borrowed reporter keeps the OUTER total, so the combined
     # count has to be declared here or the bar would stop short.
-    n_steps = 2 + _normalize_step_count(background_roi, proton_charge_sample)
+    n_steps = normalize_with_dark_step_count(background_roi, proton_charge_sample)
     with resolve_progress(progress, stage, total=n_steps) as report:
         report.note("dark-correcting sample")
         sample_dc = subtract_dark(sample, dark)

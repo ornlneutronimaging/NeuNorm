@@ -84,6 +84,40 @@ def _discard_failed_metadata(f: h5py.File, name: Optional[str], key, exc: Except
     )
 
 
+def hdf5_export_step_count(transmission: sc.DataArray, metadata: Optional[dict] = None) -> int:
+    """How many progress steps :func:`write_hdf5` will report for these arguments.
+
+    HDF5 is the primary output format and :func:`write_hdf5` has no item axis — the bulk data goes out
+    in one or two whole-array writes — so it reports named steps: the transmission dataset, then
+    coordinates and masks, plus the uncertainty dataset for variance-bearing data and the metadata
+    section when metadata is supplied.
+
+    Public so a caller that hands in a pre-bound ``ProgressReporter`` — a pipeline reporting export as
+    one stage of a longer run — can declare that stage's total, which ``resolve_progress`` will not let
+    a callee re-bind. Deriving both from this one function is what stops the pipeline's declared total
+    and the ticks the writer emits from drifting apart.
+
+    Parameters
+    ----------
+    transmission : sc.DataArray
+        The array that will be written. Only whether it carries variances matters here.
+    metadata : Optional[dict]
+        The metadata that will be written, or ``None``. An empty dict counts as no metadata section,
+        matching the writer.
+
+    Returns
+    -------
+    int
+        The number of counted steps.
+    """
+    n_steps = 2  # the transmission dataset, then coordinates and masks
+    if transmission.variances is not None:
+        n_steps += 1
+    if metadata:
+        n_steps += 1
+    return n_steps
+
+
 def write_hdf5(  # noqa: C901
     output_path: Union[Path, str],
     transmission: sc.DataArray,
@@ -166,12 +200,9 @@ def write_hdf5(  # noqa: C901
     # one or two whole-array `create_dataset` calls, so it can never be reported per image. What is
     # worth naming is which of those writes is running — they are the only expensive parts — plus the
     # small coordinate/mask and metadata sections. The total is computed because the uncertainty write
-    # happens only for variance-bearing data and the metadata section only when metadata is supplied.
-    n_steps = 2  # the transmission dataset, then coordinates and masks
-    if transmission.variances is not None:
-        n_steps += 1
-    if metadata:
-        n_steps += 1
+    # happens only for variance-bearing data and the metadata section only when metadata is supplied;
+    # it comes from the shared helper so a caller declaring this stage cannot disagree with the ticks.
+    n_steps = hdf5_export_step_count(transmission, metadata)
 
     with resolve_progress(progress, stage, total=n_steps) as report, h5py.File(output_path, "w") as f:
         # Write transmission data and unit

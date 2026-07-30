@@ -13,7 +13,13 @@ from neunorm.utils.progress import STAGE_GAMMA_FILTER, ProgressLike, resolve_pro
 #: whether it runs depends on the outlier count, which is only known after step 4, so it is announced
 #: with a note instead of being counted — a total that cannot be computed up front would leave the bar
 #: either short or overshooting.
-_GAMMA_STEPS = 4
+#:
+#: Public because a caller that hands this function a pre-bound ``ProgressReporter`` — a pipeline
+#: reporting this as one stage of a longer run — has to declare the stage total itself:
+#: ``resolve_progress`` deliberately does not let a callee re-bind a total. Reading it from here is
+#: what keeps the pipeline's declared total and the ticks this function actually emits from drifting
+#: apart.
+GAMMA_FILTER_STEPS = 4
 
 
 def apply_gamma_filter(
@@ -91,7 +97,7 @@ def apply_gamma_filter(
 
     # calculate local median and std using scipy filters
     values = data.data.values
-    with resolve_progress(progress, stage, total=_GAMMA_STEPS) as report:
+    with resolve_progress(progress, stage, total=GAMMA_FILTER_STEPS) as report:
         # Compute local standard deviation using convolution to avoid per-pixel Python callbacks.
         # Equivalent to local_std = ndi.generic_filter(values, np.std, footprint=footprint, mode="nearest")
         kernel = footprint.astype(float)

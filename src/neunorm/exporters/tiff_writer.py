@@ -67,6 +67,38 @@ def convert_metadata_to_scitiff_coords(metadata: dict) -> sc.DataGroup:
 _SPATIAL_DIMS = ("x", "y")
 
 
+def tiff_export_step_count(transmission: sc.DataArray, *, one_file_per_image: bool = False) -> int:
+    """How many progress steps :func:`write_tiff_stack` will report for these arguments.
+
+    One per file in ``one_file_per_image`` mode — the only export path with a determinate item count —
+    and one for the single multi-page write in stack mode.
+
+    Public so a caller that hands in a pre-bound ``ProgressReporter`` — a pipeline reporting export as
+    one stage of a longer run — can declare that stage's total, which ``resolve_progress`` will not let
+    a callee re-bind.
+
+    Parameters
+    ----------
+    transmission : sc.DataArray
+        The array that will be written. Its dimensions decide the per-image count.
+    one_file_per_image : bool
+        The mode :func:`write_tiff_stack` will be called with.
+
+    Returns
+    -------
+    int
+        The number of counted steps. Returns ``1`` for data with no spectral dimension (already a
+        single image) and for data with more than one, which :func:`write_tiff_stack` rejects — the
+        error is raised there, by the writer, exactly as it is without progress reporting.
+    """
+    if not one_file_per_image:
+        return 1
+    spectral_dims = [d for d in transmission.dims if d not in _SPATIAL_DIMS]
+    if len(spectral_dims) != 1:
+        return 1
+    return transmission.sizes[spectral_dims[0]]
+
+
 def _to_scitiff_image(transmission: sc.DataArray) -> sc.DataArray:
     """Cast to float32 and drop coords/masks scitiff cannot serialize.
 
@@ -211,7 +243,8 @@ def write_tiff_stack(
         concat = False if concat_stdevs_and_mask is None else concat_stdevs_and_mask
         written: list[Path] = []
         # Genuinely iterable: one file per spectral image, and at a flat per-file cost this is the one
-        # export path where a determinate bar is possible.
+        # export path where a determinate bar is possible. `tiff_export_step_count` predicts this same
+        # count for a caller that must declare the stage total; a test pins the two together.
         with resolve_progress(progress, stage, total=n_images) as report:
             for index in range(n_images):
                 frame_path = output_path.with_name(f"{output_path.stem}_{index:0{width}d}{output_path.suffix}")

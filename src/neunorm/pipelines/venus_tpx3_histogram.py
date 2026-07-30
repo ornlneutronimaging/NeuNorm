@@ -18,12 +18,12 @@ from neunorm.data_models.roi import (
     as_roi_bounds,
     region_provenance,
 )
-from neunorm.exporters.hdf5_writer import write_hdf5
-from neunorm.exporters.tiff_writer import write_tiff_stack
+from neunorm.exporters.hdf5_writer import hdf5_export_step_count, write_hdf5
+from neunorm.exporters.tiff_writer import tiff_export_step_count, write_tiff_stack
 from neunorm.loaders.metadata_loader import load_metadata
 from neunorm.loaders.tiff_loader import load_tiff_stack
 from neunorm.processing.air_region_corrector import apply_air_region_correction
-from neunorm.processing.normalizer import normalize_transmission
+from neunorm.processing.normalizer import normalize_step_count, normalize_transmission
 from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.run_combiner import combine_runs
 from neunorm.processing.spatial_rebinner import rebin_spatial
@@ -32,6 +32,17 @@ from neunorm.tof.histogram_rebinner import rebin_tof
 from neunorm.tof.pixel_detector import detect_dead_pixels, detect_hot_pixels
 from neunorm.tof.statistics_analyzer import analyze_statistics
 from neunorm.utils.constants import VENUS_FLIGHT_PATH_M
+from neunorm.utils.progress import (
+    STAGE_COMBINE_RUNS,
+    STAGE_EXPORT,
+    STAGE_LOAD_OB,
+    STAGE_LOAD_SAMPLE,
+    STAGE_NORMALIZE,
+    STAGE_REBIN_TOF,
+    Progress,
+    resolve_progress,
+    total_across_groups,
+)
 
 
 def run_venus_tpx3_histogram_pipeline(  # noqa: C901
@@ -48,6 +59,7 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
     *,
     rebin_reduction: Optional[Literal["mean", "sum", "median"]] = None,
     tiff_one_file_per_image: bool = False,
+    progress: Progress = False,
 ) -> sc.DataArray:
     """Execute VENUS TPX3 histogram normalization pipeline.
 
@@ -116,6 +128,18 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
         file. When ``True`` each spectral image is written as its own scitiff file
         (``<stem>_00000.tiff``, ``<stem>_00001.tiff``, …, one normalization per file), which suits
         tools such as ImageJ that expect individual images. Ignored for HDF5 output.
+    progress : bool or callable, optional
+        Progress reporting for the whole run, off by default (and free when off). ``True`` lets
+        NeuNorm draw one :mod:`tqdm` bar per stage; a callable receives a
+        :class:`~neunorm.utils.progress.ProgressEvent` for every item or step and is how any progress
+        library is driven. Raising from the callback cancels the run.
+
+        The stages reported are the sample and open-beam loads — **one event per TIFF**, counted across
+        all input runs rather than restarting per run — then the run combine, the TOF rebin when one is
+        requested, the normalization, and the export, which is per file with
+        ``tiff_one_file_per_image=True``. Not every operation in between is reported: the metadata
+        reads, the ROI crop, the dead/hot pixel detection and the spatial rebin are single passes that
+        run between named stages. See :mod:`neunorm.utils.progress`.
 
     Notes
     -----
@@ -146,200 +170,235 @@ def run_venus_tpx3_histogram_pipeline(  # noqa: C901
             f"({len(ob_tiff_paths)})."
         )
 
-    samples = []
-    ob = []
+    # One reporter for the whole run, resolved exactly once: a second resolve of `progress=True`
+    # would build a second tqdm sink and a duplicate set of bars. Each stage below takes its own
+    # view via `run.for_stage(...)`, and the leaves it calls borrow that view, so only this
+    # context manager retires the bars — on the way out of a clean run and of a failed one alike.
+    with resolve_progress(progress) as run:
+        samples = []
+        ob = []
 
-    # Load data from TIFF files and metadata from HDF5 files
-    for hdf5_path, tiff_paths in zip(sample_hdf5_paths, sample_tiff_paths):
-        metadata = load_metadata(hdf5_path)
-        if "tof_start" not in metadata or "tof_bin_size" not in metadata or "tof_num_bins" not in metadata:
-            raise ValueError(
-                f"TOF binning information not found in metadata loaded from {hdf5_path}. "
-                "Cannot proceed without TOF binning."
-            )
-        sample = load_tiff_stack(tiff_paths)
+        # One reporter per input family, reused for every run in it: a borrowed view shares its counter
+        # cell, so N calls accumulate into one count across the whole run instead of restarting per run.
+        load_sample = run.for_stage(STAGE_LOAD_SAMPLE, total=total_across_groups(sample_tiff_paths))
+        load_ob = run.for_stage(STAGE_LOAD_OB, total=total_across_groups(ob_tiff_paths))
+        combine = run.for_stage(STAGE_COMBINE_RUNS, total=2)
 
-        # change to tof binning using metadata
-        start = metadata["tof_start"]
-        bin_size = metadata["tof_bin_size"]
-        num_bins = metadata["tof_num_bins"]
-        tof_bins = sc.arange("tof", num_bins + 1) * bin_size + start
-        sample = sample.rename_dims({"N_image": "tof"})
-        sample.coords["tof"] = tof_bins
+        # Load data from TIFF files and metadata from HDF5 files
+        for hdf5_path, tiff_paths in zip(sample_hdf5_paths, sample_tiff_paths):
+            metadata = load_metadata(hdf5_path)
+            if "tof_start" not in metadata or "tof_bin_size" not in metadata or "tof_num_bins" not in metadata:
+                raise ValueError(
+                    f"TOF binning information not found in metadata loaded from {hdf5_path}. "
+                    "Cannot proceed without TOF binning."
+                )
+            sample = load_tiff_stack(tiff_paths, progress=load_sample)
 
-        # Attach metadata as coordinates to the sample DataArray for later use in normalization and rebinning
-        for key, value in metadata.items():
-            sample.coords[key] = value
-            sample.coords.set_aligned(key, False)
+            # change to tof binning using metadata
+            start = metadata["tof_start"]
+            bin_size = metadata["tof_bin_size"]
+            num_bins = metadata["tof_num_bins"]
+            tof_bins = sc.arange("tof", num_bins + 1) * bin_size + start
+            sample = sample.rename_dims({"N_image": "tof"})
+            sample.coords["tof"] = tof_bins
 
-        samples.append(sample)
+            # Attach metadata as coordinates to the sample DataArray for later use in normalization and rebinning
+            for key, value in metadata.items():
+                sample.coords[key] = value
+                sample.coords.set_aligned(key, False)
 
-    # Load data from TIFF files and metadata from HDF5 files
-    for hdf5_path, tiff_paths in zip(ob_hdf5_paths, ob_tiff_paths):
-        metadata = load_metadata(hdf5_path)
-        if "tof_start" not in metadata or "tof_bin_size" not in metadata or "tof_num_bins" not in metadata:
-            raise ValueError(
-                f"TOF binning information not found in metadata loaded from {hdf5_path}. "
-                "Cannot proceed without TOF binning."
-            )
-        ob_run = load_tiff_stack(tiff_paths)
+            samples.append(sample)
 
-        # change to tof binning using metadata
-        start = metadata["tof_start"]
-        bin_size = metadata["tof_bin_size"]
-        num_bins = metadata["tof_num_bins"]
-        tof_bins = sc.arange("tof", num_bins + 1) * bin_size + start
-        ob_run = ob_run.rename_dims({"N_image": "tof"})
-        ob_run.coords["tof"] = tof_bins
+        # Load data from TIFF files and metadata from HDF5 files
+        for hdf5_path, tiff_paths in zip(ob_hdf5_paths, ob_tiff_paths):
+            metadata = load_metadata(hdf5_path)
+            if "tof_start" not in metadata or "tof_bin_size" not in metadata or "tof_num_bins" not in metadata:
+                raise ValueError(
+                    f"TOF binning information not found in metadata loaded from {hdf5_path}. "
+                    "Cannot proceed without TOF binning."
+                )
+            ob_run = load_tiff_stack(tiff_paths, progress=load_ob)
 
-        # Attach metadata as coordinates to the OB DataArray for later use in normalization and rebinning
-        for key, value in metadata.items():
-            ob_run.coords[key] = value
-            ob_run.coords.set_aligned(key, False)
+            # change to tof binning using metadata
+            start = metadata["tof_start"]
+            bin_size = metadata["tof_bin_size"]
+            num_bins = metadata["tof_num_bins"]
+            tof_bins = sc.arange("tof", num_bins + 1) * bin_size + start
+            ob_run = ob_run.rename_dims({"N_image": "tof"})
+            ob_run.coords["tof"] = tof_bins
 
-        ob.append(ob_run)
+            # Attach metadata as coordinates to the OB DataArray for later use in normalization and rebinning
+            for key, value in metadata.items():
+                ob_run.coords[key] = value
+                ob_run.coords.set_aligned(key, False)
 
-    sample = combine_runs(
-        samples,
-        metadata_keys_to_sum=["proton_charge", "duration"],
-        metadata_check_match=["detector_time_offset", "detector"],
-        normalize_by_runs=True,
-    )
+            ob.append(ob_run)
 
-    ob = combine_runs(
-        ob,
-        metadata_keys_to_sum=["proton_charge", "duration"],
-        metadata_check_match=["detector_time_offset", "detector"],
-        normalize_by_runs=True,
-    )
-
-    # Apply ROI if specified
-    if roi:
-        sample = apply_roi(sample, roi)
-        ob = apply_roi(ob, roi)
-
-    # Dead pixel detection
-    sample.masks["dead_pixels"] = detect_dead_pixels(ob)
-
-    # Hot pixel detection
-    sample.masks["hot_pixels"] = detect_hot_pixels(ob)
-
-    # Spatial rebinning (optional)
-    if rebin_by_spatial is not None:
-        sample = rebin_spatial(sample, rebin_by_spatial)
-        ob = rebin_spatial(ob, rebin_by_spatial)
-        # redo mask after rebinning
-        sample.masks["dead_pixels"] = detect_dead_pixels(sample)
-        sample.masks["hot_pixels"] = detect_hot_pixels(sample)
-
-    # TOF rebinning (optional): an integer factor, ``True`` for the statistics-based recommended
-    # factor, or an explicit ``[[start, stop], ...]`` bin list. ``rebin_reduction`` selects how
-    # frames combine (default: sum for a factor, mean for a bin list); see ``rebin_tof``.
-    # A bin list/tuple (even empty) is an explicit rebin request; an empty one must surface as an error
-    # from ``rebin_tof`` rather than be silently skipped by the plain falsy check.
-    if rebin_by_tof or isinstance(rebin_by_tof, (list, tuple)):
-        spec = rebin_by_tof
-        if spec is True:
-            spec = analyze_statistics(ob).recommended_rebinning
-            logger.info(f"Recommended TOF rebinning factor based on statistics analysis: {spec}")
-        if isinstance(spec, bool) or not isinstance(spec, (int, np.integer, list, tuple)):
-            raise ValueError(
-                f"rebin_by_tof must be a bool, an int factor, or a list/tuple of [start, stop] pairs; got {spec!r}"
-            )
-        sample = rebin_tof(sample, spec, reduction=rebin_reduction)
-        ob = rebin_tof(ob, spec, reduction=rebin_reduction)
-
-    # Normalization
-    transmission = normalize_transmission(
-        sample=sample,
-        ob=ob,
-        proton_charge_sample=sample.coords["proton_charge"],
-        proton_charge_ob=ob.coords["proton_charge"],
-    )
-
-    # Air region correction (optional)
-    if air_roi is not None:
-        transmission = apply_air_region_correction(transmission, air_roi)
-
-    # Add wavelength and energy coordinates converted from TOF using the configurable flight
-    # path and the time offset from the metadata.
-    if "detector_time_offset" in sample.coords:
-        time_offset = sample.coords["detector_time_offset"]
-        transmission.coords["wavelength"] = convert_tof_to_wavelength(
-            transmission.coords["tof"], flight_path, time_offset
+        combine.note(f"combining {len(samples)} sample run(s)")
+        sample = combine_runs(
+            samples,
+            metadata_keys_to_sum=["proton_charge", "duration"],
+            metadata_check_match=["detector_time_offset", "detector"],
+            normalize_by_runs=True,
         )
-        transmission.coords["energy"] = convert_tof_to_energy(transmission.coords["tof"], flight_path, time_offset)
-    else:
-        logger.warning("Time offset not found in metadata. Cannot add wavelength and energy coordinates.")
+        combine()
 
-    # Write output
-    metadata = {
-        "sample_hdf5_paths": [str(run) for run in sample_hdf5_paths],
-        "ob_hdf5_paths": [str(run) for run in ob_hdf5_paths],
-        "sample_tiff_paths": [[str(p) for p in run] for run in sample_tiff_paths],
-        "ob_tiff_paths": [[str(p) for p in run] for run in ob_tiff_paths],
-        "processing_timestamp": datetime.now().isoformat(),
-        "version": __version__,
-    }
-
-    if roi:
-        metadata["roi_applied"] = region_provenance(roi)
-
-    if air_roi is not None:
-        metadata["air_roi"] = region_provenance(air_roi)
-
-    output_description = str(output_path)
-    if output_path.suffix.lower() in (".hdf5", ".h5"):
-        write_hdf5(
-            output_path, transmission, dead_pixel_mask="dead_pixels", hot_pixel_mask="hot_pixels", metadata=metadata
+        combine.note(f"combining {len(ob)} open-beam run(s)")
+        ob = combine_runs(
+            ob,
+            metadata_keys_to_sum=["proton_charge", "duration"],
+            metadata_check_match=["detector_time_offset", "detector"],
+            normalize_by_runs=True,
         )
-    elif output_path.suffix.lower() in (".tiff", ".tif"):
-        rename_map = {}
-        if "tof" in transmission.dims:
-            rename_map["tof"] = "t"  # TIFF stacks typically use 't' for the time dimension
-        if rename_map:
-            transmission = transmission.rename_dims(rename_map)
+        combine()
 
-        model = "Unknown"
-        if "detector" in sample.coords:
-            model = sample.coords["detector"].value
+        # Apply ROI if specified
+        if roi:
+            sample = apply_roi(sample, roi)
+            ob = apply_roi(ob, roi)
 
-        daqmetadata = {
-            "facility": "SNS",
-            "instrument": "VENUS",
-            "detector_type": model,
-            "source_type": "neutron",
+        # Dead pixel detection
+        sample.masks["dead_pixels"] = detect_dead_pixels(ob)
+
+        # Hot pixel detection
+        sample.masks["hot_pixels"] = detect_hot_pixels(ob)
+
+        # Spatial rebinning (optional)
+        if rebin_by_spatial is not None:
+            sample = rebin_spatial(sample, rebin_by_spatial)
+            ob = rebin_spatial(ob, rebin_by_spatial)
+            # redo mask after rebinning
+            sample.masks["dead_pixels"] = detect_dead_pixels(sample)
+            sample.masks["hot_pixels"] = detect_hot_pixels(sample)
+
+        # TOF rebinning (optional): an integer factor, ``True`` for the statistics-based recommended
+        # factor, or an explicit ``[[start, stop], ...]`` bin list. ``rebin_reduction`` selects how
+        # frames combine (default: sum for a factor, mean for a bin list); see ``rebin_tof``.
+        # A bin list/tuple (even empty) is an explicit rebin request; an empty one must surface as an error
+        # from ``rebin_tof`` rather than be silently skipped by the plain falsy check.
+        if rebin_by_tof or isinstance(rebin_by_tof, (list, tuple)):
+            spec = rebin_by_tof
+            if spec is True:
+                spec = analyze_statistics(ob).recommended_rebinning
+                logger.info(f"Recommended TOF rebinning factor based on statistics analysis: {spec}")
+            if isinstance(spec, bool) or not isinstance(spec, (int, np.integer, list, tuple)):
+                raise ValueError(
+                    f"rebin_by_tof must be a bool, an int factor, or a list/tuple of [start, stop] pairs; got {spec!r}"
+                )
+            # rebin_tof takes no progress argument of its own, so the pipeline names the two calls
+            # around it: with a median reduction this is one of the slowest stages in the run.
+            rebin = run.for_stage(STAGE_REBIN_TOF, total=2)
+            rebin.note("rebinning sample TOF")
+            sample = rebin_tof(sample, spec, reduction=rebin_reduction)
+            rebin()
+            rebin.note("rebinning open beam TOF")
+            ob = rebin_tof(ob, spec, reduction=rebin_reduction)
+            rebin()
+
+        # Normalization
+        transmission = normalize_transmission(
+            sample=sample,
+            ob=ob,
+            proton_charge_sample=sample.coords["proton_charge"],
+            proton_charge_ob=ob.coords["proton_charge"],
+            progress=run.for_stage(
+                STAGE_NORMALIZE,
+                total=normalize_step_count(proton_charge_sample=sample.coords["proton_charge"]),
+            ),
+        )
+
+        # Air region correction (optional)
+        if air_roi is not None:
+            transmission = apply_air_region_correction(transmission, air_roi)
+
+        # Add wavelength and energy coordinates converted from TOF using the configurable flight
+        # path and the time offset from the metadata.
+        if "detector_time_offset" in sample.coords:
+            time_offset = sample.coords["detector_time_offset"]
+            transmission.coords["wavelength"] = convert_tof_to_wavelength(
+                transmission.coords["tof"], flight_path, time_offset
+            )
+            transmission.coords["energy"] = convert_tof_to_energy(transmission.coords["tof"], flight_path, time_offset)
+        else:
+            logger.warning("Time offset not found in metadata. Cannot add wavelength and energy coordinates.")
+
+        # Write output
+        metadata = {
+            "sample_hdf5_paths": [str(run) for run in sample_hdf5_paths],
+            "ob_hdf5_paths": [str(run) for run in ob_hdf5_paths],
+            "sample_tiff_paths": [[str(p) for p in run] for run in sample_tiff_paths],
+            "ob_tiff_paths": [[str(p) for p in run] for run in ob_tiff_paths],
+            "processing_timestamp": datetime.now().isoformat(),
+            "version": __version__,
         }
 
-        # Combine all masks and broadcast to the shape of the transmission data.
-        # Mask must be same shape as the image data for scitiff.
-        if transmission.masks:
-            combined_mask = np.zeros_like(transmission.values, dtype=bool)
-            for mask in transmission.masks.values():
-                # dim-aware broadcast: a (y, x) mask and a 1-D per-frame (t) mask both expand to (t, y, x)
-                combined_mask |= sc.broadcast(mask, sizes=transmission.sizes).values
+        if roi:
+            metadata["roi_applied"] = region_provenance(roi)
 
-            # remove other masks
-            transmission.masks.clear()
-            # add combined mask back in with name "scitiff-mask"
-            transmission.masks["scitiff-mask"] = sc.array(dims=transmission.dims, values=combined_mask, dtype=bool)
+        if air_roi is not None:
+            metadata["air_roi"] = region_provenance(air_roi)
 
-        written_paths = write_tiff_stack(
-            output_path,
-            transmission,
-            metadata=metadata,
-            daqmetadata=daqmetadata,
-            one_file_per_image=tiff_one_file_per_image,
-        )
-        # In per-image mode ``output_path`` is only a naming template and is never written, so
-        # report what actually landed on disk rather than a file that does not exist.
-        if len(written_paths) > 1:
-            output_description = f"{len(written_paths)} files, {written_paths[0].name} .. {written_paths[-1].name}"
+        output_description = str(output_path)
+        if output_path.suffix.lower() in (".hdf5", ".h5"):
+            write_hdf5(
+                output_path,
+                transmission,
+                dead_pixel_mask="dead_pixels",
+                hot_pixel_mask="hot_pixels",
+                metadata=metadata,
+                progress=run.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(transmission, metadata)),
+            )
+        elif output_path.suffix.lower() in (".tiff", ".tif"):
+            rename_map = {}
+            if "tof" in transmission.dims:
+                rename_map["tof"] = "t"  # TIFF stacks typically use 't' for the time dimension
+            if rename_map:
+                transmission = transmission.rename_dims(rename_map)
+
+            model = "Unknown"
+            if "detector" in sample.coords:
+                model = sample.coords["detector"].value
+
+            daqmetadata = {
+                "facility": "SNS",
+                "instrument": "VENUS",
+                "detector_type": model,
+                "source_type": "neutron",
+            }
+
+            # Combine all masks and broadcast to the shape of the transmission data.
+            # Mask must be same shape as the image data for scitiff.
+            if transmission.masks:
+                combined_mask = np.zeros_like(transmission.values, dtype=bool)
+                for mask in transmission.masks.values():
+                    # dim-aware broadcast: a (y, x) mask and a 1-D per-frame (t) mask both expand to (t, y, x)
+                    combined_mask |= sc.broadcast(mask, sizes=transmission.sizes).values
+
+                # remove other masks
+                transmission.masks.clear()
+                # add combined mask back in with name "scitiff-mask"
+                transmission.masks["scitiff-mask"] = sc.array(dims=transmission.dims, values=combined_mask, dtype=bool)
+
+            written_paths = write_tiff_stack(
+                output_path,
+                transmission,
+                metadata=metadata,
+                daqmetadata=daqmetadata,
+                one_file_per_image=tiff_one_file_per_image,
+                progress=run.for_stage(
+                    STAGE_EXPORT,
+                    total=tiff_export_step_count(transmission, one_file_per_image=tiff_one_file_per_image),
+                ),
+            )
+            # In per-image mode ``output_path`` is only a naming template and is never written, so
+            # report what actually landed on disk rather than a file that does not exist.
+            if len(written_paths) > 1:
+                output_description = f"{len(written_paths)} files, {written_paths[0].name} .. {written_paths[-1].name}"
+            else:
+                output_description = str(written_paths[0])
+
         else:
-            output_description = str(written_paths[0])
+            raise ValueError(f"Unsupported output file format: {output_path.suffix}")
 
-    else:
-        raise ValueError(f"Unsupported output file format: {output_path.suffix}")
-
-    logger.success("VENUS TPX3 histogram pipeline completed successfully. Output written to {}", output_description)
-    return transmission
+        logger.success("VENUS TPX3 histogram pipeline completed successfully. Output written to {}", output_description)
+        return transmission

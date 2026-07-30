@@ -83,7 +83,45 @@ __all__ = [
     "ProgressEvent",
     "ProgressReporter",
     "resolve_progress",
+    "total_across_groups",
 ]
+
+
+def total_across_groups(groups) -> Optional[int]:
+    """Items across every group, or ``None`` when they cannot be counted without consuming them.
+
+    A pipeline receives its inputs as one group of files per input run, and a stage that spans all of
+    those runs has to declare a run-wide total before the first file is read. ``sum(len(g) for g in
+    groups)`` does that, except for a group with no length — a generator or ``Path.glob(...)`` — which
+    the loaders deliberately accept. Counting one would consume it and leave nothing to load, so this
+    returns ``None`` instead: the stage then reports its items without a denominator, which is what a
+    genuinely unknown count looks like.
+
+    Parameters
+    ----------
+    groups : iterable
+        The per-run groups, e.g. ``sample_paths``. The outer sequence is iterated; each group's
+        ``len()`` is taken.
+
+    Returns
+    -------
+    Optional[int]
+        The summed item count, or ``None`` if any group has no ``len()``.
+
+    Examples
+    --------
+    >>> total_across_groups([["a", "b"], ["c"]])
+    3
+    >>> total_across_groups([(p for p in "ab")]) is None
+    True
+    """
+    total = 0
+    for group in groups:
+        try:
+            total += len(group)
+        except TypeError:
+            return None
+    return total
 
 
 @dataclass(frozen=True, slots=True)

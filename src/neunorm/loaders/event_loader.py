@@ -14,6 +14,15 @@ from loguru import logger
 from neunorm.data_models.core import EventData
 from neunorm.utils.progress import STAGE_LOAD_SAMPLE, ProgressLike, resolve_progress
 
+#: Steps `load_event_nexus` counts, one per full-event-length allocation: the two h5py slab reads, the
+#: event-id unroll and the TOF conversion. Emitted unconditionally, so a caller reading N files knows
+#: the exact total up front.
+#:
+#: Public because a caller that hands this function a pre-bound ``ProgressReporter`` — an event pipeline
+#: reporting a whole multi-file load as one stage — has to declare that stage's total itself:
+#: ``resolve_progress`` deliberately does not let a callee re-bind a total.
+LOAD_EVENT_NEXUS_STEPS = 4
+
 
 def load_event_data(
     file_path: Union[str, Path], tof_clock: float = 25.0, max_events: Optional[int] = None
@@ -183,7 +192,7 @@ def load_event_nexus(  # noqa: C901
     # No item axis, but a known step sequence: one h5py slab read per dataset, then two numpy passes,
     # each allocating a full event-length array. Counting those four steps renders honestly (25, 50,
     # 75, 100%) where a single-step total=1 bar would sit at 0% and never draw a completion.
-    with resolve_progress(progress, stage, total=4) as report:
+    with resolve_progress(progress, stage, total=LOAD_EVENT_NEXUS_STEPS) as report:
         with h5py.File(file_path, "r") as f:
             # Navigate to entry group
             if "entry" not in f:

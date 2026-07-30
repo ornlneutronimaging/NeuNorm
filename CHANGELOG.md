@@ -106,6 +106,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does not change a single byte of any written file, nor any computed value: the dark normalizer's
   output is bit-identical across seven correction branches, variances included.
 
+- **`progress` on all six pipelines** — `run_mars_ccd_pipeline`, `run_venus_ccd_pipeline`,
+  `run_mars_tpx3_pipeline`, `run_venus_tpx1_pipeline`, `run_venus_tpx3_histogram_pipeline` and
+  `run_venus_tpx3_event_pipeline` take a keyword-only `progress`, which is what makes any of this
+  visible from the public API: `progress=True` draws one `tqdm` bar per stage, a callable receives every
+  event, and raising from it cancels the run. A CCD run draws seven bars — sample, open-beam and dark
+  loads, the run combine, the gamma filter, the normalization and the export; a TOF run adds the TOF
+  rebin and, for event input, histogramming.
+
+  Each **load stage counts across the whole run, not per input run**: three sample runs of 40 frames
+  count 1…120 under one total of 120. That matters beyond neatness — the documented `tqdm` adapter is
+  `bar.update(event.completed - bar.n)`, so a count that restarts per run computes a *negative* delta.
+  Stage totals are declared by the pipeline, because a handed-down reporter deliberately keeps the total
+  its caller bound; to stop those totals drifting from the ticks that actually arrive, each is derived
+  from a helper exported by the code that emits them — `GAMMA_FILTER_STEPS`,
+  `LOAD_EVENT_NEXUS_STEPS`, `normalize_step_count`, `normalize_with_dark_step_count`,
+  `hdf5_export_step_count`, `tiff_export_step_count`.
+
+  The event path reports differently, because reading one NeXus file is not one cheap item: each file is
+  named as it is opened and then counted in the four full-event-length allocations it performs, so a
+  single 40-million-event file still shows movement. Histogramming carries **no total** — the chunk
+  count follows from a file's event count, which is not known until the file is read — rather than an
+  assumed one-chunk-per-file that a large run would overshoot. Two operations no instrumented leaf
+  covers are now reported by the pipelines themselves: `combine_runs`, the largest silent block in a
+  multi-run job, and `rebin_tof`, whose median reduction is one of the slowest stages in a TOF run.
+  What is still not reported, deliberately: the ROI crop, the open-beam/dark averaging, dead/hot pixel
+  detection, the spatial rebin and the air-region correction — single whole-array passes between named
+  stages. The `progress` docstring of each pipeline says so rather than leaving it to be inferred.
+
 - **Per-image TIFF export** — `write_tiff_stack(..., one_file_per_image=True)`, exposed on the
   VENUS TOF pipelines as `tiff_one_file_per_image=True`, writes **one scitiff file per spectral
   image** (one normalization per file) named `<stem>_00000.tiff`, `<stem>_00001.tiff`, … in spectral
