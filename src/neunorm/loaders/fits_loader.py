@@ -13,8 +13,21 @@ import scipp as sc
 from astropy.io import fits
 from loguru import logger
 
+from neunorm.utils.progress import (
+    STAGE_ATTACH_VARIANCES,
+    STAGE_LOAD_SAMPLE,
+    STAGE_STACK_FRAMES,
+    Progress,
+    resolve_progress,
+)
 
-def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray] = None) -> sc.DataArray:  # noqa: C901
+
+def load_fits_stack(  # noqa: C901
+    paths: Sequence[str | Path],
+    tof_edges: Optional[np.ndarray] = None,
+    *,
+    progress: Progress = False,
+) -> sc.DataArray:
     """
     Load FITS stack as scipp DataArray with metadata and optional TOF coordinates.
 
@@ -53,9 +66,12 @@ def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
     data_list = []
     headers = []
 
-    try:
-        # Load all files
-        for path in paths:
+    report = resolve_progress(progress, STAGE_LOAD_SAMPLE, total=len(paths))
+
+    for path in paths:
+        # The try covers only the read: an exception raised by a progress callback (which is how a
+        # caller cancels) must not be logged as a failed FITS read, so the tick is emitted outside.
+        try:
             with fits.open(path) as hdul:
                 info_buf = io.StringIO()
                 hdul.info(output=info_buf)
@@ -69,9 +85,10 @@ def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
 
                 # Store header from first file
                 headers.append(hdul[0].header)
-    except Exception as e:
-        logger.error(f"Failed to load FITS files: {e}")
-        raise
+        except Exception as e:
+            logger.error(f"Failed to load FITS files: {e}")
+            raise
+        report(detail=Path(path).name)
 
     # Check shapes consistency
     first_shape = data_list[0].shape
@@ -80,7 +97,9 @@ def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
         if arr.shape != first_shape:
             raise ValueError(f"Shape mismatch in file {paths[i + 1]}: expected {first_shape}, got {arr.shape}")
 
-    # Stack
+    # The read loop only appended to a list; the memory peak is here and in the variances copy
+    # below. See the same comment in tiff_loader.
+    report.for_stage(STAGE_STACK_FRAMES)(detail=f"{len(data_list)} frames")
     full_data = np.stack(data_list, axis=0)
 
     n_images, ny, nx = full_data.shape
@@ -96,6 +115,8 @@ def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
             "Loaded FITS data contains negative counts; cannot attach Poisson "
             "variances (variance = counts) to negative data."
         )
+
+    report.for_stage(STAGE_ATTACH_VARIANCES)(detail=f"{full_data.nbytes // 1024**2} MiB")
 
     # Create DataArray
     # Assuming variance = counts (Poisson) if not provided.

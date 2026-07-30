@@ -31,7 +31,10 @@ import inspect
 import pytest
 
 from neunorm.exporters.tiff_writer import write_tiff_stack
+from neunorm.loaders.fits_loader import load_fits_stack
 from neunorm.loaders.metadata_loader import load_metadata
+from neunorm.loaders.stack_loader import load_stack
+from neunorm.loaders.tiff_loader import load_tiff_stack
 from neunorm.pipelines.mars_ccd import run_mars_ccd_pipeline
 from neunorm.pipelines.mars_tpx3 import run_mars_tpx3_pipeline
 from neunorm.pipelines.venus_ccd import run_venus_ccd_pipeline
@@ -114,13 +117,16 @@ RELEASED_POSITIONAL = {
         write_tiff_stack,
         ["output_path", "transmission", "metadata", "daqmetadata"],
     ),
-    # Not a pipeline, but a released public entry point: neunorm.loaders.metadata_loader is
-    # published in docs/api.rst with :members:. It gained `image_dir` since v2.2.3, which is now
-    # keyword-only for the same reason as the four above.
+    # Not pipelines, but released public entry points: every loader module below is published in
+    # docs/api.rst with :members:. Each gained a keyword-only `progress` since v2.2.3, so their
+    # positional lists are unchanged from the tag.
     "load_metadata": (
         load_metadata,
         ["file_path", "read_shutter_counts", "read_spectra_tof"],
     ),
+    "load_stack": (load_stack, ["paths"]),
+    "load_tiff_stack": (load_tiff_stack, ["paths", "tof_edges"]),
+    "load_fits_stack": (load_fits_stack, ["paths", "tof_edges"]),
 }
 
 

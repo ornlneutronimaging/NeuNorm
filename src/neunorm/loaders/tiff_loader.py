@@ -12,8 +12,21 @@ import scipp as sc
 from loguru import logger
 from PIL import ExifTags, Image
 
+from neunorm.utils.progress import (
+    STAGE_ATTACH_VARIANCES,
+    STAGE_LOAD_SAMPLE,
+    STAGE_STACK_FRAMES,
+    Progress,
+    resolve_progress,
+)
 
-def load_tiff_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray] = None) -> sc.DataArray:  # noqa: C901
+
+def load_tiff_stack(  # noqa: C901
+    paths: Sequence[str | Path],
+    tof_edges: Optional[np.ndarray] = None,
+    *,
+    progress: Progress = False,
+) -> sc.DataArray:
     """Load TIFF stack as scipp DataArray with variance tracking.
 
     Uses Pillow (PIL) to read TIFF images and constructs a scipp DataArray.
@@ -26,6 +39,12 @@ def load_tiff_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
         Time-of-flight values for the first dimension.
         Accepts either bin edges (N+1) or bin centers (N), where N is the
         number of images in the loaded stack.
+    progress : bool or callable, optional
+        Progress reporting, off by default. ``True`` draws a :mod:`tqdm` bar; a callable receives a
+        :class:`~neunorm.utils.progress.ProgressEvent` per file read, then one for each of the two
+        whole-stack allocations that follow the read loop. A pipeline normally passes a pre-bound
+        reporter here instead, so its per-file count spans every run rather than restarting.
+        See :mod:`neunorm.utils.progress`.
 
     Returns
     -------
@@ -46,16 +65,21 @@ def load_tiff_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
     data_list = []
     metadata_list = []
 
-    try:
-        for path in paths:
+    report = resolve_progress(progress, STAGE_LOAD_SAMPLE, total=len(paths))
+
+    for path in paths:
+        # The try covers only the read: an exception raised by a progress callback (which is how a
+        # caller cancels) must not be logged as a failed TIFF read, so the tick is emitted outside.
+        try:
             with Image.open(path) as img:
                 # float32 is sufficient for neutron imaging (16-bit detectors) and
                 # halves the in-memory footprint of large stacks.
                 data_list.append(np.asanyarray(img, dtype=np.float32))
                 metadata_list.append(img.tag_v2)
-    except Exception as e:
-        logger.error("Error loading TIFF stack: {}", e)
-        raise
+        except Exception as e:
+            logger.error("Error loading TIFF stack: {}", e)
+            raise
+        report(detail=Path(path).name)
 
     # Check shapes consistency
     first_shape = data_list[0].shape
@@ -64,7 +88,11 @@ def load_tiff_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
         if arr.shape != first_shape:
             raise ValueError(f"Shape mismatch in file {paths[i + 1]}: expected {first_shape}, got {arr.shape}")
 
-    # Stack
+    # The read loop only appended to a list; the memory peak is here and in the variances copy
+    # below, which together hold several full-size copies of the stack. Reporting them keeps a bar
+    # moving through the part of the load that can actually exhaust RAM and start swapping —
+    # otherwise it reaches 100% at the last file and then sits silent through the worst of it.
+    report.for_stage(STAGE_STACK_FRAMES)(detail=f"{len(data_list)} frames")
     full_data = np.stack(data_list, axis=0)
 
     n_images, ny, nx = full_data.shape
@@ -80,6 +108,8 @@ def load_tiff_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
             "Loaded TIFF data contains negative counts; cannot attach Poisson "
             "variances (variance = counts) to negative data."
         )
+
+    report.for_stage(STAGE_ATTACH_VARIANCES)(detail=f"{full_data.nbytes // 1024**2} MiB")
 
     # Create DataArray
     # Assuming variance = counts (Poisson) if not provided.
