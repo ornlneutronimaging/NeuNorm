@@ -285,6 +285,35 @@ def test_dark_normalizer_total_covers_its_own_steps_and_the_delegate_s(label, kw
     assert {e.stage for e in events} == {STAGE_NORMALIZE}
 
 
+def test_dark_normalizer_announces_the_variance_correction_that_dominates_its_cost():
+    """The shared-dark variance correction is 58% of this function's wall clock at 80 x 512², and it
+    once ran after the progress context closed — bar at 100%, bars gone, then more than half the call
+    with nothing on screen. It is announced, not counted, because it is skipped without variances."""
+    events, sink = _collect()
+
+    normalize_with_dark(_stack(60), _stack(110), _stack(10), progress=sink)
+
+    details = [e.detail for e in events if e.detail]
+    assert details[-1] == "correcting shared-dark variance", details
+    # announced at the total, without pushing past it
+    last = events[-1]
+    assert (last.completed, last.total) == (3, 3)
+
+
+def test_dark_normalizer_does_not_announce_a_correction_it_skips():
+    """Variance-free input takes the early return, so the label must not name work that never runs."""
+    events, sink = _collect()
+
+    plain = sc.DataArray(sc.array(dims=["t", "y", "x"], values=np.full((3, 8, 8), 60.0), unit="counts"))
+    ob = sc.DataArray(sc.array(dims=["t", "y", "x"], values=np.full((3, 8, 8), 110.0), unit="counts"))
+    dark = sc.DataArray(sc.array(dims=["t", "y", "x"], values=np.full((3, 8, 8), 10.0), unit="counts"))
+
+    normalize_with_dark(plain, ob, dark, progress=sink)
+
+    assert "correcting shared-dark variance" not in [e.detail for e in events]
+    assert max(e.completed for e in events) == 3, "the bar must still reach its total on this path"
+
+
 def test_dark_normalizer_does_not_close_a_caller_supplied_sink():
     """It is one stage of a pipeline run, so it must leave the caller's bars alone — and so must the
     delegate it hands its reporter to."""

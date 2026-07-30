@@ -675,55 +675,63 @@ def normalize_with_dark(
             stage=stage,
         )
 
-    # Correct the shared-dark double-count. normalize_transmission propagated
-    # Var(dark) through BOTH numerator and denominator as if they were independent; the true
-    # propagation (dark appears once) is smaller by 2*k^2*s*Var(D)/o^3. Subtract that term.
-    if transmission.variances is None or dark.variances is None:
+        # Correct the shared-dark double-count. normalize_transmission propagated
+        # Var(dark) through BOTH numerator and denominator as if they were independent; the true
+        # propagation (dark appears once) is smaller by 2*k^2*s*Var(D)/o^3. Subtract that term.
+        if transmission.variances is None or dark.variances is None:
+            return transmission
+
+        # The correction below is the majority of this function's cost — 58% of the wall clock at
+        # 80 x 512² — and it used to run after the progress context had closed, so a caller watched the
+        # bar reach its total and the bars vanish, then waited out more than half the call with nothing
+        # on screen. Announced rather than counted, and announced only after the guard above, so the
+        # label never names work that is being skipped: whether it runs is not knowable until the
+        # delegate has returned.
+        report.note("correcting shared-dark variance")
+
+        # Use scipp's unit-carrying value/variance accessors so (a) the (3D sample) vs (2D ob/dark)
+        # broadcast and the per-image proton-charge ratio align by dimension name and (b) scipp
+        # validates units: counts * counts**2 / counts**3 = dimensionless, matching Var(T).
+        s_v = sc.values(sample_dc)  # counts
+        o_v = sc.values(ob_dc)  # counts
+        var_d_v = sc.variances(dark)  # counts**2
+        over_count = 2.0 * s_v * var_d_v / (o_v**3)
+
+        # The over-count scales with the squared flux coefficient k applied to S/O: k = pc_ob/pc_sample
+        # for proton charge, or k = co/cs (ratio of dark-corrected ROI means) for background_roi. Use
+        # the coefficient values only (variance-free) — this is a variance correction, first-order in k.
+        if background_roi is not None:
+            cs, co = _background_roi_means(sample_dc, ob_dc, roi_list, strict=background_roi_strict)
+            cs_v, co_v = sc.values(cs), sc.values(co)
+            k_squared = (co_v / cs_v) ** 2
+        else:
+            k_squared = _proton_charge_ratio_squared(proton_charge_sample, proton_charge_ob)
+        if k_squared is not None:
+            over_count = k_squared * over_count
+
+        # background_roi shares the dark across BOTH ROI means: cs = mean(S-D) and co = mean(O-D) use the
+        # same ROI dark pixels, so Cov(cs, co) = Var(mean(D_roi)) > 0. normalize_transmission added the
+        # ROI-mean term T^2 * (Var(cs)/cs^2 + Var(co)/co^2) treating cs and co as independent; subtract
+        # the missing covariance term 2 * T^2 * Cov(cs,co) / (cs*co) too — the ROI-mean analog of the
+        # pixel-level correction. (The in-ROI pixel<->mean correlation stays uncorrected, as
+        # documented; for a clean background ROI the dark-mean covariance is the only remaining term.)
+        if background_roi is not None:
+            # Cov(cs,co) is mask-consistent with cs/co (it counts only the ROI dark pixels left unmasked
+            # in BOTH sample and OB), so a dead/hot pixel masked from one side does not pollute it.
+            cov_cs_co = _roi_dark_mean_covariance(sample_dc, ob_dc, dark, roi_list)
+            t_v = sc.values(transmission)
+            over_count = over_count + 2.0 * t_v * t_v * cov_cs_co / (cs_v * co_v)
+
+        over_values = sc.to_unit(over_count, "dimensionless").transpose(transmission.dims).values
+        # Match the variance dtype so the correction never promotes a float32 pipeline to float64.
+        over_values = over_values.astype(transmission.variances.dtype, copy=False)
+        # Zero the correction where ob-dark == 0 (those pixels are already inf/nan in T).
+        over_values = np.where(np.isfinite(over_values), over_values, 0.0)
+        # Clamp to >= 0 defensively; the corrected variance is a true (non-negative) variance.
+        transmission.variances = np.clip(transmission.variances - over_values, 0.0, None)
+        logger.success("✓ Shared-dark variance double-count corrected")
+
         return transmission
-
-    # Use scipp's unit-carrying value/variance accessors so (a) the (3D sample) vs (2D ob/dark)
-    # broadcast and the per-image proton-charge ratio align by dimension name and (b) scipp
-    # validates units: counts * counts**2 / counts**3 = dimensionless, matching Var(T).
-    s_v = sc.values(sample_dc)  # counts
-    o_v = sc.values(ob_dc)  # counts
-    var_d_v = sc.variances(dark)  # counts**2
-    over_count = 2.0 * s_v * var_d_v / (o_v**3)
-
-    # The over-count scales with the squared flux coefficient k applied to S/O: k = pc_ob/pc_sample
-    # for proton charge, or k = co/cs (ratio of dark-corrected ROI means) for background_roi. Use
-    # the coefficient values only (variance-free) — this is a variance correction, first-order in k.
-    if background_roi is not None:
-        cs, co = _background_roi_means(sample_dc, ob_dc, roi_list, strict=background_roi_strict)
-        cs_v, co_v = sc.values(cs), sc.values(co)
-        k_squared = (co_v / cs_v) ** 2
-    else:
-        k_squared = _proton_charge_ratio_squared(proton_charge_sample, proton_charge_ob)
-    if k_squared is not None:
-        over_count = k_squared * over_count
-
-    # background_roi shares the dark across BOTH ROI means: cs = mean(S-D) and co = mean(O-D) use the
-    # same ROI dark pixels, so Cov(cs, co) = Var(mean(D_roi)) > 0. normalize_transmission added the
-    # ROI-mean term T^2 * (Var(cs)/cs^2 + Var(co)/co^2) treating cs and co as independent; subtract
-    # the missing covariance term 2 * T^2 * Cov(cs,co) / (cs*co) too — the ROI-mean analog of the
-    # pixel-level correction. (The in-ROI pixel<->mean correlation stays uncorrected, as
-    # documented; for a clean background ROI the dark-mean covariance is the only remaining term.)
-    if background_roi is not None:
-        # Cov(cs,co) is mask-consistent with cs/co (it counts only the ROI dark pixels left unmasked
-        # in BOTH sample and OB), so a dead/hot pixel masked from one side does not pollute it.
-        cov_cs_co = _roi_dark_mean_covariance(sample_dc, ob_dc, dark, roi_list)
-        t_v = sc.values(transmission)
-        over_count = over_count + 2.0 * t_v * t_v * cov_cs_co / (cs_v * co_v)
-
-    over_values = sc.to_unit(over_count, "dimensionless").transpose(transmission.dims).values
-    # Match the variance dtype so the correction never promotes a float32 pipeline to float64.
-    over_values = over_values.astype(transmission.variances.dtype, copy=False)
-    # Zero the correction where ob-dark == 0 (those pixels are already inf/nan in T).
-    over_values = np.where(np.isfinite(over_values), over_values, 0.0)
-    # Clamp to >= 0 defensively; the corrected variance is a true (non-negative) variance.
-    transmission.variances = np.clip(transmission.variances - over_values, 0.0, None)
-    logger.success("✓ Shared-dark variance double-count corrected")
-
-    return transmission
 
 
 def _proton_charge_ratio_squared(

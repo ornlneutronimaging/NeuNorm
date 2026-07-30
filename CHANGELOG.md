@@ -96,8 +96,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   either. `normalize_with_dark` — `normalize_transmission`'s sibling on the CCD path, which was
   reporting nothing — reports its two dark subtractions and then hands its reporter to the normalizer,
   so a dark-corrected run counts through both functions as **one continuous bar** rather than
-  restarting. Both totals come from one shared helper so they cannot drift apart. Reporting does not
-  change a single byte of any written file.
+  restarting. Both totals come from one shared helper so they cannot drift apart. Its shared-dark
+  variance correction is announced too: that correction is **58% of the function's wall clock** at
+  80 x 512², and it ran outside the reporting context at first, so a caller saw the bar reach its total
+  and the bars vanish and then waited out more than half the call with nothing on screen. Reporting
+  does not change a single byte of any written file, nor any computed value: the dark normalizer's
+  output is bit-identical across seven correction branches, variances included.
 
 - **Per-image TIFF export** — `write_tiff_stack(..., one_file_per_image=True)`, exposed on the
   VENUS TOF pipelines as `tiff_one_file_per_image=True`, writes **one scitiff file per spectral
