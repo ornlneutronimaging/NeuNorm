@@ -280,49 +280,79 @@ def test_bad_progress_value_is_rejected_at_the_loader(loader, paths_fn):
 # --------------------------------------------------------------------------------------
 
 
-def _owned_sink_reporter(total):
-    """A reporter over a tqdm sink WE keep a reference to, marked as NeuNorm-owned.
+class _RecordingTqdmSink(_TqdmSink):
+    """A `_TqdmSink` that records every instance, so a sink a loader built internally is observable.
 
-    Holding the sink is what makes the assertion meaningful. An earlier version of these tests
-    checked `tqdm._instances` after calling the loader with `progress=True`; that passed even with
-    the loader's `finally: report.close()` deleted, because CPython drops the loader's reporter at
-    return and `tqdm.__del__` closes the bars anyway. Keeping the sink alive here means an
-    unclosed bar stays observable.
+    Needed because `progress=True` builds the sink inside the callee. Checking `tqdm._instances`
+    instead does not work: CPython drops the callee's reporter at return and `tqdm.__del__` closes
+    the bars, so that assertion passes even with the release deleted — verified.
     """
-    sink = _TqdmSink()
-    return sink, ProgressReporter(sink, STAGE_LOAD_SAMPLE, total=total, owns_sink=True)
+
+    instances: list["_RecordingTqdmSink"] = []
+
+    def __init__(self):
+        super().__init__()
+        _RecordingTqdmSink.instances.append(self)
+
+
+@pytest.fixture
+def recorded_sinks(monkeypatch):
+    _RecordingTqdmSink.instances = []
+    monkeypatch.setattr("neunorm.utils.progress._TqdmSink", _RecordingTqdmSink)
+    return _RecordingTqdmSink.instances
 
 
 @pytest.mark.parametrize("paths_fn", [_tiffs, _fits], ids=["tiff", "fits"])
-def test_loader_releases_owned_bars_on_success(paths_fn):
-    """A clean load must leave no bar open in a sink the loader owns.
+def test_leaf_does_not_close_a_caller_supplied_sink(paths_fn):
+    """Regression: a loader handed a pre-bound reporter must leave the caller's bars alone.
 
-    Note this one does NOT guard the loader's `finally`: on success the per-file bar reaches its
-    total and `_TqdmSink` closes it there, so it passes with `close()` deleted. The error-path test
-    below is the actual regression guard.
+    A bar is no longer auto-closed at completion, so if a leaf closed the caller's sink the caller's
+    next event would rebuild the bar from zero. Rendered, a pipeline's bar flickered back to 0% on
+    every loader call. `resolve_progress` now hands a callee a borrowed, non-owning view.
     """
     paths = paths_fn()
     loader = load_tiff_stack if paths[0].suffix == ".tif" else load_fits_stack
-    sink, reporter = _owned_sink_reporter(len(paths))
+    sink = _TqdmSink()
+    caller = ProgressReporter(sink, STAGE_LOAD_SAMPLE, total=2 * len(paths), owns_sink=True)
 
-    loader(paths, progress=reporter)
+    loader(paths, progress=caller.with_offset(0))
+    assert sink._bars, "the caller's bar was closed by the callee"
+    first = sink._bars[STAGE_LOAD_SAMPLE]
+    assert first.n == len(paths)
 
-    assert sink._bars == {}, "loader left a bar open after a clean load"
+    loader(paths, progress=caller.with_offset(len(paths)))
+    assert sink._bars[STAGE_LOAD_SAMPLE] is first, "the bar was rebuilt instead of continuing"
+    assert first.n == 2 * len(paths), "the count restarted instead of advancing"
+
+    caller.close()
+    assert sink._bars == {}
 
 
 @pytest.mark.parametrize("paths_fn", [_tiffs, _fits], ids=["tiff", "fits"])
-def test_loader_releases_owned_bars_on_a_read_failure(paths_fn):
-    """The error path is where the bar actually leaked: the stage is abandoned partway, so nothing
-    reaches a completion point and only the loader's `finally` can close it."""
+def test_leaf_closes_a_sink_it_created_itself(paths_fn, recorded_sinks):
+    """With `progress=True` the loader builds the sink, so the loader must retire it."""
+    paths = paths_fn()
+    loader = load_tiff_stack if paths[0].suffix == ".tif" else load_fits_stack
+
+    loader(paths, progress=True)
+
+    assert len(recorded_sinks) == 1, f"expected exactly one internal sink, got {len(recorded_sinks)}"
+    assert recorded_sinks[0]._bars == {}, "loader left its own bar open after a clean load"
+
+
+@pytest.mark.parametrize("paths_fn", [_tiffs, _fits], ids=["tiff", "fits"])
+def test_leaf_closes_its_own_sink_on_a_read_failure(paths_fn, recorded_sinks):
+    """The error path is where a bar leaked: the stage is abandoned, so only the context manager
+    can release it."""
     paths = paths_fn()
     loader = load_tiff_stack if paths[0].suffix == ".tif" else load_fits_stack
     missing = Path("no-such-directory") / f"missing{paths[0].suffix}"
-    sink, reporter = _owned_sink_reporter(2)
 
     with pytest.raises(Exception, match=".*"):
-        loader([paths[0], missing], progress=reporter)
+        loader([paths[0], missing], progress=True)
 
-    assert sink._bars == {}, "loader left a bar open after a failed read"
+    assert recorded_sinks, "no internal sink was created"
+    assert recorded_sinks[0]._bars == {}, "loader left its own bar open after a failed read"
 
 
 # --------------------------------------------------------------------------------------

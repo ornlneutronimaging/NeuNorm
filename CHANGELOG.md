@@ -62,7 +62,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ProgressReporter` is a context manager.** `with resolve_progress(...) as report:` releases the
   progress bars on the way out whether the body returned or raised. Every instrumented function now
   uses that shape, so a forgotten `finally` cannot leak an abandoned bar again — which it did once
-  already.
+  already. Sink ownership travels with it: `resolve_progress` hands a callee a **borrowed** view of a
+  reporter it was given, so only whoever resolved a sink into being may retire it. Without that a
+  callee's `with` block would close the caller's bars, and since a bar is no longer auto-closed at
+  completion the caller's next event would rebuild it from zero — a pipeline's bar flickering back to
+  0% on every instrumented call it makes.
 
 - **Per-image TIFF export** — `write_tiff_stack(..., one_file_per_image=True)`, exposed on the
   VENUS TOF pipelines as `tiff_one_file_per_image=True`, writes **one scitiff file per spectral

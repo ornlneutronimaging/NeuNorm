@@ -192,6 +192,14 @@ class ProgressReporter:
             )
         )
 
+    def _borrowed(self) -> "ProgressReporter":
+        """A view of this reporter that will not close the sink.
+
+        Handed to a callee so it can report without retiring bars its caller still needs. Everything
+        the callee cares about — sink, stage, offset, total — is preserved; only ownership is dropped.
+        """
+        return ProgressReporter(self._sink, self._stage, offset=self.completed, total=self._total, owns_sink=False)
+
     def note(self, detail: str) -> None:
         """Emit an event at the current count, advancing nothing.
 
@@ -393,7 +401,13 @@ def resolve_progress(
         If ``progress`` is neither a bool, nor callable, nor a reporter.
     """
     if isinstance(progress, ProgressReporter):
-        return progress
+        # Hand back a BORROWED view: same sink, same stage, offset and total, but not owning the
+        # sink. Only the function that resolved a sink into being may retire it. Without this, a leaf
+        # using `with resolve_progress(...)` closes the bars belonging to the caller that handed the
+        # reporter down — and since a bar is no longer auto-closed at completion, the caller's next
+        # event rebuilds it from zero. A pipeline calling several instrumented leaves would show its
+        # bar flicker back to 0% on every one.
+        return progress._borrowed()
     if progress is False:
         return NULL_REPORTER
     if progress is True:

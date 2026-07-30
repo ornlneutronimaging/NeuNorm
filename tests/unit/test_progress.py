@@ -74,18 +74,46 @@ def test_progress_rejects_anything_else(bad):
         resolve_progress(bad)
 
 
-def test_resolve_progress_returns_an_existing_reporter_untouched():
-    """An existing reporter must come back unchanged even when a stage and total are supplied.
+def test_resolve_progress_borrows_an_existing_reporter_without_rebinding_it():
+    """An existing reporter keeps its stage, total and position — but comes back NOT owning the sink.
 
-    Re-binding here would reset the offset and replace the run-wide total with a local one — see
-    test_leaf_resolving_a_reporter_keeps_the_flat_count for the count that used to break.
+    Two separate rules meet here.
+
+    Not re-binding: a stage or total supplied by the callee must be ignored, or a leaf would reset the
+    offset to zero and replace the run-wide total with its own local count.
+
+    Not owning: only whoever resolved a sink into being may retire it. A callee using
+    `with resolve_progress(...)` would otherwise close the caller's bars on exit, and because a bar is
+    no longer auto-closed at completion the caller's next event would rebuild it from zero — making a
+    pipeline's bar flicker back to 0% on every instrumented call it makes.
     """
     _, sink = _collect()
     original = resolve_progress(sink, STAGE_LOAD_SAMPLE, total=5)
+    original(advance=2)
 
-    assert resolve_progress(original) is original
-    assert resolve_progress(original, STAGE_NORMALIZE, total=99) is original
-    assert (original.stage, original.total) == (STAGE_LOAD_SAMPLE, 5)
+    borrowed = resolve_progress(original, STAGE_NORMALIZE, total=99)
+
+    assert (borrowed.stage, borrowed.total) == (STAGE_LOAD_SAMPLE, 5), "stage/total must not be rebound"
+    assert borrowed.completed == original.completed, "position must carry over"
+    # A callable-backed reporter never owned the sink to begin with — the user's callback IS the
+    # sink. Ownership only arises for progress=True; the next test covers that case.
+    assert borrowed._owns_sink is False
+
+
+def test_a_borrowed_reporter_close_does_not_touch_the_owner_s_sink():
+    """Closing a borrowed reporter is a no-op; closing the owning one releases the bars."""
+    from neunorm.utils.progress import _TqdmSink
+
+    tqdm_sink = _TqdmSink()
+    owner = ProgressReporter(tqdm_sink, STAGE_LOAD_SAMPLE, total=2, owns_sink=True)
+    owner()
+    assert tqdm_sink._bars, "a bar should be open"
+
+    resolve_progress(owner).close()
+    assert tqdm_sink._bars, "a borrowed reporter must not close the owner's bars"
+
+    owner.close()
+    assert tqdm_sink._bars == {}
 
 
 def test_leaf_resolving_a_reporter_keeps_the_flat_count():

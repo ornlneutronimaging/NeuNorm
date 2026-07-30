@@ -35,6 +35,23 @@ from neunorm.utils.progress import (
 DETECTOR = (64, 64)
 
 
+class _RecordingTqdmSink(_TqdmSink):
+    """Records every sink instance, so one a callee built internally is observable."""
+
+    instances: list["_RecordingTqdmSink"] = []
+
+    def __init__(self):
+        super().__init__()
+        _RecordingTqdmSink.instances.append(self)
+
+
+@pytest.fixture
+def recorded_sinks(monkeypatch):
+    _RecordingTqdmSink.instances = []
+    monkeypatch.setattr("neunorm.utils.progress._TqdmSink", _RecordingTqdmSink)
+    return _RecordingTqdmSink.instances
+
+
 def _collect():
     events = []
     return events, events.append
@@ -117,7 +134,7 @@ def test_event_loader_progress_false_loads_identical_events(nexus_file):
     assert without.total_events == with_progress.total_events
 
 
-def test_event_loader_releases_owned_bars_when_the_read_fails(tmp_path):
+def test_event_loader_releases_its_own_bar_when_the_read_fails(tmp_path, recorded_sinks):
     """A failure AFTER the first event is emitted must still release the bar.
 
     Getting this test to mean anything took three attempts, recorded so it is not weakened later:
@@ -134,13 +151,11 @@ def test_event_loader_releases_owned_bars_when_the_read_fails(tmp_path):
         bank.create_dataset("event_id", data=np.arange(8, dtype=np.int64))
         bank.create_dataset("event_time_offset", data=np.array([b"x"] * 8, dtype="S1"))
 
-    sink = _TqdmSink()
-    reporter = ProgressReporter(sink, STAGE_NORMALIZE, total=4, owns_sink=True)
-
     with pytest.raises(ValueError):
-        load_event_nexus(path, detector_shape=DETECTOR, progress=reporter)
+        load_event_nexus(path, detector_shape=DETECTOR, progress=True)
 
-    assert sink._bars == {}, "a bar opened before the failure was not released"
+    assert recorded_sinks, "no internal sink was created"
+    assert recorded_sinks[0]._bars == {}, "a bar opened before the failure was not released"
 
 
 # --------------------------------------------------------------------------------------
@@ -211,19 +226,28 @@ def test_converter_cancellation_propagates(convert):
 
 
 @pytest.mark.parametrize("convert", [_convert_3d, _convert_2d], ids=["3d", "2d"])
-def test_converter_releases_owned_bars(convert):
-    """A converter that owns its sink must leave no bar open.
+def test_converter_closes_a_sink_it_created_itself(convert, recorded_sinks):
+    """With `progress=True` the converter builds the sink, so it must retire it."""
+    convert(_events(300), chunk_size=100, progress=True)
 
-    Release on the *exception* path is covered generically by
-    test_resolve_progress_is_usable_as_a_context_manager: every instrumented function now uses
-    `with resolve_progress(...)`, so one test of `__exit__` covers them all rather than one
-    contrived injection per call site.
+    assert len(recorded_sinks) == 1
+    assert recorded_sinks[0]._bars == {}
+
+
+@pytest.mark.parametrize("convert", [_convert_3d, _convert_2d], ids=["3d", "2d"])
+def test_converter_does_not_close_a_caller_supplied_sink(convert):
+    """A converter handed a pre-bound reporter must leave the caller's bars open.
+
+    This is the pipeline case: venus_tpx3_event will call load_event_nexus AND a converter under one
+    reporter, so either closing the shared sink would restart the other's bar from zero.
     """
     sink = _TqdmSink()
-    reporter = ProgressReporter(sink, STAGE_NORMALIZE, total=3, owns_sink=True)
+    caller = ProgressReporter(sink, STAGE_NORMALIZE, total=3, owns_sink=True)
 
-    convert(_events(300), chunk_size=100, progress=reporter)
+    convert(_events(300), chunk_size=100, progress=caller)
 
+    assert sink._bars, "the caller's bar was closed by the converter"
+    caller.close()
     assert sink._bars == {}
 
 
