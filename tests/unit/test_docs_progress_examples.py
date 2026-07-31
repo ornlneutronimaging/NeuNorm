@@ -93,6 +93,31 @@ def test_every_documented_example_runs(tmp_path, monkeypatch, line, source):
         pytest.fail(f"{DOC.name}:{line} references a name the page never defines: {exc}")
 
 
+def test_the_documented_pattern_for_your_own_function_behaves_as_described():
+    """The page shows a `my_loader` shape for instrumenting your own code. Executing that block only
+    proves it parses — nothing calls it. So call it, and check the part that IS observable here: one
+    event per item, naming the item, under one run-wide total.
+
+    Deliberately does NOT claim to verify the "count after the work" advice in the same example: the
+    example's work is an ellipsis, so counting before or after produces identical events. I checked —
+    swapping the two lines in the page leaves this test passing. Emit ordering is pinned where it is
+    real, against the instrumented functions themselves
+    (`test_progress_export.py::test_hdf5_names_each_step_before_it_runs`).
+    """
+    block = next(body for _line, body in BLOCKS if "def my_loader" in body)
+    namespace = {}
+    exec(compile(block, "my_loader", "exec"), namespace)  # noqa: S102 - executing the docs is the point
+
+    events = []
+    paths = [Path(f"frame_{index}.tif") for index in range(4)]
+    namespace["my_loader"](paths, progress=events.append)
+
+    assert [e.completed for e in events] == [1, 2, 3, 4], "not one event per item, counted after the work"
+    assert [e.detail for e in events] == [p.name for p in paths], "the item is not named"
+    assert {e.total for e in events} == {4}
+    assert {e.stage for e in events} == {"load_sample"}
+
+
 def _collision_probe(tmp_path, body):
     """Run a pipeline in a FRESH interpreter and count stderr lines holding both a bar and a log record.
 

@@ -207,12 +207,17 @@ same.)
 | `normalize` | named steps | the flux correction (background-ROI or proton-charge) and the division; the count depends on which correction was requested |
 | `export` | named steps for HDF5 | one event per file with `tiff_one_file_per_image=True`, which is the only export path with a determinate item count |
 
-Some work is deliberately **not** reported: the ROI crop, the open-beam and dark averaging, dead and hot
-pixel detection, the spatial rebin and the air-region correction. Each is a single whole-array pass that
-runs between named stages, and inventing a step for each would inflate the counts without adding
-information. Each pipeline's `progress` docstring lists what its own run leaves out, because the lists
-differ — VENUS TPX1 detects dead pixels but not hot ones, the MARS pipelines have no air-region
-correction, and only the TOF pipelines rebin.
+Some work is deliberately **not** reported: the metadata reads, the ROI crop, the open-beam and dark
+averaging, dead and hot pixel detection, the statistics analysis behind `rebin_by_tof=True`, the spatial
+rebin and the air-region correction. Each is a single pass that runs between named stages, and inventing
+a step for each would inflate the counts without adding information. Each pipeline's `progress` docstring
+lists what its own run leaves out, because the lists differ — VENUS TPX1 detects dead pixels but not hot
+ones, the MARS pipelines have no air-region correction, and only the TOF pipelines rebin.
+
+One of those is worth knowing about specifically. On the three TOF pipelines the **metadata read comes
+first**, once per input run, before any bar exists: `load_metadata` opens a NeXus file (and, for TPX1,
+parses a `*_Spectra.txt` sidecar that can run to thousands of rows). So a TOF run is briefly silent at
+the very start — that gap is the metadata, not a hang.
 
 So a bar that pauses briefly between stages is expected. A bar that pauses *within* a stage is telling
 you where the time goes — and if it pauses on `attaching variances (40.0 MiB)`, that is the allocation,
