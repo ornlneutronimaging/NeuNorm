@@ -101,7 +101,7 @@ def load_fits_stack(  # noqa: C901
                     # Store header from first file
                     headers.append(hdul[0].header)
             except Exception as e:
-                logger.error(f"Failed to load FITS files: {e}")
+                logger.error("Failed to load FITS files: {}", e)
                 raise
             report(detail=Path(path).name)
 

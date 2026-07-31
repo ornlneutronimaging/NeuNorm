@@ -203,7 +203,11 @@ def test_positional_signature_matches_the_last_release_exactly(name):
     """
     func, expected = RELEASED_POSITIONAL[name]
     params = inspect.signature(func).parameters
-    actual = [n for n, p in params.items() if p.kind is not p.KEYWORD_ONLY]
+    # The two kinds that actually participate in positional re-binding. Filtering by "not KEYWORD_ONLY"
+    # instead would count `*args` and `**kwargs` as positional, so adding either to an entry point would
+    # fail this guard for a reason it does not mean.
+    positional_kinds = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    actual = [n for n, p in params.items() if p.kind in positional_kinds]
 
     assert actual == expected, (
         f"{name}: positional signature no longer matches the v2.2.3 release.\n"
@@ -243,13 +247,18 @@ def test_everything_added_since_the_release_is_keyword_only(name):
 
     This is what makes the guard above stable over time: with every addition keyword-only, the
     positional list is frozen by construction and future growth cannot reorder it.
+
+    ``*args`` and ``**kwargs`` are exempt, for the same reason the positional guard above names the two
+    positional kinds explicitly: neither can displace a released parameter, so failing on them would be
+    a false positive rather than a caught break.
     """
     func, expected = RELEASED_POSITIONAL[name]
     params = inspect.signature(func).parameters
     added = [n for n in params if n not in expected]
-    not_keyword_only = [n for n in added if params[n].kind is not params[n].KEYWORD_ONLY]
+    shiftable_kinds = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    positionally_bindable = [n for n in added if params[n].kind in shiftable_kinds]
 
-    assert not not_keyword_only, (
-        f"{name}: parameter(s) added since v2.2.3 are positionally bindable: {not_keyword_only}. "
+    assert not positionally_bindable, (
+        f"{name}: parameter(s) added since v2.2.3 are positionally bindable: {positionally_bindable}. "
         "Put them after a `*` marker."
     )
