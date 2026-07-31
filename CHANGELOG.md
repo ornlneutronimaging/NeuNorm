@@ -23,11 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `progress=False` path never pays for it. `close()` releases the bars NeuNorm opened — a stage with
   an indeterminate total has no completion point, and an abandoned stage never finishes — and never
   touches a caller's callback, which may be a reusable object NeuNorm does not own.
-  Note that NeuNorm's log records and a `tqdm` bar both go to stderr, so log lines will corrupt a
-  bar. NeuNorm does not manage that for you: routing loguru through `tqdm.write` means displacing
-  handlers that `add()` cannot faithfully restore, and silently rewriting an application's log format
-  is worse than a corrupted bar. Routing NeuNorm's log records around a bar is the caller's to do,
-  in their own application; the progress documentation will cover how.
+  Note that NeuNorm's log records and a `tqdm` bar both go to stderr, so log lines corrupt a bar.
+  NeuNorm does not manage that for you: routing loguru through `tqdm.write` means displacing handlers
+  that `add()` cannot faithfully restore, and silently rewriting an application's log format is worse
+  than a corrupted bar. Routing NeuNorm's log records around a bar is the caller's to do, in their own
+  application — `docs/progress.md` gives the remedy, and names the two ways to get it wrong.
   This entry also corrects the long-stale `neunorm.utils` docstring, which advertised "progress
   reporting" that did not exist and "validation helpers" that never have.
 
