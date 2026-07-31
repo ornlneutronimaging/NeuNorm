@@ -1,7 +1,9 @@
 # Progress reporting
 
 Normalizing a large stack takes minutes to hours, and without feedback there is no way to tell a slow
-run from a hung one. Every pipeline and every long-running function takes a `progress` argument:
+run from a hung one. All six pipelines take a `progress` argument, as do the functions that do the
+expensive work inside them — the image and event loaders, the event converters, the gamma filter, both
+normalizers, and both writers:
 
 ```python
 from pathlib import Path
@@ -198,7 +200,12 @@ before retrying. That is not specific to cancellation — any error during expor
 
 ## What each stage reports
 
-| Stage | Counts | Notes |
+The table below is about the **count** — what advances the number a bar shows. A callback receives more
+events than that: NeuNorm also emits *notes*, which carry a label without advancing the count (naming a
+large allocation, or a step whose cost is only known mid-run). So a callback counting its own invocations
+will exceed the totals here; use `event.completed` rather than counting calls.
+
+| Stage | What advances the count | Notes |
 |---|---|---|
 | `load_sample`, `load_ob`, `load_dark` | one event per file | across every input run, so the count does not restart per run. On the event path, four events per file instead — the loader's full-event-length allocations, so one huge NeXus file still shows movement |
 | `histogram` | one event per event-chunk | `total` is `None`: the chunk count follows from each file's event count |
@@ -263,8 +270,10 @@ finally:
 
 Two details that are easy to get wrong, both measured:
 
-- **`logger.remove()` first.** Adding the `tqdm.write` sink *alongside* the default handler does not
-  help — it doubles the output and takes the collisions from five to ten.
+- **`logger.remove()` first.** Adding the `tqdm.write` sink *alongside* the default handler makes things
+  worse, not better: every record is then emitted twice — one clean copy printed above the bar by
+  `tqdm.write`, and one still written into the bar by your original handler. Measured on a small run,
+  nine distinct records became twenty lines, ten of them still colliding.
 - **`file=sys.stderr`.** `tqdm.write` defaults to **stdout**, so leaving it off silently moves every log
   record to a different stream. The bar looks perfect and the records are somewhere else.
 
@@ -299,9 +308,10 @@ installed. Having `ipywidgets` in the environment is not enough on its own: in a
 it installed, `tqdm.auto` still resolves to the text bar. Either works; you do not choose.
 
 `TQDM_DISABLE=1` in the environment suppresses the bars without changing any code, which is what you
-want in CI and in logs. Set it **before the process starts** — `tqdm` reads it when it is first
-imported, so setting it from inside a running program is unreliable. A callback is unaffected by it
-either way: your callback is yours.
+want in CI and in logs. It has to be set **before `tqdm` is first imported** — which in practice means
+before you import a NeuNorm pipeline, and most simply in the environment your process starts with.
+Setting it later has no effect: `tqdm` captures it at import, so a bar created afterwards is still
+enabled. A callback is unaffected either way; your callback is yours.
 
 ## Reporting from your own code
 

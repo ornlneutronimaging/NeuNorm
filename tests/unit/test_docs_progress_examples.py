@@ -52,6 +52,10 @@ def _python_blocks(text):
 
 BLOCKS = _python_blocks(DOC.read_text())
 
+#: The session's loguru handlers as this module is imported, so a documentation block that reconfigures
+#: logging in-process can be caught rather than silently inherited by every later test.
+_HANDLERS_AT_IMPORT = set(__import__("loguru").logger._core.handlers)  # noqa: SLF001 - no public listing
+
 
 def test_the_page_has_the_examples_the_task_asked_for():
     """Guards the extractor itself: a regex that silently matched nothing would make every example
@@ -64,10 +68,34 @@ def test_the_page_has_the_examples_the_task_asked_for():
     assert "logger.remove()" in joined, "the log-collision remedy is missing"
 
 
+def test_the_skipped_logging_blocks_are_covered_somewhere_else():
+    """The in-process runner skips blocks that reconfigure global logging, so this checks the skip does
+    not lose coverage: each one must be executed by a subprocess test in this file."""
+    skipped = [body for _line, body in BLOCKS if any(m in body for m in _GLOBAL_LOGGING_BLOCKS)]
+    assert skipped, "no logging blocks found; the skip markers are stale"
+
+    source = Path(__file__).read_text()
+    assert '"tqdm.write" in body' in source, "the tqdm.write remedy is no longer run by the subprocess probe"
+    assert 'logger.disable("neunorm")' in _GLOBAL_LOGGING_BLOCKS
+    disable_block = next(body for body in skipped if 'logger.disable("neunorm")' in body)
+    assert "logger.enable" in disable_block, (
+        "the disable example does not re-enable logging, so a reader who pastes it silences NeuNorm for good"
+    )
+
+
+#: Blocks that reconfigure global logging. Executing these in-process would leave loguru with a
+#: different handler set than pytest started with — `logger.remove()` drops the session's handler and
+#: the `finally` adds a NEW one, so every later test logs through a stranger. They are executed for real
+#: by `_collision_probe`, in a subprocess, which is where their effect is measurable anyway.
+_GLOBAL_LOGGING_BLOCKS = ("logger.remove()", 'logger.disable("neunorm")')
+
+
 @pytest.mark.parametrize("line,source", BLOCKS, ids=[f"line{line}" for line, _ in BLOCKS])
 def test_every_documented_example_runs(tmp_path, monkeypatch, line, source):
     """Run the block verbatim. A NameError here means the page shows an incomplete snippet; any other
     exception means the page shows something that does not work."""
+    if any(marker in source for marker in _GLOBAL_LOGGING_BLOCKS):
+        pytest.skip("reconfigures global logging; executed in a subprocess by the collision probe instead")
     inputs = tmp_path / "inputs"
     inputs.mkdir()
     monkeypatch.chdir(tmp_path)
@@ -116,6 +144,24 @@ def test_the_documented_pattern_for_your_own_function_behaves_as_described():
     assert [e.detail for e in events] == [p.name for p in paths], "the item is not named"
     assert {e.total for e in events} == {4}
     assert {e.stage for e in events} == {"load_sample"}
+
+
+def test_running_the_examples_leaves_the_session_s_logging_untouched():
+    """A guard for the defect that hid here: executing a documentation block that calls
+    `logger.remove()` in-process replaces the session's loguru handler, so every later test logs through
+    a handler this file installed. Nothing in the suite failed as a result — it had to be found by
+    reading — so the handler set is now asserted directly.
+
+    Ordered last in the file so it observes the state the other tests leave behind.
+    """
+    from loguru import logger
+
+    handlers = set(logger._core.handlers)  # noqa: SLF001 - the public API exposes no handler listing
+    assert handlers == _HANDLERS_AT_IMPORT, (
+        "a documentation example reconfigured logging for the rest of the session: "
+        f"{sorted(_HANDLERS_AT_IMPORT)} -> {sorted(handlers)}. "
+        "Add its marker to _GLOBAL_LOGGING_BLOCKS so it runs in a subprocess instead."
+    )
 
 
 def test_the_page_is_right_about_what_a_cancelled_run_leaves_behind(tmp_path):
