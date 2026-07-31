@@ -268,8 +268,12 @@ finally:
     logger.add(sys.stderr)                        # or restore your own configuration
 ```
 
-Two details that are easy to get wrong, both measured:
+Three details, all measured or easy to miss:
 
+- **The last line restores a *default* handler, not yours.** `logger.add(sys.stderr)` gives you loguru's
+  out-of-the-box format at `DEBUG` — not the format, level, filters or rotation you had before
+  `logger.remove()`. If your application configures logging, re-apply your own configuration there
+  instead. This is exactly why NeuNorm does not do any of this for you: it cannot know what to put back.
 - **`logger.remove()` first.** Adding the `tqdm.write` sink *alongside* the default handler makes things
   worse, not better: every record is then emitted twice — one clean copy printed above the bar by
   `tqdm.write`, and one still written into the bar by your original handler. Measured on a small run,
