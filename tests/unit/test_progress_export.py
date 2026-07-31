@@ -1,10 +1,10 @@
-"""Progress reporting through export, and through the dark-corrected normalizer (#195, Task 6).
+"""Progress reporting through export, and through the dark-corrected normalizer.
 
 HDF5 is the primary output format and `write_hdf5` has no item axis at all — the bulk data leaves in
 one or two whole-array `create_dataset` calls — so it reports named steps and can never be per-image.
 `write_tiff_stack`'s `one_file_per_image` mode is the one export path with a determinate item count.
 
-`normalize_with_dark` is here rather than with Task 5 because it was the gap that task's review found:
+`normalize_with_dark` is here rather than with the other normalizer because a review found it as a gap:
 it is `normalize_transmission`'s sibling on the CCD path and was reporting nothing. It is also the
 first place two instrumented functions compose, so it is where the borrowed-reporter and shared-counter
 behaviour is exercised end to end.

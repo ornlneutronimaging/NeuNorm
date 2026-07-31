@@ -1,4 +1,4 @@
-"""Signature-guard tests for the released public entry points (#195, Task 2).
+"""Signature-guard tests for the released public entry points.
 
 These pin the **positional** parameter order of every pipeline and of ``write_tiff_stack`` against
 the last release, so a future parameter cannot be inserted mid-signature and silently re-bind every

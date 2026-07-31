@@ -1,4 +1,4 @@
-"""Progress reporting through the TIFF/FITS load path (#195, Task 3).
+"""Progress reporting through the TIFF/FITS load path.
 
 The load loop is the unit a user counts — "1000 files" — and it is the only place where a slow or
 contended filesystem becomes visible per item. The two ticks after the loop matter for a different

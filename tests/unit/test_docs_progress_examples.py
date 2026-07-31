@@ -1,4 +1,4 @@
-"""Execute every Python example in ``docs/progress.md`` (#195, Task 8).
+"""Execute every Python example in ``docs/progress.md``.
 
 Documentation that does not run is worse than no documentation: a user pastes it, it fails, and they
 cannot tell whether the library or the page is wrong. So the examples are extracted from the page and

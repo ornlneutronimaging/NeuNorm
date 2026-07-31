@@ -1,4 +1,4 @@
-"""Unit tests for neunorm.utils.progress — the progress-reporting contract (#195).
+"""Unit tests for neunorm.utils.progress — the progress-reporting contract.
 
 Covers the False/True/callable dispatch, event immutability, the offset arithmetic that lets a
 per-run leaf function contribute to one count spanning the whole run, sink ownership, and the tqdm

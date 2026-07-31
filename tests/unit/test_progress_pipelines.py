@@ -1,4 +1,4 @@
-"""Progress reporting through the six pipeline entry points (#195, Task 7).
+"""Progress reporting through the six pipeline entry points.
 
 This is the task that makes ``progress=True`` reachable from the public API: before it, every
 instrumented function existed but no pipeline accepted the argument, so a user of

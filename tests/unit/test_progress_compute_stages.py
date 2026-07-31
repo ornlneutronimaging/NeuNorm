@@ -1,4 +1,4 @@
-"""Progress reporting through the two dominant compute stages (#195, Task 5).
+"""Progress reporting through the two dominant compute stages.
 
 Neither `apply_gamma_filter` nor `normalize_transmission` has an item axis — both are sequences of
 whole-array operations — so both report named steps rather than an item count. They are the two

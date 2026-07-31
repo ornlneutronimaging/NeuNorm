@@ -1,4 +1,4 @@
-"""Progress reporting through the event-mode load path (#195, Task 4).
+"""Progress reporting through the event-mode load path.
 
 The event path has no per-file loop the way a TIFF stack does: `load_event_nexus` performs two h5py
 slab reads and two numpy passes, four steps in all, each allocating a full event-length array; and the
@@ -365,7 +365,7 @@ def test_chunk_progress_goes_to_the_callback_not_the_log():
 
 
 # --------------------------------------------------------------------------------------
-# what the bar RENDERS — the class of check that caught the Task 3 defect
+# what the bar RENDERS — the class of check that caught the defects the load path had
 # --------------------------------------------------------------------------------------
 
 
