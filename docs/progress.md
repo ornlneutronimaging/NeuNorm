@@ -74,17 +74,21 @@ transmission = run_mars_ccd_pipeline(
 Three sample runs of 40 frames at 512×512, two open-beam runs of 20, one dark run of 10:
 
 ```text
-load_sample:  100%|##########| 120/120 [00:01<00:00, 835.97item/s, attaching variances (40.0 MiB)]
-load_ob:      100%|##########| 40/40   [00:01<00:00,  29.68item/s, attaching variances (20.0 MiB)]
-combine_runs: 100%|##########| 3/3     [00:01<00:00,   2.31item/s, combining 1 dark run(s)]
-load_dark:    100%|##########| 10/10   [00:01<00:00,   7.76item/s, attaching variances (10.0 MiB)]
-gamma_filter: 100%|##########| 4/4     [00:01<00:00,   2.84item/s, detecting and replacing outliers]
-normalize:    100%|##########| 3/3     [00:00<00:00,  20.47item/s, correcting shared-dark variance]
-export:       100%|##########| 4/4     [00:00<00:00,  97.85item/s, writing metadata]
+load_sample:  100%|██████████| 120/120 [00:01<00:00, 835.97item/s, attaching variances (40.0 MiB)]
+load_ob:      100%|██████████| 40/40   [00:01<00:00,  29.68item/s, attaching variances (20.0 MiB)]
+combine_runs: 100%|██████████| 3/3     [00:01<00:00,   2.31item/s, combining 1 dark run(s)]
+load_dark:    100%|██████████| 10/10   [00:01<00:00,   7.76item/s, attaching variances (10.0 MiB)]
+gamma_filter: 100%|██████████| 4/4     [00:01<00:00,   2.84item/s, detecting and replacing outliers]
+normalize:    100%|██████████| 3/3     [00:00<00:00,  20.47item/s, correcting shared-dark variance]
+export:       100%|██████████| 4/4     [00:00<00:00,  97.85item/s, writing metadata]
 ```
 
 Note `load_sample` reaching **120/120**, not 40/40 three times: a load stage counts across the whole
 run, not per input run.
+
+That transcript is what the terminal shows *during* the run. NeuNorm's bars are built with
+`leave=False`, so they are cleared when the run finishes rather than left behind — the run ends with a
+clean terminal, not seven finished bars.
 
 ## Example 2 — drive your own bar
 
@@ -133,12 +137,16 @@ normalize:    100%|██████████| 1/1   [00:00<00:00,  44.00it/
 export:       100%|██████████| 4/4   [00:00<00:00, 242.44it/s, writing metadata]
 ```
 
-The `it/s` rather than `item/s` is the one visible difference from `progress=True`: the unit is yours to
-set, since the bar is yours.
+Two differences from `progress=True`, both because the bar is now yours: the unit reads `it/s` instead of
+`item/s` (NeuNorm passes `unit="item"`), and **the bars stay on screen when the run ends**. NeuNorm builds
+its own with `leave=False`, so each line is cleared as the run finishes and you are left with a clean
+terminal; a bar you create keeps tqdm's default and persists. Pass `leave=False` to `tqdm(...)` if you
+prefer NeuNorm's behaviour.
 
 **`event.completed` is an absolute, cumulative count, not an increment.** `tqdm.update()` takes a
 delta, so the adapter is `bar.update(event.completed - bar.n)`. Passing `event.completed` straight to
-`update()` makes the bar race past its total — with 120 files it would end at 7260.
+`update()` makes the bar race past its total: measured on the 120-file load above, a bar that should end
+at 120 ends at **7740**.
 
 Each event carries four fields:
 

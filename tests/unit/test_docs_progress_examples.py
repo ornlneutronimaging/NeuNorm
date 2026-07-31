@@ -57,6 +57,13 @@ BLOCKS = _python_blocks(DOC.read_text())
 _HANDLERS_AT_IMPORT = set(__import__("loguru").logger._core.handlers)  # noqa: SLF001 - no public listing
 
 
+#: Blocks that reconfigure global logging. Executing these in-process would leave loguru with a
+#: different handler set than pytest started with — `logger.remove()` drops the session's handler and
+#: the `finally` adds a NEW one, so every later test logs through a stranger. They are executed for real
+#: by `_collision_probe`, in a subprocess, which is where their effect is measurable anyway.
+_GLOBAL_LOGGING_BLOCKS = ("logger.remove()", 'logger.disable("neunorm")')
+
+
 def test_the_page_has_the_examples_the_task_asked_for():
     """Guards the extractor itself: a regex that silently matched nothing would make every example
     test below pass by vacuum."""
@@ -68,26 +75,14 @@ def test_the_page_has_the_examples_the_task_asked_for():
     assert "logger.remove()" in joined, "the log-collision remedy is missing"
 
 
-def test_the_skipped_logging_blocks_are_covered_somewhere_else():
-    """The in-process runner skips blocks that reconfigure global logging, so this checks the skip does
-    not lose coverage: each one must be executed by a subprocess test in this file."""
+def test_the_skipped_logging_blocks_are_each_executed_in_a_subprocess():
+    """The in-process runner skips blocks that reconfigure global logging. This checks the skip loses no
+    coverage by naming the blocks and requiring a subprocess test for each — asserted by running them,
+    not by grepping this file's own source, which would only confirm that I wrote a string."""
     skipped = [body for _line, body in BLOCKS if any(m in body for m in _GLOBAL_LOGGING_BLOCKS)]
-    assert skipped, "no logging blocks found; the skip markers are stale"
-
-    source = Path(__file__).read_text()
-    assert '"tqdm.write" in body' in source, "the tqdm.write remedy is no longer run by the subprocess probe"
-    assert 'logger.disable("neunorm")' in _GLOBAL_LOGGING_BLOCKS
-    disable_block = next(body for body in skipped if 'logger.disable("neunorm")' in body)
-    assert "logger.enable" in disable_block, (
-        "the disable example does not re-enable logging, so a reader who pastes it silences NeuNorm for good"
-    )
-
-
-#: Blocks that reconfigure global logging. Executing these in-process would leave loguru with a
-#: different handler set than pytest started with — `logger.remove()` drops the session's handler and
-#: the `finally` adds a NEW one, so every later test logs through a stranger. They are executed for real
-#: by `_collision_probe`, in a subprocess, which is where their effect is measurable anyway.
-_GLOBAL_LOGGING_BLOCKS = ("logger.remove()", 'logger.disable("neunorm")')
+    assert len(skipped) == 2, f"expected the remedy and the disable block, found {len(skipped)}"
+    assert any("tqdm.write" in body for body in skipped)
+    assert any('logger.disable("neunorm")' in body for body in skipped)
 
 
 @pytest.mark.parametrize("line,source", BLOCKS, ids=[f"line{line}" for line, _ in BLOCKS])
@@ -111,9 +106,10 @@ def test_every_documented_example_runs(tmp_path, monkeypatch, line, source):
         "dark_paths": [_tiffs(inputs, "dark", 2, 5)],
         # the cancellation example's own hook; False so the block runs to completion here
         "user_pressed_stop": lambda: False,
-        "Path": Path,
-        "os": os,
     }
+    # Deliberately nothing else. Seeding `Path` or `os` here would let a block that forgot its own
+    # import pass, while failing for a reader who pastes it — the exact failure the NameError handler
+    # below exists to catch.
 
     try:
         exec(compile(source, f"{DOC.name}:{line}", "exec"), namespace)  # noqa: S102 - executing the docs is the point
@@ -146,14 +142,19 @@ def test_the_documented_pattern_for_your_own_function_behaves_as_described():
     assert {e.stage for e in events} == {"load_sample"}
 
 
-def test_running_the_examples_leaves_the_session_s_logging_untouched():
-    """A guard for the defect that hid here: executing a documentation block that calls
-    `logger.remove()` in-process replaces the session's loguru handler, so every later test logs through
-    a handler this file installed. Nothing in the suite failed as a result — it had to be found by
-    reading — so the handler set is now asserted directly.
+@pytest.fixture(autouse=True)
+def _logging_must_survive_every_example():
+    """Assert after EVERY test here that the session's loguru handlers are unchanged.
 
-    Ordered last in the file so it observes the state the other tests leave behind.
+    The defect this guards hid in plain sight: executing a documentation block that calls
+    `logger.remove()` in-process replaces the session's handler, so every later test logs through a
+    handler this file installed. Nothing failed as a result — it had to be found by reading.
+
+    An autouse teardown rather than one ordered test, so it cannot be defeated by where a future test
+    lands in the file.
     """
+    yield
+
     from loguru import logger
 
     handlers = set(logger._core.handlers)  # noqa: SLF001 - the public API exposes no handler listing
@@ -266,6 +267,64 @@ def test_the_documented_log_remedy_removes_the_collisions_and_keeps_the_records(
         f"the remedy lost log records: {remedied_records} on stderr vs {baseline_records} without it"
     )
     assert remedied["stdout"] == (0, 0), "the remedy moved log records to stdout — `file=sys.stderr` missing?"
+
+
+def test_the_naive_adapter_figure_on_the_page_is_the_measured_one(tmp_path):
+    """The page warns that passing `event.completed` straight to `tqdm.update()` makes a 120-file bar
+    end at 7740. That number was wrong once — computed as the triangular number of the per-file events,
+    which ignored the note events that carry the same absolute count — so it is measured here.
+    """
+    from neunorm.pipelines.mars_ccd import run_mars_ccd_pipeline
+    from neunorm.utils.progress import STAGE_LOAD_SAMPLE
+
+    inputs = tmp_path / "naive"
+    inputs.mkdir()
+    sample = [_tiffs(inputs, f"s{run}", 40, 81) for run in range(3)]  # 3 runs x 40 = the page's geometry
+    ob = [_tiffs(inputs, "o", 2, 99)]
+
+    naive = correct = 0
+
+    def report(event):
+        nonlocal naive, correct
+        if event.stage != STAGE_LOAD_SAMPLE:
+            return
+        naive += event.completed  # the mistake the page warns about
+        correct += event.completed - correct  # bar.update(event.completed - bar.n)
+
+    run_mars_ccd_pipeline(sample_paths=sample, ob_paths=ob, output_path=tmp_path / "naive.h5", progress=report)
+
+    assert correct == 120, "the documented adapter must land exactly on the file count"
+    assert naive == 7740, f"the page says 7740; measured {naive}"
+    assert str(naive) in DOC.read_text(), "the page no longer quotes the measured figure"
+
+
+def test_the_documented_disable_example_silences_neunorm_and_then_restores_it(tmp_path):
+    """The page's other remedy — `logger.disable("neunorm")` — has to do what it says: no NeuNorm
+    records during the run, and records again afterwards. Executed in a subprocess, like the first
+    remedy, because it reconfigures global logging.
+
+    Written after a review found the previous version of this coverage was a test that read its own
+    source text for the string `logger.enable` — which proves only that I typed it.
+    """
+    disable_block = next(body for _line, body in BLOCKS if 'logger.disable("neunorm")' in body)
+    probe = _collision_probe(
+        tmp_path,
+        disable_block
+        + """
+
+# after the block's `finally: logger.enable("neunorm")`, records must flow again
+from loguru import logger
+logger.info("AFTER-THE-BLOCK")
+""",
+    )
+
+    records_during, collisions = probe["stderr"]
+    assert collisions == 0, "silencing NeuNorm still left log records colliding with the bars"
+    # the only record on the stream is the one emitted after the block re-enabled logging
+    assert records_during == 1, (
+        f"expected exactly the post-block record, saw {records_during} — either NeuNorm was not silenced "
+        "during the run, or logging was not re-enabled afterwards"
+    )
 
 
 def test_the_cancellation_example_actually_cancels(tmp_path, monkeypatch):
