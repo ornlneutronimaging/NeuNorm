@@ -190,10 +190,11 @@ except RunCancelled as exc:
 cancelled during load_sample at 1
 ```
 
-Cancelling leaves no output file *unless* the export stage had already begun — the HDF5 writer writes
-in place, so an abort part-way through export leaves a readable but incomplete file at `output_path`.
-Delete it before retrying. (That is not specific to cancellation: any error during export does the
-same.)
+Cancelling leaves no output file *unless* the export stage had already begun. The HDF5 writer writes in
+place, so aborting inside export leaves a file at `output_path` that **opens cleanly and is incomplete**:
+cancel on export's first event and you get a valid, empty HDF5 file; cancel later and you get the
+datasets written so far. Neither is distinguishable from a finished file by opening it, so delete it
+before retrying. That is not specific to cancellation — any error during export does the same.
 
 ## What each stage reports
 

@@ -118,6 +118,42 @@ def test_the_documented_pattern_for_your_own_function_behaves_as_described():
     assert {e.stage for e in events} == {"load_sample"}
 
 
+def test_the_page_is_right_about_what_a_cancelled_run_leaves_behind(tmp_path):
+    """Pins both halves of the page's claim, through a pipeline rather than the writer alone: cancel
+    before export and there is no file; cancel inside export and the file opens cleanly and is
+    incomplete — which is why the page says to delete it rather than trust it."""
+    import h5py
+
+    from neunorm.pipelines.mars_ccd import run_mars_ccd_pipeline
+    from neunorm.utils.progress import STAGE_EXPORT, STAGE_LOAD_SAMPLE
+
+    inputs = tmp_path / "cancel_inputs"
+    inputs.mkdir()
+    sample = [_tiffs(inputs, "s", 3, 81)]
+    ob = [_tiffs(inputs, "o", 2, 99)]
+
+    class _CancelledError(RuntimeError):
+        pass
+
+    def run_cancelling_at(stage, output):
+        def cancel(event):
+            if event.stage == stage:
+                raise _CancelledError(stage)
+
+        with pytest.raises(_CancelledError):
+            run_mars_ccd_pipeline(sample_paths=sample, ob_paths=ob, output_path=output, progress=cancel)
+
+    before_export = tmp_path / "before_export.h5"
+    run_cancelling_at(STAGE_LOAD_SAMPLE, before_export)
+    assert not before_export.exists(), "cancelling before export should leave nothing"
+
+    during_export = tmp_path / "during_export.h5"
+    run_cancelling_at(STAGE_EXPORT, during_export)
+    assert during_export.exists(), "cancelling inside export leaves the file the page warns about"
+    with h5py.File(during_export, "r") as f:  # would raise if it were not a readable HDF5 file
+        assert "transmission" not in f, "the page says the file is incomplete, not merely truncated"
+
+
 def _collision_probe(tmp_path, body):
     """Run a pipeline in a FRESH interpreter and count stderr lines holding both a bar and a log record.
 
