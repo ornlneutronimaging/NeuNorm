@@ -201,13 +201,17 @@ def test_the_page_is_right_about_what_a_cancelled_run_leaves_behind(tmp_path):
         assert "transmission" not in f, "the page says the file is incomplete, not merely truncated"
 
 
-def _collision_probe(tmp_path, body):
+def _collision_probe(tmp_path, body, *, split_on=None):
     """Run a pipeline in a FRESH interpreter and count stderr lines holding both a bar and a log record.
 
     A subprocess is required, not a nicety: `contextlib.redirect_stderr` rebinds `sys.stderr`, which
     tqdm resolves at construction but loguru's default handler does not, so in-process capture shows the
     bars and hides the very records that collide with them. That is why this went unnoticed until it was
     measured this way.
+
+    ``split_on`` splits the captured stderr on a sentinel the body prints, so a probe can compare the
+    phase before it with the phase after — used to check that a remedy which silences logging also
+    restores it.
     """
     import subprocess
     import sys
@@ -240,7 +244,18 @@ def _collision_probe(tmp_path, body):
         collisions = [ln for ln in lines if ("INFO" in ln or "SUCCESS" in ln) and ("%|" in ln or "item/s" in ln)]
         return len(records), len(collisions)
 
-    return {"stderr": scan(proc.stderr), "stdout": scan(proc.stdout)}
+    result = {"stderr": scan(proc.stderr), "stdout": scan(proc.stdout)}
+    if split_on is not None:
+        sentinels = (split_on,) if isinstance(split_on, str) else tuple(split_on)
+        remaining = proc.stderr
+        phases = []
+        for sentinel in sentinels:
+            assert sentinel in remaining, f"the body never printed its {sentinel!r} sentinel"
+            phase, remaining = remaining.split(sentinel, 1)
+            phases.append(scan(phase))
+        phases.append(scan(remaining))
+        result["stderr_phases"] = tuple(phases)
+    return result
 
 
 def test_the_documented_log_remedy_removes_the_collisions_and_keeps_the_records(tmp_path):
@@ -307,24 +322,34 @@ def test_the_documented_disable_example_silences_neunorm_and_then_restores_it(tm
     source text for the string `logger.enable` — which proves only that I typed it.
     """
     disable_block = next(body for _line, body in BLOCKS if 'logger.disable("neunorm")' in body)
+    # Three phases in ONE subprocess: an untouched baseline, the documented block, then a run after it.
+    # The comparison is what makes the test environment-independent — an earlier version asserted an
+    # absolute record count and asserted the wrong thing besides (a `logger.info` from this script, which
+    # `logger.disable("neunorm")` never gated), so it passed locally and failed on both CI platforms.
+    # Only records from neunorm modules are governed by enable/disable, so only pipeline runs can show it.
     probe = _collision_probe(
         tmp_path,
-        disable_block
+        """
+import sys
+
+run_mars_ccd_pipeline(sample_paths=sample_paths, ob_paths=ob_paths, output_path=output)
+print("---BASELINE-DONE---", file=sys.stderr, flush=True)
+"""
+        + disable_block
         + """
-
-# after the block's `finally: logger.enable("neunorm")`, records must flow again
-from loguru import logger
-logger.info("AFTER-THE-BLOCK")
+print("---BLOCK-DONE---", file=sys.stderr, flush=True)
+run_mars_ccd_pipeline(sample_paths=sample_paths, ob_paths=ob_paths, output_path=output)
 """,
+        split_on=("---BASELINE-DONE---", "---BLOCK-DONE---"),
     )
 
-    records_during, collisions = probe["stderr"]
-    assert collisions == 0, "silencing NeuNorm still left log records colliding with the bars"
-    # the only record on the stream is the one emitted after the block re-enabled logging
-    assert records_during == 1, (
-        f"expected exactly the post-block record, saw {records_during} — either NeuNorm was not silenced "
-        "during the run, or logging was not re-enabled afterwards"
-    )
+    baseline, during, after = probe["stderr_phases"]
+    if baseline[0] == 0:
+        pytest.skip("this environment surfaces no INFO records at all, so silencing them proves nothing")
+
+    assert during[1] == 0, "silencing NeuNorm still left records colliding with the bars"
+    assert during[0] == 0, f"NeuNorm was not silenced during the run: {during[0]} records"
+    assert after[0] > 0, "logging was not re-enabled after the block, so its `finally` does not work"
 
 
 def test_the_cancellation_example_actually_cancels(tmp_path, monkeypatch):
