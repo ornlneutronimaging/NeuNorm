@@ -22,7 +22,7 @@ import scipp as sc
 
 from neunorm.data_models.roi import ROI
 from neunorm.exporters.hdf5_writer import write_hdf5
-from neunorm.exporters.tiff_writer import write_tiff_stack
+from neunorm.exporters.tiff_writer import tiff_export_step_count, write_tiff_stack
 from neunorm.processing.normalizer import normalize_with_dark
 from neunorm.utils.progress import STAGE_EXPORT, STAGE_NORMALIZE, ProgressReporter, _TqdmSink
 
@@ -423,3 +423,49 @@ def test_rendered_hdf5_bar_names_its_steps(tmp_path):
     out = _render(lambda: write_hdf5(tmp_path / "r.h5", _transmission(shape=(8, 64, 64)), progress=True))
 
     assert "writing transmission" in out, out
+
+
+# --------------------------------------------------------------------------------------
+# the export step-count helpers, tested directly
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("label", "shape", "dims", "one_file_per_image", "expected"),
+    [
+        ("stack mode ignores the shape", (3, 8, 8), ["t", "y", "x"], False, 1),
+        ("per-image counts the spectral dim", (3, 8, 8), ["t", "y", "x"], True, 3),
+        ("a plain radiograph is one image", (8, 8), ["y", "x"], True, 1),
+        ("two non-spatial dims are ambiguous", (2, 3, 8, 8), ["theta", "t", "y", "x"], True, 1),
+    ],
+)
+def test_tiff_export_step_count_predicts_what_the_writer_emits(
+    tmp_path, label, shape, dims, one_file_per_image, expected
+):
+    """`tiff_export_step_count` is what a pipeline uses to declare the export stage's total, so it has to
+    agree with the writer on every shape — including the two edges no pipeline produces and which the
+    pipeline-level tests therefore cannot reach: a plain `(y, x)` radiograph, and data with more than one
+    non-spatial dimension, which the writer rejects rather than splitting.
+    """
+    values = np.full(shape, 0.5)
+    data = sc.DataArray(sc.array(dims=dims, values=values, variances=values.copy(), unit=""))
+
+    assert tiff_export_step_count(data, one_file_per_image=one_file_per_image) == expected, label
+
+    # and the prediction matches reality: either the writer emits exactly that many events, or it
+    # refuses the array — in which case the helper must not have promised a count it cannot deliver.
+    events, sink = _collect()
+    try:
+        written = write_tiff_stack(
+            tmp_path / f"{label.replace(' ', '_')}.tiff",
+            data,
+            one_file_per_image=one_file_per_image,
+            progress=sink,
+        )
+    except ValueError as exc:  # the ambiguous case
+        assert "one_file_per_image needs exactly one non-spatial dimension" in str(exc)
+        assert expected == 1, "a rejected array must not have been promised a multi-file count"
+        return
+
+    assert max(e.completed for e in events) == expected, f"{label}: writer emitted a different count"
+    assert len(written) == expected or not one_file_per_image

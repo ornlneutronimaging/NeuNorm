@@ -152,8 +152,18 @@ def run_mars_tpx3_pipeline(  # noqa: C901
                 frames = []
                 for path in group:
                     load_report.note(Path(path).name)
-                    events = load_event_nexus(path, detector_shape=detector_shape, progress=load_report)
-                    frames.append(convert_events_to_2d_histogram(events, detector_shape, progress=histogram))
+                    # Nested deliberately: do NOT lift the loader's result into a local. A named local
+                    # stays bound until the next iteration rebinds it, so the previous file's raw event
+                    # arrays would stay resident through the next file's four full-event-length
+                    # allocations — measured at +26 MiB of peak RSS on 3.6M-event files, on the one path
+                    # whose cost is peak memory. Nesting releases them when the converter returns.
+                    frames.append(
+                        convert_events_to_2d_histogram(
+                            load_event_nexus(path, detector_shape=detector_shape, progress=load_report),
+                            detector_shape,
+                            progress=histogram,
+                        )
+                    )
                 stacks.append(sc.concat(frames, dim="N_image"))
             return stacks
 

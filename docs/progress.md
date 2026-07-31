@@ -230,10 +230,11 @@ a step for each would inflate the counts without adding information. Each pipeli
 lists what its own run leaves out, because the lists differ — VENUS TPX1 detects dead pixels but not hot
 ones, the MARS pipelines have no air-region correction, and only the TOF pipelines rebin.
 
-One of those is worth knowing about specifically. On the three TOF pipelines the **metadata read comes
-first**, once per input run, before any bar exists: `load_metadata` opens a NeXus file (and, for TPX1,
-parses a `*_Spectra.txt` sidecar that can run to thousands of rows). So a TOF run is briefly silent at
-the very start — that gap is the metadata, not a hang.
+One of those is worth knowing about specifically. On the three TOF pipelines each input run begins with
+a **metadata read**: `load_metadata` opens a NeXus file (and, for TPX1, parses a `*_Spectra.txt` sidecar
+that can run to thousands of rows). For the first run that happens before any bar exists, so a TOF run
+is briefly silent at the very start; for later runs it happens with the load bar already live, so the
+pause lands mid-stage. Either way that gap is the metadata, not a hang.
 
 So a bar that pauses briefly between stages is expected. A bar that pauses *within* a stage is telling
 you where the time goes — and if it pauses on `attaching variances (40.0 MiB)`, that is the allocation,

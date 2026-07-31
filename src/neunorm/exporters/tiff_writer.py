@@ -244,7 +244,10 @@ def write_tiff_stack(
         written: list[Path] = []
         # Genuinely iterable: one file per spectral image, and at a flat per-file cost this is the one
         # export path where a determinate bar is possible. `tiff_export_step_count` predicts this same
-        # count for a caller that must declare the stage total; a test pins the two together.
+        # count for a caller that must declare the stage total, and
+        # test_progress_export.py::test_tiff_export_step_count_predicts_what_the_writer_emits pins the
+        # two together directly — including the shapes no pipeline produces (a plain (y, x) radiograph,
+        # and the ambiguous multi-dimension case rejected below).
         with resolve_progress(progress, stage, total=n_images) as report:
             for index in range(n_images):
                 frame_path = output_path.with_name(f"{output_path.stem}_{index:0{width}d}{output_path.suffix}")

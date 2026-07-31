@@ -102,9 +102,13 @@ def load_event_data(
     # (e.g. the ~1.5625 ns TPX3 fine clock to 1, a ~37% error).
     tof_ns = np.round(tof_raw * tof_clock).astype(np.int64)
 
-    logger.info(f"  TOF range: {tof_ns.min():,} - {tof_ns.max():,} ns")
-    logger.info(f"  X range: [{x.min()}, {x.max()}]")
-    logger.info(f"  Y range: [{y.min()}, {y.max()}]")
+    if n_events:
+        # Guarded because ndarray.min() on an empty array raises: an empty file is a legitimate (if
+        # useless) input, and it should not turn a diagnostic log line into a crash. The same guard is
+        # on the sibling `load_event_nexus`; without it here the two loaders disagreed on an empty file.
+        logger.info(f"  TOF range: {tof_ns.min():,} - {tof_ns.max():,} ns")
+        logger.info(f"  X range: [{x.min()}, {x.max()}]")
+        logger.info(f"  Y range: [{y.min()}, {y.max()}]")
 
     # Create EventData model (validation runs automatically via model_validator)
     events = EventData(tof=tof_ns, x=x, y=y, file_path=file_path, total_events=n_events, tof_clock=tof_clock)

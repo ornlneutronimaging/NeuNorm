@@ -1100,3 +1100,61 @@ def test_a_progress_value_a_pipeline_cannot_use_fails_before_the_run_starts(mars
         )
 
     assert not output.exists(), "the run started despite an unusable progress argument"
+
+
+def test_mars_tpx3_does_not_hold_the_previous_file_s_events_while_reading_the_next(
+    mars_tpx3_inputs, tmp_path, monkeypatch
+):
+    """The event load must release each file's raw events before the next file's allocations.
+
+    Task 7 rewrote this pipeline's nested comprehension into loops so each file could be named. Lifting
+    the loader's result into a local `events` was the natural way to write that — and it kept the
+    previous file's full-event-length arrays resident through the next file's four allocations, measured
+    at +26 MiB of peak RSS on 3.6M-event files (`.harness/event_peak_rss.py`). On the one path whose cost
+    IS peak memory, that is a regression, so the call is nested again.
+
+    Pinned by object lifetime rather than by an RSS number, which would be machine-dependent: at the
+    moment file N's READ begins, file N-1's EventData must already be collectable.
+    """
+    import gc
+    import weakref
+
+    from neunorm.pipelines import mars_tpx3 as pipeline
+
+    # A list of weakrefs, not a WeakSet: EventData is a pydantic model and unhashable, so a set cannot
+    # hold it.
+    refs = []
+    alive_before_this_read = []
+
+    real_loader = pipeline.load_event_nexus
+    real_converter = pipeline.convert_events_to_2d_histogram
+
+    def spy_loader(*args, **kwargs):
+        # Counted HERE, before the read begins — not at conversion time. That distinction is the whole
+        # test: with a named local the previous file's object is released only when the name is REBOUND,
+        # which happens after this load completes, so by conversion time it is already gone and a check
+        # there passes either way. I made exactly that mistake first; the mutation survived it.
+        gc.collect()
+        alive_before_this_read.append(sum(1 for ref in refs if ref() is not None))
+        events = real_loader(*args, **kwargs)
+        refs.append(weakref.ref(events))
+        return events
+
+    def spy_converter(events, *args, **kwargs):
+        return real_converter(events, *args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "load_event_nexus", spy_loader)
+    monkeypatch.setattr(pipeline, "convert_events_to_2d_histogram", spy_converter)
+
+    run_mars_tpx3_pipeline(
+        sample_paths=mars_tpx3_inputs["sample_paths"],  # two files in one run
+        ob_paths=mars_tpx3_inputs["ob_paths"],
+        output_path=tmp_path / "lifetime.h5",
+        detector_shape=(_DETECTOR, _DETECTOR),
+    )
+
+    assert len(alive_before_this_read) >= 4, f"expected one read per file, saw {alive_before_this_read}"
+    assert alive_before_this_read == [0] * len(alive_before_this_read), (
+        "a previous file's raw events were still resident while the next file was being read: "
+        f"{alive_before_this_read} (one entry per file; every entry must be 0)"
+    )
