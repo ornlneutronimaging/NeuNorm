@@ -105,6 +105,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does not change a single byte of any written file, nor any computed value: the dark normalizer's
   output is bit-identical across seven correction branches, variances included.
 
+- **Progress documentation** — a new {doc}`progress <progress>` page (`docs/progress.md`, in the
+  toctree under "Using") covering what progress reporting tells you and what it deliberately does not:
+  you get movement and a per-stage rate, **not a whole-run ETA**, because stage costs differ by 60-120x
+  and which stages run depends on the arguments. Three worked examples — the built-in bar, a callback
+  driving your own bar, and cancelling a run — each executed and shown with its real output, plus a
+  per-stage table of what is counted and a plain list of the operations that are not.
+
+  It also documents the one interaction a user will otherwise hit blind: NeuNorm logs through loguru,
+  whose default handler writes to the same stderr `tqdm` draws on, so records garble the bars — five of
+  them in a measured MARS CCD run. The remedy given (remove your handler, add a `tqdm.write` sink with
+  `file=sys.stderr`, restore afterwards) was tested against the alternatives, and the two easy mistakes
+  are called out because both were measured: adding the sink *alongside* the default handler doubles the
+  collisions rather than removing them, and omitting `file=sys.stderr` silently moves every log record
+  to stdout. `docs/migration.md` gains the row for the lost 1.x flag — `Normalization(..., notebook=True)`
+  → `progress=` — which is why the regression went unnoticed for a whole major version.
+
+  Every Python block on the page is extracted and **executed** by `tests/unit/test_docs_progress_examples.py`,
+  including the log remedy, which is run in a subprocess and checked to leave zero collisions with the
+  records still on stderr. Six mutations of the documentation are each caught by those tests.
+
 - **`progress` on all six pipelines** — `run_mars_ccd_pipeline`, `run_venus_ccd_pipeline`,
   `run_mars_tpx3_pipeline`, `run_venus_tpx1_pipeline`, `run_venus_tpx3_histogram_pipeline` and
   `run_venus_tpx3_event_pipeline` take a keyword-only `progress`, which is what makes any of this

@@ -25,6 +25,7 @@ The 1.x source is archived under
 | Primary output | TIFF | **HDF5** (TIFF secondary) |
 | TOF / event mode | none | **first-class** (VENUS, Timepix) |
 | Dev environment | conda `environment.yml` | **pixi** (`pixi.lock`) |
+| Progress feedback | `notebook=True`, load loop only | `progress=True` or a callback, **every stage** ({doc}`progress`) |
 
 ## The fastest path: use a pipeline
 
@@ -114,6 +115,7 @@ transmission = normalize_transmission(sample, ob)  # T = sample / ob, variances 
 | `.get_normalized_data()` | the pipeline **returns** a `scipp.DataArray`; use `.values` for the NumPy array |
 | `from NeuNorm.roi import ROI; ROI(x0, y0, x1, y1)` | `from neunorm.data_models.roi import ROI; ROI(x0=10, y0=20, x1=30, y1=40)` (also `ROI(x0=10, y0=20, width=20, height=20)`), or a bare `(x0, y0, x1, y1)` tuple. Accepted by `apply_roi`, `apply_air_region_correction`, `normalize_transmission(background_roi=)`, and the pipelines. |
 | `NeuNorm.normalization.DataType` | not needed — inputs are explicit function arguments |
+| `Normalization(..., notebook=True)` (progress bar while loading) | `progress=True` on any pipeline or loader — `run_mars_ccd_pipeline(..., progress=True)`. Reports every stage, not only the load, and works in a terminal as well as a notebook (`tqdm.auto` picks the right bar). Pass a **callable** instead to drive your own display, or to cancel a run by raising from it. See {doc}`progress`. |
 
 ## ROI
 
@@ -148,6 +150,7 @@ TIFF), so downstream tools can read it directly without re-running the pipeline.
 
 ## Next steps
 
+- {doc}`progress` — how to see where a long run has got to, and how to cancel one.
 - {doc}`api` — full API reference for every loader, processing function, and pipeline.
 - The per-workflow guides under {doc}`workflows/README` walk through each
   detector/facility combination end to end.
