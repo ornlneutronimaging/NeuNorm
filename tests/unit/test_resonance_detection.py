@@ -228,3 +228,73 @@ def test_detect_resonances_with_known_validation():
     assert "recall" in result["validation"]
     assert "precision" in result["validation"]
     assert "n_matched" in result["validation"]
+
+
+class TestVarianceFreeInputDtypes:
+    """``detect_resonances`` accepts variance-free histograms in the dtypes the loaders produce.
+
+    The SNR step reads a propagated variance, so a variance-free input has Poisson variance synthesized
+    for it (``Var = counts``). scipp requires the values and the variances to share a dtype, and
+    ``float32`` is what ``event_converter`` and ``tiff_loader`` produce natively while a hand-built
+    histogram carries integers — so getting this wrong turns any of those into a scipp dtype error that
+    names nothing in NeuNorm.
+    """
+
+    @staticmethod
+    def _histogram(dtype, *, variances=False):
+        n_energy = 120
+        edges = np.geomspace(1.0, 100.0, n_energy + 1)
+        values = np.full((n_energy, 8, 8), 1000).astype(dtype)
+        data = sc.array(dims=["energy", "x", "y"], values=values, unit="counts")
+        if variances:
+            data = sc.array(dims=["energy", "x", "y"], values=values, variances=values.copy(), unit="counts")
+        return sc.DataArray(data, coords={"energy": sc.array(dims=["energy"], values=edges, unit="eV")})
+
+    @pytest.mark.parametrize("dtype", [np.float64, np.float32, np.int64, np.int32])
+    def test_a_variance_free_histogram_is_accepted_whatever_its_count_dtype(self, dtype):
+        """No dtype error, and a well-formed result dict."""
+        from neunorm.tof.resonance import detect_resonances
+
+        result = detect_resonances(self._histogram(dtype), self._histogram(dtype))
+
+        assert isinstance(result, dict)
+        for key in ("resonance_energies", "resonance_indices", "snr_values", "n_initial"):
+            assert key in result
+
+    def test_float32_counts_stay_float32_through_the_region_collapse(self):
+        """Precision is preserved rather than promoted, because promoting doubles the working set.
+
+        The region defaults to the whole detector here, so a promotion to float64 would double peak
+        memory on the largest array in the run.
+        """
+        from neunorm.tof.resonance import _region_spectra
+
+        spectrum_ta, spectrum_ob = _region_spectra(self._histogram(np.float32), self._histogram(np.float32), None)
+
+        assert spectrum_ta.dtype == "float32", f"promoted to {spectrum_ta.dtype}"
+        assert spectrum_ob.dtype == "float32"
+
+    def test_integer_counts_are_promoted_rather_than_given_integer_variances(self):
+        """Integer counts cannot carry a meaningful variance dtype, so they become float64."""
+        from neunorm.tof.resonance import _region_spectra
+
+        spectrum_ta, _ = _region_spectra(self._histogram(np.int64), self._histogram(np.int64), None)
+
+        assert spectrum_ta.dtype == "float64"
+        assert spectrum_ta.variances is not None
+
+    def test_an_input_that_already_carries_variances_is_left_exactly_as_it_is(self):
+        """Synthesis only fills a gap; it must never overwrite a real variance.
+
+        Pinned with a variance deliberately unequal to the counts — the case where overwriting would be
+        both wrong and invisible, since a Poisson-shaped input would hide the substitution.
+        """
+        from neunorm.tof.resonance import _with_poisson_variances
+
+        values = np.array([[100.0, 100.0], [100.0, 100.0]])
+        data = sc.DataArray(sc.array(dims=["x", "y"], values=values, variances=np.full((2, 2), 7.0), unit="counts"))
+
+        out = _with_poisson_variances(data)
+
+        np.testing.assert_array_equal(out.variances, np.full((2, 2), 7.0))
+        assert out is data, "an input that already has variances should be returned untouched"
