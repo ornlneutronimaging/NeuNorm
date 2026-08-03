@@ -8,40 +8,36 @@ from typing import Literal, Optional, Sequence
 
 import numpy as np
 import scipp as sc
-from loguru import logger
 
 from neunorm import __version__
-from neunorm.data_models.roi import (
-    MaskROI,
-    RegionLike,
-    ROILike,
-    as_roi_bounds,
-    region_provenance,
-)
-from neunorm.exporters.hdf5_writer import hdf5_export_step_count, write_hdf5
-from neunorm.exporters.tiff_writer import tiff_export_step_count, write_tiff_stack
+from neunorm.data_models.roi import RegionLike, RegionsLike, ROILike
 from neunorm.loaders.metadata_loader import load_metadata
 from neunorm.loaders.tiff_loader import load_tiff_stack
-from neunorm.processing.air_region_corrector import apply_air_region_correction
-from neunorm.processing.normalizer import normalize_step_count, normalize_transmission
-from neunorm.processing.roi_clipper import apply_roi
+from neunorm.pipelines._tof_spine import (
+    TofPipelineProfile,
+    coerce_roi_arguments,
+    reduce_tof_stacks,
+    require_matching_group_counts,
+)
 from neunorm.processing.run_combiner import combine_runs
-from neunorm.processing.spatial_rebinner import rebin_spatial
-from neunorm.tof.coordinate_converter import convert_tof_to_energy, convert_tof_to_wavelength
-from neunorm.tof.histogram_rebinner import rebin_tof
-from neunorm.tof.pixel_detector import detect_dead_pixels
-from neunorm.tof.statistics_analyzer import analyze_statistics
 from neunorm.utils.constants import VENUS_FLIGHT_PATH_M
 from neunorm.utils.progress import (
     STAGE_COMBINE_RUNS,
-    STAGE_EXPORT,
     STAGE_LOAD_OB,
     STAGE_LOAD_SAMPLE,
-    STAGE_NORMALIZE,
-    STAGE_REBIN_TOF,
     Progress,
     resolve_progress,
     total_across_groups,
+)
+
+#: TPX1 detects no hot pixels, re-detects its masks from the open beam after a spatial rebin, passes
+#: no ``hot_pixel_mask`` to the HDF5 writer, and reads its TIFF detector model from the metadata.
+_TPX1_PROFILE = TofPipelineProfile(
+    label="VENUS TPX1",
+    detect_hot=False,
+    remask_after_spatial_rebin_from="ob",
+    hdf5_hot_pixel_mask=None,
+    tiff_detector_model=None,
 )
 
 
@@ -62,7 +58,7 @@ def _tof_bin_edges_from_left_edges(spectra_tof: sc.Variable) -> sc.Variable:
     return sc.array(dims=["tof"], values=np.append(values, closing), unit=spectra_tof.unit)
 
 
-def run_venus_tpx1_pipeline(  # noqa: C901
+def run_venus_tpx1_pipeline(
     sample_hdf5_paths: Sequence[str | Path],
     ob_hdf5_paths: Sequence[str | Path],
     sample_tiff_paths: Sequence[Sequence[str | Path]],
@@ -76,6 +72,8 @@ def run_venus_tpx1_pipeline(  # noqa: C901
     *,
     rebin_reduction: Optional[Literal["mean", "sum", "median"]] = None,
     tiff_one_file_per_image: bool = False,
+    spectrum_roi: Optional[RegionsLike] = None,
+    spectrum_roi_strict: bool = True,
     progress: Progress = False,
 ) -> sc.DataArray:
     """Execute VENUS TPX1 normalization pipeline.
@@ -170,22 +168,10 @@ def run_venus_tpx1_pipeline(  # noqa: C901
     """
     # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
     # tuples up front so cropping and provenance see a consistent form.
-    if roi is not None:
-        roi = as_roi_bounds(roi)
-    if air_roi is not None:
-        air_roi = air_roi if isinstance(air_roi, MaskROI) else as_roi_bounds(air_roi)
+    roi, air_roi = coerce_roi_arguments(roi, air_roi)
 
     # length of hdf5 paths and tiff paths should match for both sample and OB
-    if len(sample_hdf5_paths) != len(sample_tiff_paths):
-        raise ValueError(
-            f"Number of sample HDF5 paths ({len(sample_hdf5_paths)}) does not match number of sample TIFF path groups "
-            f"({len(sample_tiff_paths)})."
-        )
-    if len(ob_hdf5_paths) != len(ob_tiff_paths):
-        raise ValueError(
-            f"Number of OB HDF5 paths ({len(ob_hdf5_paths)}) does not match number of OB TIFF path groups "
-            f"({len(ob_tiff_paths)})."
-        )
+    require_matching_group_counts(sample_hdf5_paths, sample_tiff_paths, ob_hdf5_paths, ob_tiff_paths)
 
     # One reporter for the whole run, resolved exactly once: a second resolve of `progress=True`
     # would build a second tqdm sink and a duplicate set of bars. Each stage below takes its own
@@ -261,73 +247,6 @@ def run_venus_tpx1_pipeline(  # noqa: C901
         )
         combine()
 
-        # Apply ROI if specified
-        if roi:
-            sample = apply_roi(sample, roi)
-            ob = apply_roi(ob, roi)
-
-        # Dead pixel detection
-        sample.masks["dead_pixels"] = detect_dead_pixels(ob)
-
-        # Spatial rebinning (optional)
-        if rebin_by_spatial is not None:
-            sample = rebin_spatial(sample, rebin_by_spatial)
-            ob = rebin_spatial(ob, rebin_by_spatial)
-            # redo mask after rebinning
-            sample.masks["dead_pixels"] = detect_dead_pixels(ob)
-
-        # TOF rebinning (optional): an integer factor, ``True`` for the statistics-based recommended
-        # factor, or an explicit ``[[start, stop], ...]`` bin list. ``rebin_reduction`` selects how
-        # frames combine (default: sum for a factor, mean for a bin list); see ``rebin_tof``.
-        # A bin list/tuple (even empty) is an explicit rebin request; an empty one must surface as an error
-        # from ``rebin_tof`` rather than be silently skipped by the plain falsy check.
-        if rebin_by_tof or isinstance(rebin_by_tof, (list, tuple)):
-            spec = rebin_by_tof
-            if spec is True:
-                spec = analyze_statistics(ob).recommended_rebinning
-                logger.info(f"Recommended TOF rebinning factor based on statistics analysis: {spec}")
-            if isinstance(spec, bool) or not isinstance(spec, (int, np.integer, list, tuple)):
-                raise ValueError(
-                    f"rebin_by_tof must be a bool, an int factor, or a list/tuple of [start, stop] pairs; got {spec!r}"
-                )
-            # rebin_tof takes no progress argument of its own, so the pipeline names the two calls
-            # around it: with a median reduction this is one of the slowest stages in the run.
-            rebin = run_progress.for_stage(STAGE_REBIN_TOF, total=2)
-            rebin.note("rebinning sample TOF")
-            sample = rebin_tof(sample, spec, reduction=rebin_reduction)
-            rebin()
-            rebin.note("rebinning open beam TOF")
-            ob = rebin_tof(ob, spec, reduction=rebin_reduction)
-            rebin()
-
-        # Normalization
-        transmission = normalize_transmission(
-            sample=sample,
-            ob=ob,
-            proton_charge_sample=sample.coords["proton_charge"],
-            proton_charge_ob=ob.coords["proton_charge"],
-            progress=run_progress.for_stage(
-                STAGE_NORMALIZE,
-                total=normalize_step_count(proton_charge_sample=sample.coords["proton_charge"]),
-            ),
-        )
-
-        # Air region correction (optional)
-        if air_roi is not None:
-            transmission = apply_air_region_correction(transmission, air_roi)
-
-        # Add wavelength and energy coordinates converted from TOF using the configurable flight
-        # path and the time offset from the metadata.
-        if "detector_time_offset" in sample.coords:
-            time_offset = sample.coords["detector_time_offset"]
-            transmission.coords["wavelength"] = convert_tof_to_wavelength(
-                transmission.coords["tof"], flight_path, time_offset
-            )
-            transmission.coords["energy"] = convert_tof_to_energy(transmission.coords["tof"], flight_path, time_offset)
-        else:
-            logger.warning("Time offset not found in metadata. Cannot add wavelength and energy coordinates.")
-
-        # Write output
         metadata = {
             "sample_hdf5_paths": [str(run) for run in sample_hdf5_paths],
             "ob_hdf5_paths": [str(run) for run in ob_hdf5_paths],
@@ -337,73 +256,20 @@ def run_venus_tpx1_pipeline(  # noqa: C901
             "version": __version__,
         }
 
-        if roi:
-            metadata["roi_applied"] = region_provenance(roi)
-
-        if air_roi is not None:
-            metadata["air_roi"] = region_provenance(air_roi)
-
-        output_description = str(output_path)
-        if output_path.suffix.lower() in (".hdf5", ".h5"):
-            write_hdf5(
-                output_path,
-                transmission,
-                dead_pixel_mask="dead_pixels",
-                metadata=metadata,
-                progress=run_progress.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(transmission, metadata)),
-            )
-        elif output_path.suffix.lower() in (".tiff", ".tif"):
-            rename_map = {}
-            if "tof" in transmission.dims:
-                rename_map["tof"] = "t"  # TIFF stacks typically use 't' for the time dimension
-            if rename_map:
-                transmission = transmission.rename_dims(rename_map)
-
-            model = "Unknown"
-            if "detector" in sample.coords:
-                model = sample.coords["detector"].value
-
-            daqmetadata = {
-                "facility": "SNS",
-                "instrument": "VENUS",
-                "detector_type": model,
-                "source_type": "neutron",
-            }
-
-            # Combine all masks and broadcast to the shape of the transmission data.
-            # Mask must be same shape as the image data for scitiff. Broadcast each mask by DIM NAME
-            # (scipp), so both a spatial (y, x) mask and a 1-D per-frame (t) mask expand correctly to
-            # the full (t, y, x) stack.
-            if transmission.masks:
-                combined_mask = np.zeros_like(transmission.values, dtype=bool)
-                for mask in transmission.masks.values():
-                    combined_mask |= sc.broadcast(mask, sizes=transmission.sizes).values
-
-                # remove other masks
-                transmission.masks.clear()
-                # add combined mask back in with name "scitiff-mask"
-                transmission.masks["scitiff-mask"] = sc.array(dims=transmission.dims, values=combined_mask, dtype=bool)
-
-            written_paths = write_tiff_stack(
-                output_path,
-                transmission,
-                metadata=metadata,
-                daqmetadata=daqmetadata,
-                one_file_per_image=tiff_one_file_per_image,
-                progress=run_progress.for_stage(
-                    STAGE_EXPORT,
-                    total=tiff_export_step_count(transmission, one_file_per_image=tiff_one_file_per_image),
-                ),
-            )
-            # In per-image mode ``output_path`` is only a naming template and is never written, so
-            # report what actually landed on disk rather than a file that does not exist.
-            if len(written_paths) > 1:
-                output_description = f"{len(written_paths)} files, {written_paths[0].name} .. {written_paths[-1].name}"
-            else:
-                output_description = str(written_paths[0])
-
-        else:
-            raise ValueError(f"Unsupported output file format: {output_path.suffix}")
-
-        logger.success("VENUS TPX1 pipeline completed successfully. Output written to {}", output_description)
-        return transmission
+        return reduce_tof_stacks(
+            sample,
+            ob,
+            output_path=output_path,
+            profile=_TPX1_PROFILE,
+            metadata=metadata,
+            roi=roi,
+            air_roi=air_roi,
+            rebin_by_tof=rebin_by_tof,
+            rebin_by_spatial=rebin_by_spatial,
+            rebin_reduction=rebin_reduction,
+            flight_path=flight_path,
+            tiff_one_file_per_image=tiff_one_file_per_image,
+            spectrum_roi=spectrum_roi,
+            spectrum_roi_strict=spectrum_roi_strict,
+            run_progress=run_progress,
+        )

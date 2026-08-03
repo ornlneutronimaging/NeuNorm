@@ -6,49 +6,43 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, Optional, Sequence
 
-import numpy as np
 import scipp as sc
-from loguru import logger
 
 from neunorm import __version__
-from neunorm.data_models.roi import (
-    MaskROI,
-    RegionLike,
-    ROILike,
-    as_roi_bounds,
-    region_provenance,
-)
+from neunorm.data_models.roi import RegionLike, RegionsLike, ROILike
 from neunorm.data_models.tof import BinningConfig
-from neunorm.exporters.hdf5_writer import hdf5_export_step_count, write_hdf5
-from neunorm.exporters.tiff_writer import tiff_export_step_count, write_tiff_stack
 from neunorm.loaders.event_loader import LOAD_EVENT_NEXUS_STEPS, load_event_nexus
 from neunorm.loaders.metadata_loader import load_metadata
-from neunorm.processing.air_region_corrector import apply_air_region_correction
-from neunorm.processing.normalizer import normalize_step_count, normalize_transmission
-from neunorm.processing.roi_clipper import apply_roi
+from neunorm.pipelines._tof_spine import (
+    TofPipelineProfile,
+    coerce_roi_arguments,
+    reduce_tof_stacks,
+)
 from neunorm.processing.run_combiner import combine_runs
-from neunorm.processing.spatial_rebinner import rebin_spatial
-from neunorm.tof.coordinate_converter import convert_tof_to_energy, convert_tof_to_wavelength
 from neunorm.tof.event_converter import convert_events_to_histogram
-from neunorm.tof.histogram_rebinner import rebin_tof
-from neunorm.tof.pixel_detector import detect_dead_pixels, detect_hot_pixels
-from neunorm.tof.statistics_analyzer import analyze_statistics
 from neunorm.utils.constants import VENUS_FLIGHT_PATH_M
 from neunorm.utils.progress import (
     STAGE_COMBINE_RUNS,
-    STAGE_EXPORT,
     STAGE_HISTOGRAM,
     STAGE_LOAD_OB,
     STAGE_LOAD_SAMPLE,
-    STAGE_NORMALIZE,
-    STAGE_REBIN_TOF,
     Progress,
     resolve_progress,
     total_across_groups,
 )
 
+#: Event mode detects hot pixels, re-detects from the open beam after a spatial rebin, and hard-codes
+#: its TIFF detector model rather than reading a ``detector`` coordinate.
+_TPX3_EVENT_PROFILE = TofPipelineProfile(
+    label="VENUS TPX3 event",
+    detect_hot=True,
+    remask_after_spatial_rebin_from="ob",
+    hdf5_hot_pixel_mask="hot_pixels",
+    tiff_detector_model="TPX3",
+)
 
-def run_venus_tpx3_event_pipeline(  # noqa: C901
+
+def run_venus_tpx3_event_pipeline(
     sample_paths: Sequence[str | Path],
     ob_paths: Sequence[str | Path],
     binning: BinningConfig,
@@ -64,6 +58,8 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     *,
     rebin_reduction: Optional[Literal["mean", "sum", "median"]] = None,
     tiff_one_file_per_image: bool = False,
+    spectrum_roi: Optional[RegionsLike] = None,
+    spectrum_roi_strict: bool = True,
     progress: Progress = False,
 ) -> sc.DataArray:
     """Execute VENUS TPX3 event normalization pipeline.
@@ -165,10 +161,7 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
     """
     # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
     # tuples up front so cropping and provenance see a consistent form.
-    if roi is not None:
-        roi = as_roi_bounds(roi)
-    if air_roi is not None:
-        air_roi = air_roi if isinstance(air_roi, MaskROI) else as_roi_bounds(air_roi)
+    roi, air_roi = coerce_roi_arguments(roi, air_roi)
 
     # One reporter for the whole run, resolved exactly once: a second resolve of `progress=True`
     # would build a second tqdm sink and a duplicate set of bars. Each stage below takes its own
@@ -272,77 +265,6 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
         )
         combine()
 
-        # Apply ROI if specified
-        if roi:
-            sample = apply_roi(sample, roi)
-            ob = apply_roi(ob, roi)
-
-        # Dead pixel detection
-        sample.masks["dead_pixels"] = detect_dead_pixels(ob)
-
-        # Hot pixel detection
-        sample.masks["hot_pixels"] = detect_hot_pixels(ob)
-
-        # Spatial rebinning (optional)
-        if rebin_by_spatial is not None:
-            sample = rebin_spatial(sample, rebin_by_spatial)
-            ob = rebin_spatial(ob, rebin_by_spatial)
-            # redo mask after rebinning
-            sample.masks["dead_pixels"] = detect_dead_pixels(ob)
-            sample.masks["hot_pixels"] = detect_hot_pixels(ob)
-
-        # TOF rebinning (optional): applied to the histogrammed event stack. An integer factor, ``True``
-        # for the statistics-based recommended factor, or an explicit ``[[start, stop], ...]`` bin list.
-        # ``rebin_reduction`` selects how frames combine (default: sum for a factor, mean for a bin list).
-        # A bin list/tuple (even empty) is an explicit rebin request; an empty one must surface as an error
-        # from ``rebin_tof`` rather than be silently skipped by the plain falsy check.
-        if rebin_by_tof or isinstance(rebin_by_tof, (list, tuple)):
-            spec = rebin_by_tof
-            if spec is True:
-                spec = analyze_statistics(ob).recommended_rebinning
-                logger.info(f"Recommended TOF rebinning factor based on statistics analysis: {spec}")
-            if isinstance(spec, bool) or not isinstance(spec, (int, np.integer, list, tuple)):
-                raise ValueError(
-                    f"rebin_by_tof must be a bool, an int factor, or a list/tuple of [start, stop] pairs; got {spec!r}"
-                )
-            # rebin_tof takes no progress argument of its own, so the pipeline names the two calls
-            # around it: with a median reduction this is one of the slowest stages in the run.
-            rebin = run_progress.for_stage(STAGE_REBIN_TOF, total=2)
-            rebin.note("rebinning sample TOF")
-            sample = rebin_tof(sample, spec, reduction=rebin_reduction)
-            rebin()
-            rebin.note("rebinning open beam TOF")
-            ob = rebin_tof(ob, spec, reduction=rebin_reduction)
-            rebin()
-
-        # Normalization
-        transmission = normalize_transmission(
-            sample=sample,
-            ob=ob,
-            proton_charge_sample=sample.coords["proton_charge"],
-            proton_charge_ob=ob.coords["proton_charge"],
-            progress=run_progress.for_stage(
-                STAGE_NORMALIZE,
-                total=normalize_step_count(proton_charge_sample=sample.coords["proton_charge"]),
-            ),
-        )
-
-        # Air region correction (optional)
-        if air_roi is not None:
-            transmission = apply_air_region_correction(transmission, air_roi)
-
-        # Add wavelength and energy coordinates converted from TOF using the same flight path as
-        # the binning step and the time offset from the metadata.
-        if "detector_time_offset" in sample.coords:
-            time_offset = sample.coords["detector_time_offset"]
-            transmission.coords["wavelength"] = convert_tof_to_wavelength(
-                transmission.coords["tof"], flight_path, time_offset
-            )
-            transmission.coords["energy"] = convert_tof_to_energy(transmission.coords["tof"], flight_path, time_offset)
-        else:
-            logger.warning("Time offset not found in metadata. Cannot add wavelength and energy coordinates.")
-
-        # Write output
         metadata = {
             "sample_paths": [str(run) for run in sample_paths],
             "ob_paths": [str(run) for run in ob_paths],
@@ -350,69 +272,20 @@ def run_venus_tpx3_event_pipeline(  # noqa: C901
             "version": __version__,
         }
 
-        if roi:
-            metadata["roi_applied"] = region_provenance(roi)
-
-        if air_roi is not None:
-            metadata["air_roi"] = region_provenance(air_roi)
-
-        output_description = str(output_path)
-        if output_path.suffix.lower() in (".hdf5", ".h5"):
-            write_hdf5(
-                output_path,
-                transmission,
-                dead_pixel_mask="dead_pixels",
-                hot_pixel_mask="hot_pixels",
-                metadata=metadata,
-                progress=run_progress.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(transmission, metadata)),
-            )
-        elif output_path.suffix.lower() in (".tiff", ".tif"):
-            rename_map = {}
-            if "tof" in transmission.dims:
-                rename_map["tof"] = "t"  # TIFF stacks typically use 't' for the time dimension
-            if rename_map:
-                transmission = transmission.rename_dims(rename_map)
-
-            daqmetadata = {
-                "facility": "SNS",
-                "instrument": "VENUS",
-                "detector_type": "TPX3",
-                "source_type": "neutron",
-            }
-
-            # Combine all masks and broadcast to the shape of the transmission data.
-            # Mask must be same shape as the image data for scitiff.
-            if transmission.masks:
-                combined_mask = np.zeros_like(transmission.values, dtype=bool)
-                for mask in transmission.masks.values():
-                    # dim-aware broadcast: a (y, x) mask and a 1-D per-frame (t) mask both expand to (t, y, x)
-                    combined_mask |= sc.broadcast(mask, sizes=transmission.sizes).values
-
-                # remove other masks
-                transmission.masks.clear()
-                # add combined mask back in with name "scitiff-mask"
-                transmission.masks["scitiff-mask"] = sc.array(dims=transmission.dims, values=combined_mask, dtype=bool)
-
-            written_paths = write_tiff_stack(
-                output_path,
-                transmission,
-                metadata=metadata,
-                daqmetadata=daqmetadata,
-                one_file_per_image=tiff_one_file_per_image,
-                progress=run_progress.for_stage(
-                    STAGE_EXPORT,
-                    total=tiff_export_step_count(transmission, one_file_per_image=tiff_one_file_per_image),
-                ),
-            )
-            # In per-image mode ``output_path`` is only a naming template and is never written, so
-            # report what actually landed on disk rather than a file that does not exist.
-            if len(written_paths) > 1:
-                output_description = f"{len(written_paths)} files, {written_paths[0].name} .. {written_paths[-1].name}"
-            else:
-                output_description = str(written_paths[0])
-
-        else:
-            raise ValueError(f"Unsupported output file format: {output_path.suffix}")
-
-        logger.success("VENUS TPX3 event pipeline completed successfully. Output written to {}", output_description)
-        return transmission
+        return reduce_tof_stacks(
+            sample,
+            ob,
+            output_path=output_path,
+            profile=_TPX3_EVENT_PROFILE,
+            metadata=metadata,
+            roi=roi,
+            air_roi=air_roi,
+            rebin_by_tof=rebin_by_tof,
+            rebin_by_spatial=rebin_by_spatial,
+            rebin_reduction=rebin_reduction,
+            flight_path=flight_path,
+            tiff_one_file_per_image=tiff_one_file_per_image,
+            spectrum_roi=spectrum_roi,
+            spectrum_roi_strict=spectrum_roi_strict,
+            run_progress=run_progress,
+        )

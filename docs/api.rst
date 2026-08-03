@@ -57,6 +57,9 @@ Processing
 .. automodule:: neunorm.processing.spatial_rebinner
    :members:
 
+.. automodule:: neunorm.processing.spectrum_reducer
+   :members:
+
 .. automodule:: neunorm.processing.uncertainty_calculator
    :members:
 
@@ -115,6 +118,9 @@ Exporters
    :members:
 
 .. automodule:: neunorm.exporters.tiff_writer
+   :members:
+
+.. automodule:: neunorm.exporters.ascii_writer
    :members:
 
 Filters
