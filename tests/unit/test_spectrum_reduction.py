@@ -560,3 +560,36 @@ def test_provenance_records_the_binning_that_produced_the_spectrum():
 
     # rebin_by_tof=False is "no binning", not a binning of False
     assert "rebin_by_tof" not in spectrum_reduction_provenance(as_region_list(_REGION), rebin_by_tof=False)
+
+
+def test_a_disagreeing_non_numeric_axis_gives_the_diagnostic_not_a_numpy_error():
+    """A string coord must not turn this function's own message into an AttributeError.
+
+    The message carries a max deviation as a convenience, and that convenience must never be the thing
+    that raises. An aligned string coord — a ``detector`` label, say — matches on sizes, unit and dtype,
+    so those three checks alone let it reach ``.astype`` and fail while the f-string is being built,
+    replacing the guard's explanation with a numpy error. Reachable through this public function, which
+    the docs show being called on hand-built stacks; the pipelines set metadata coords unaligned, so it
+    does not arise there.
+    """
+    counts = _poisson_counts(12.0, seed=11)
+    sample, ob = _stack(counts), _stack(counts * 2.0)
+    sample.coords["detector"] = sc.scalar("MCP TPX3")  # aligned by default
+    ob.coords["detector"] = sc.scalar("MCP TPX1")
+    assert sample.coords["detector"].aligned, "the case only arises for an ALIGNED coord"
+
+    with pytest.raises(ValueError, match="disagree on the aligned 'detector' axis"):
+        normalize_roi_spectrum(sample, ob, _REGION)
+
+
+def test_a_disagreeing_numeric_axis_still_reports_the_deviation():
+    """Restricting the deviation to numeric dtypes must not drop it from the axes that have one.
+
+    Without this, the numeric guard could silently remove the number from every message and nothing
+    would notice.
+    """
+    counts = _poisson_counts(12.0, seed=12)
+    sample, ob = _stack(counts), _stack(counts, edges=_EDGES + 0.5)
+
+    with pytest.raises(ValueError, match=r"max deviation 0\.5"):
+        normalize_roi_spectrum(sample, ob, _REGION)

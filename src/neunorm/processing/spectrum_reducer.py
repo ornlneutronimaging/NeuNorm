@@ -238,8 +238,17 @@ def _require_matching_axes(
             continue
         mine = sample.coords[name]
         detail = ""
-        if mine.sizes == theirs.sizes and mine.unit == theirs.unit and mine.dtype == theirs.dtype:
-            worst = float(np.max(np.abs(mine.values.astype(float) - theirs.values.astype(float))))
+        # The deviation is a convenience in the message, so it must never be the thing that raises.
+        # A NUMERIC check is required as well as matching sizes/unit/dtype: an aligned string coord
+        # (a `detector` label, say) satisfies all three and then has no `.astype`, which would replace
+        # this function's diagnostic with an AttributeError from inside the f-string.
+        if (
+            mine.sizes == theirs.sizes
+            and mine.unit == theirs.unit
+            and mine.dtype == theirs.dtype
+            and np.issubdtype(np.asarray(mine.values).dtype, np.number)
+        ):
+            worst = float(np.max(np.abs(np.asarray(mine.values, dtype=float) - np.asarray(theirs.values, dtype=float))))
             detail = f", max deviation {worst:g} {mine.unit}"
         where = ""
         if sample_label or ob_label:
