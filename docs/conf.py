@@ -41,6 +41,19 @@ autodoc_default_options = {
     "member-order": "bysource",
 }
 autodoc_typehints = "description"
+
+# Sphinx 9's rewritten autodoc walks a documented class's whole MRO and, for each
+# class's module, rebuilds annotations from that module's source and writes them back
+# onto the live classes -- including third-party ones, and not only the base classes
+# themselves. Reaching pydantic's BaseModel restores the __pydantic_extra__ annotation
+# that pydantic deliberately clears at class-creation time, after which the next model
+# declared extra="allow" (scitiff's) fails schema generation and takes every module
+# that imports it out of the API reference.
+# See https://github.com/sphinx-doc/sphinx/issues/14337.
+# NeuNorm uses no `# type:` comments, so turning this off costs nothing, and it is
+# the default from Sphinx 10 onwards.
+autodoc_use_type_comments = False
+
 napoleon_numpy_docstring = True
 napoleon_google_docstring = False
 

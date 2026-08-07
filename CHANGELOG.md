@@ -70,6 +70,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Documentation build restored under Sphinx 9.** The API reference was silently dropping seven
+  modules — all six `neunorm.pipelines.*` modules and `neunorm.exporters.tiff_writer` — and the
+  Read the Docs build was failing outright. The cause is an upstream Sphinx 9 defect
+  ([sphinx-doc/sphinx#14337](https://github.com/sphinx-doc/sphinx/issues/14337)): its rewritten
+  autodoc walks a documented class's whole MRO and, for each class's module, rebuilds annotations
+  from that module's source and writes them back onto the live classes, including third-party ones
+  and not only the base classes themselves. Reaching pydantic's `BaseModel`
+  restores the `__pydantic_extra__` annotation that pydantic clears at class-creation time, after
+  which the next model declared `extra="allow"` (scitiff's) fails schema generation and every
+  module importing it drops out of the docs. Setting `autodoc_use_type_comments = False` in
+  `docs/conf.py` disables the offending pass; NeuNorm uses no `# type:` comments, so nothing is
+  lost, and this becomes the Sphinx default in version 10. No runtime behaviour was affected — the
+  package imported and the test suite passed throughout. A `docs` job was also added to CI, which
+  runs the same warnings-as-errors build as Read the Docs, so a documentation-breaking dependency
+  update now fails a pull-request check instead of merging unnoticed.
 - **Air-region correction now uses the true (pooled) region mean.** The previous implementation
   averaged with `sc.mean` over a dim list, which reduces sequentially (a mean of row-means): with
   dead/hot-masked pixels in the air region it weighted rows unequally (a slightly wrong estimator

@@ -51,6 +51,34 @@ jobs:
           files: ./coverage.xml
           fail_ci_if_error: false
 
+  docs:
+    # Read the Docs was previously the only consumer of the documentation build, and
+    # its failures are not surfaced on pull requests -- so a dependency update that
+    # broke autodoc could merge with every check green. This job runs the same
+    # warnings-as-errors build that Read the Docs does, on the same linux-64 platform,
+    # so the breakage shows up on the PR instead.
+    name: Build documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@a09b6247153796b190642a2b53fac4241043cf6f # v0.10.0
+        with:
+          pixi-version: v0.70.1
+          manifest-path: pyproject.toml
+          frozen: true
+          environments: docs
+
+      # Warnings are errors (the build-docs task passes -W --keep-going), matching
+      # the sphinx-build invocation in .readthedocs.yaml.
+      - name: Build documentation
+        run: pixi run -e docs build-docs
+
   conda-build:
     name: Build conda package
     runs-on: ubuntu-latest
