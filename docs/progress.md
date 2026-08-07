@@ -220,6 +220,7 @@ will exceed the totals here; use `event.completed` rather than counting calls.
 | `combine_runs` | one event per combined family | sample, open beam, dark |
 | `gamma_filter` | four named steps | the third is the median filter, most of its cost |
 | `rebin_tof` | two events | sample and open beam |
+| `moving_window` | named steps | only when `moving_window` is requested; the value pass, plus a weight pass when a mask applies and a variance pass when the data carries variances, for each of the two stacks |
 | `normalize` | named steps | the flux correction (background-ROI or proton-charge) and the division; the count depends on which correction was requested |
 | `export` | named steps for HDF5 | one event per file with `tiff_one_file_per_image=True`, which is the only export path with a determinate item count |
 

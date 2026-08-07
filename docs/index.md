@@ -27,6 +27,7 @@ migration
 
 progress
 resonance_mode
+moving_window
 ```
 
 ```{toctree}

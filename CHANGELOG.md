@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Spatial moving average and moving sum before normalization**
+  ([#203](https://github.com/ornlneutronimaging/NeuNorm/issues/203)). A new keyword-only
+  `moving_window` on `run_venus_tpx1_pipeline`, `run_venus_tpx3_histogram_pipeline` and
+  `run_venus_tpx3_event_pipeline` replaces each pixel by the average — or, with `kind="sum"`, the
+  total — of a box of pixels around it, applied to the sample and the open beam once they have been
+  combined and immediately before they are divided. Ported from iBeatles' `moving_average`, whose box
+  filter is `scipy.ndimage.convolve` with a normalized `ones()` kernel and a mirrored frame edge.
+
+  Configured with `MovingWindow(x=3, y=3)`, whose sizes are given **by dimension name**: the event
+  path produces `(tof, x, y)` and the histogram path `(tof, y, x)`, so a positional tuple would
+  transpose the two spatial axes. `dimension="3D"` additionally averages along TOF. Sizes are in
+  post-crop, post-`rebin_by_spatial` pixels, so a window of 3 on a 2x-rebinned stack spans 6 detector
+  pixels.
+
+  Two departures from the reference, both required by NeuNorm's own contracts: dead and hot pixels are
+  excluded from the window rather than averaged into it (a mask-blind filter lets one dead pixel drag
+  down `k**2` neighbours), and variances are propagated as `sum(w**2 Var)`.
+
+  The window trades spatial resolution for per-pixel precision at a fixed rate — a `k x k` window
+  improves per-pixel precision by `k` and coarsens resolution by `k` — while the array keeps its
+  shape, so the result presents as full resolution while carrying roughly one independent value per
+  `k**2` pixels. NeuNorm says so at run time, records the window under `/metadata/moving_window`, and
+  refuses to combine it with `spectrum_roi`, where a region reduction over correlated pixels
+  under-reports its uncertainty by roughly `sqrt(kernel pixels)`. Applied before normalization
+  `kind="sum"` and `kind="average"` give indistinguishable transmission, because the kernel count
+  cancels in the ratio. See `docs/moving_window.md`, whose three measurement tables are regenerated
+  and checked by the test suite.
+
 - **Resonance mode: ROI-level normalization producing a transmission spectrum**
   ([#197](https://github.com/ornlneutronimaging/NeuNorm/issues/197)). A new keyword-only
   `spectrum_roi` on `run_venus_tpx1_pipeline`, `run_venus_tpx3_histogram_pipeline` and

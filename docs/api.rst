@@ -15,6 +15,9 @@ Data models
 .. automodule:: neunorm.data_models.tof
    :members:
 
+.. automodule:: neunorm.data_models.moving_window
+   :members:
+
 Loaders
 -------
 
@@ -52,6 +55,9 @@ Processing
    :members:
 
 .. automodule:: neunorm.processing.run_combiner
+   :members:
+
+.. automodule:: neunorm.processing.moving_window
    :members:
 
 .. automodule:: neunorm.processing.spatial_rebinner

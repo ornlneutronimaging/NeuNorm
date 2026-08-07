@@ -530,8 +530,8 @@ def _validate_argument_combinations(
             raise ValueError(
                 "moving_window and spectrum_roi cannot be combined. A moving window makes "
                 "neighbouring pixels correlated, and a region reduction over correlated pixels "
-                "under-reports its uncertainty by roughly sqrt(kernel pixels) — measured at x2.89 "
-                "for a 3x3 window and x4.78 for 5x5. scipp carries no covariance, so the "
+                "under-reports its uncertainty by roughly sqrt(kernel pixels) — measured at x2.9 "
+                "for a 3x3 window and x4.7 for 5x5. scipp carries no covariance, so the "
                 "correlation cannot be propagated and the error bar would simply be wrong. The two "
                 "are alternative answers to low counting statistics — smoothing pixel by pixel, or "
                 "reducing over a region — so use one or the other."
@@ -552,7 +552,7 @@ def _warn_on_the_moving_window_trade(config: MovingWindow, rebin_by_spatial) -> 
         "resolution coarsens by the window length on each axis. The array keeps its shape, so the "
         "result presents as full resolution while carrying roughly one independent value per {} "
         "pixels. A feature smaller than the window loses DEPTH, not just sharpness — measured, a "
-        "3-pixel feature retains 0.32 of its true contrast under a 5x5 window — so fitting one "
+        "3-pixel feature retains 0.36 of its true contrast under a 5x5 window — so fitting one "
         "returns the filter's depth rather than the sample's.",
         config.sizes(),
         config.kind,

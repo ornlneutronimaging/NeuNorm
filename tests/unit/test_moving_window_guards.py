@@ -60,7 +60,7 @@ def test_the_refusal_records_the_measured_reason(pipeline, tmp_path):  # noqa: F
         pipeline(tmp_path / "out.txt", spectrum_roi=(8, 8, 24, 24), moving_window=MovingWindow(x=3, y=3))
     message = str(excinfo.value)
     assert "sqrt(kernel pixels)" in message
-    assert "x2.89" in message and "x4.78" in message
+    assert "x2.9" in message and "x4.7" in message
     assert "covariance" in message
 
 
@@ -115,7 +115,8 @@ def test_the_trade_warning_covers_features_smaller_than_the_kernel(pipeline, tmp
     pipeline(tmp_path / "out.hdf5", moving_window=MovingWindow(x=3, y=3))
     said = _matching(warnings, "moving_window", "resolution coarsens")
     assert "loses DEPTH" in said[0]
-    assert "0.32" in said[0]
+    # the figure the docs table measures, so a warning and a page cannot disagree
+    assert "0.36" in said[0]
 
 
 # --------------------------------------------------------------------------------------------
