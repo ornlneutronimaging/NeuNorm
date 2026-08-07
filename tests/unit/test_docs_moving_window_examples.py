@@ -103,16 +103,24 @@ def measure_contrast(realizations=32, n=96, depth=0.5):
 
 
 def measure_correlation(n=256):
-    """Table 3: the reported per-pixel sigma, and how much a pixel now shares with its neighbour."""
+    """Table 3: the reported per-pixel sigma, and how much a pixel now shares with its neighbour.
+
+    Measured over the INTERIOR, outside the ``k // 2`` border. The border is a boundary effect of its
+    own — a mirrored edge makes the window read some pixels more than once, which correctly raises
+    the variance there — and averaging it in would blend two separate stories into one column. What
+    this table is for is the interior trade, where sigma falls as ``1 / k``.
+    """
     rng = np.random.default_rng(SEED)
     counts = rng.poisson(OB_COUNTS, size=(n, n)).astype(np.float64)
     out = {}
     for k in (1, 3, 5):
         data = sc.DataArray(sc.array(dims=["y", "x"], values=counts.copy(), variances=counts.copy(), unit="counts"))
         filtered = moving_window(data, {"x": k, "y": k}) if k > 1 else data
-        values = filtered.values
+        edge = k // 2
+        inner = slice(edge, n - edge) if edge else slice(None)
+        values = filtered.values[inner, inner]
         out[k] = {
-            "sigma": float(np.sqrt(filtered.variances).mean()),
+            "sigma": float(np.sqrt(filtered.variances[inner, inner]).mean()),
             "correlation": float(np.corrcoef(values[:, :-1].ravel(), values[:, 1:].ravel())[0, 1]),
         }
     return out
@@ -175,6 +183,24 @@ def test_the_correlation_table_matches_the_measurement():
 # --------------------------------------------------------------------------------------------
 # The measurements are measuring the right thing
 # --------------------------------------------------------------------------------------------
+
+
+def test_the_warning_quotes_the_figure_the_table_measures():
+    """The run-time warning and the page must not be able to drift apart.
+
+    The warning carries a measured contrast figure as a string literal. Asserting that literal in the
+    guards test only checks a literal against itself; this reads the number out of the page's table —
+    which is itself regenerated from the code above — and requires the warning to quote the same one.
+    Re-measure the table and this fails until the warning is brought along.
+    """
+    import inspect
+
+    from neunorm.pipelines import _tof_spine
+
+    rows = _table_rows("### A feature smaller than the window")
+    five_by_five = next(row for row in rows if row[0] == "5x5")
+    warning_source = inspect.getsource(_tof_spine._warn_on_the_moving_window_trade)
+    assert f"retains {five_by_five[1]} of its true contrast under a 5x5 window" in warning_source
 
 
 def test_the_neighbour_correlation_matches_its_closed_form():

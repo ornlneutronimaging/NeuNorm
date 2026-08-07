@@ -11,7 +11,7 @@ literally what iBeatles' ``_apply_box_filter`` computes and is therefore the spe
 import numpy as np
 import pytest
 import scipp as sc
-from scipy.ndimage import convolve, uniform_filter
+from scipy.ndimage import convolve, correlate, uniform_filter
 
 from neunorm.processing.moving_window import (
     EDGE_MODES,
@@ -275,6 +275,161 @@ def test_variance_matches_a_monte_carlo_spread():
     # Poisson counts averaged over k**2 independent pixels: Var = lam / k**2
     np.testing.assert_allclose(empirical, lam / k**2, rtol=0.06)
     np.testing.assert_allclose(reported.mean(), empirical, rtol=0.06)
+
+
+def _effective_weights(sizes, shape, mode="reflect", masked=None):
+    """The exact coefficient each output pixel puts on each SOURCE pixel.
+
+    Recovered by filtering unit impulses, which works because the filter is linear. This is an
+    oracle independent of how the variance is computed: it uses only the VALUE path, so a variance
+    bug cannot hide inside it.
+    """
+    n = int(np.prod(shape))
+    weights = np.zeros((n, n))
+    for pixel in range(n):
+        impulse = np.zeros(shape)
+        impulse.flat[pixel] = 1.0
+        array = sc.DataArray(sc.array(dims=["y", "x"], values=impulse, unit="counts"))
+        if masked is not None:
+            array.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=masked)
+        weights[:, pixel] = moving_window(array, sizes, mode=mode).values.ravel()
+    return weights
+
+
+@pytest.mark.parametrize("sizes", [{"x": 3, "y": 3}, {"x": 5, "y": 5}, {"x": 4, "y": 2}, {"x": 3, "y": 5}])
+def test_variance_at_a_mirrored_border_counts_a_duplicated_pixel_once(sizes):
+    """A boundary mode makes the window read real pixels twice; the variance must square that.
+
+    ``Var(sum_p w_p x_p) = sum_p w_p**2 Var_p`` is over distinct SOURCE pixels. Summing over window
+    SLOTS instead treats a pixel read twice as two independent measurements and understates the
+    reported uncertainty — by 2.78x at a mirrored 3x3 corner, entirely inside the border where no
+    interior-only test can see it.
+    """
+    shape = (9, 9)
+    variances = np.random.default_rng(4).uniform(1.0, 9.0, size=shape)
+    data = sc.DataArray(
+        sc.array(dims=["y", "x"], values=np.full(shape, 100.0), variances=variances.copy(), unit="counts")
+    )
+    expected = (_effective_weights(sizes, shape) ** 2) @ variances.ravel()
+    np.testing.assert_allclose(moving_window(data, sizes).variances.ravel(), expected, rtol=1e-9)
+
+
+def test_the_border_variance_is_larger_than_the_slot_count_would_give():
+    """Pins the direction and the size of the correction, so it cannot silently revert."""
+    shape = (5, 5)
+    data = sc.DataArray(
+        sc.array(dims=["y", "x"], values=np.full(shape, 100.0), variances=np.full(shape, 4.0), unit="counts")
+    )
+    variances = moving_window(data, {"x": 3, "y": 3}).variances
+    # corner reads (4, 2, 2, 1)/9 of four distinct pixels -> (16+4+4+1)/81 * 4 = 100/81
+    np.testing.assert_allclose(variances[0, 0], 100.0 / 81.0)
+    # edge reads (2, 2, 2, 1, 1, 1)/9 of six -> (4+4+4+1+1+1)/81 * 4 = 60/81
+    np.testing.assert_allclose(variances[0, 2], 60.0 / 81.0)
+    # interior is nine distinct pixels -> 9/81 * 4 = 4/9, and is where a slot count happens to agree
+    np.testing.assert_allclose(variances[2, 2], 4.0 / 9.0)
+    assert variances[0, 0] > variances[2, 2] * 2.7
+
+
+@pytest.mark.parametrize("mode", EDGE_MODES)
+def test_the_variance_obeys_the_weights_under_every_edge_mode(mode):
+    shape = (7, 7)
+    variances = np.random.default_rng(1).uniform(1.0, 4.0, size=shape)
+    data = sc.DataArray(
+        sc.array(dims=["y", "x"], values=np.full(shape, 10.0), variances=variances.copy(), unit="counts")
+    )
+    expected = (_effective_weights({"x": 3, "y": 3}, shape, mode=mode) ** 2) @ variances.ravel()
+    np.testing.assert_allclose(moving_window(data, {"x": 3, "y": 3}, mode=mode).variances.ravel(), expected, rtol=1e-9)
+
+
+def test_the_masked_variance_also_obeys_the_weights_at_a_border():
+    """The mask and the boundary duplication compose; neither may be dropped from the variance."""
+    shape = (9, 9)
+    rng = np.random.default_rng(11)
+    dead = rng.random(shape) < 0.25
+    variances = rng.uniform(1.0, 6.0, size=shape)
+    data = sc.DataArray(
+        sc.array(dims=["y", "x"], values=rng.uniform(50, 150, size=shape), variances=variances.copy(), unit="counts")
+    )
+    data.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=dead)
+    expected = (_effective_weights({"x": 3, "y": 3}, shape, masked=dead) ** 2) @ variances.ravel()
+    np.testing.assert_allclose(moving_window(data, {"x": 3, "y": 3}).variances.ravel(), expected, rtol=1e-9)
+
+
+def test_a_starved_window_is_detected_on_float64_not_just_float32():
+    """scipy's separable running sum leaves ~1e-16 where a fully masked window should give 0.
+
+    Testing `weight <= 0` let that residue through and made the value a residue-by-residue quotient:
+    measured negative counts and NEGATIVE variances, which the HDF5 writer turns into NaN. The
+    all-masked fixture elsewhere in this file cannot reproduce it — with no good pixel anywhere the
+    running sum has no nonzero history, so the residue never arises. A masked BLOCK inside a live
+    field is what exercises it.
+    """
+    # This geometry is chosen, not arbitrary: it is one that actually leaves a residue. Whether the
+    # running sum cancels exactly depends on the mask's shape, and a fixture of a few large blocks
+    # cancels cleanly and reproduces nothing.
+    rng = np.random.default_rng(0)
+    shape = (64, 64)
+    dead = np.zeros(shape, dtype=bool)
+    for _ in range(rng.integers(4, 14)):
+        y, x = rng.integers(0, shape[0] - 20, 2)
+        height, width = rng.integers(6, 18, 2)
+        dead[y : y + height, x : x + width] = True
+    counts = np.random.default_rng(1).poisson(100, shape).astype(np.float64)  # float64: float32 hides this
+
+    for size in (3, 5, 7):
+        # Which windows are genuinely starved, counted in INTEGER arithmetic so the oracle cannot
+        # inherit the very rounding residue under test.
+        usable = correlate((~dead).astype(np.int64), np.ones((size, size), dtype=np.int64), mode="reflect")
+        starved = usable == 0
+        assert starved.any(), "fixture no longer produces a fully masked window"
+
+        # The fixture must actually exercise the mechanism: at least one starved window has to come
+        # back from the weight pass as a nonzero residue rather than an exact zero. Without this the
+        # test would pass against the very bug it exists to catch.
+        residue = uniform_filter((~dead).astype(np.float64), size=size, mode="reflect")[starved]
+        assert (residue != 0.0).any(), f"fixture no longer produces a rounding residue at size {size}"
+
+        data = sc.DataArray(sc.array(dims=["y", "x"], values=counts.copy(), variances=counts.copy(), unit="counts"))
+        data.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=dead)
+        result = moving_window(data, {"x": size, "y": size})
+
+        # The contract: nothing usable in the window leaves the pixel exactly as it came in.
+        np.testing.assert_allclose(result.values[starved], counts[starved])
+        np.testing.assert_allclose(result.variances[starved], counts[starved])
+        assert (result.variances >= 0).all(), f"negative variance at size {size}"
+        assert (result.values >= 0).all(), f"negative counts at size {size}"
+        assert np.isfinite(result.values).all() and np.isfinite(result.variances).all()
+
+
+@pytest.mark.parametrize("poison", [np.nan, np.inf, -np.inf])
+def test_a_masked_non_finite_value_does_not_spread(poison):
+    """`NaN * 0` is NaN, so multiplying by an indicator does not exclude a masked pixel.
+
+    A dead pixel holding NaN is exactly the kind of pixel a mask exists for, and multiplying it out
+    poisoned every pixel within a window of it.
+    """
+    values = np.full((5, 5), 10.0)
+    values[2, 2] = poison
+    dead = np.zeros((5, 5), dtype=bool)
+    dead[2, 2] = True
+    data = sc.DataArray(sc.array(dims=["y", "x"], values=values, variances=np.full((5, 5), 1.0), unit="counts"))
+    data.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=dead)
+
+    result = moving_window(data, {"x": 3, "y": 3})
+    assert np.isfinite(result.values).all()
+    np.testing.assert_allclose(result.values[1, 1], 10.0)
+    np.testing.assert_allclose(result.values[2, 2], 10.0)
+
+
+def test_a_masked_non_finite_variance_does_not_spread():
+    values = np.full((5, 5), 10.0)
+    variances = np.full((5, 5), 1.0)
+    variances[2, 2] = np.nan
+    dead = np.zeros((5, 5), dtype=bool)
+    dead[2, 2] = True
+    data = sc.DataArray(sc.array(dims=["y", "x"], values=values, variances=variances, unit="counts"))
+    data.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=dead)
+    assert np.isfinite(moving_window(data, {"x": 3, "y": 3}).variances).all()
 
 
 def test_data_without_variances_produces_none():

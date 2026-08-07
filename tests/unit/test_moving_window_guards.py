@@ -75,6 +75,34 @@ def test_the_refusal_happens_before_any_output_is_written(pipeline, tmp_path):  
 
 
 @_ALL
+def test_a_moving_window_with_air_roi_is_refused(pipeline, tmp_path):  # noqa: F811
+    """The air correction reduces over a region too, and assumes the pixels are independent.
+
+    Same mechanism as the spectrum_roi refusal: the scale factor's uncertainty is computed as though
+    the region's pixels were independent, which a window has just stopped being true. Measured over
+    3000 trials, a 3x3 air region under a 3x3 window under-reports by x2.1 and under 5x5 by x2.4.
+    """
+    with pytest.raises(ValueError, match=r"moving_window and air_roi cannot be combined"):
+        pipeline(tmp_path / "out.hdf5", air_roi=(4, 4, 12, 12), moving_window=MovingWindow(x=3, y=3))
+
+
+@_ALL
+def test_the_air_roi_refusal_records_the_measured_reason(pipeline, tmp_path):  # noqa: F811
+    with pytest.raises(ValueError) as excinfo:
+        pipeline(tmp_path / "out.hdf5", air_roi=(4, 4, 12, 12), moving_window=MovingWindow(x=3, y=3))
+    message = str(excinfo.value)
+    assert "independent" in message
+    assert "x2.1" in message
+
+
+@_TIFF_BASED
+def test_air_roi_alone_still_works(pipeline, tmp_path):  # noqa: F811
+    """The guard must refuse the COMBINATION, not air_roi itself."""
+    result = pipeline(tmp_path / "out.hdf5", air_roi=(4, 4, 12, 12))
+    assert result is not None
+
+
+@_ALL
 def test_spectrum_roi_alone_still_works(pipeline, tmp_path):  # noqa: F811
     """The guard must refuse the COMBINATION, not spectrum_roi itself."""
     spectrum = pipeline(tmp_path / "out.txt", spectrum_roi=(8, 8, 24, 24))
@@ -115,7 +143,8 @@ def test_the_trade_warning_covers_features_smaller_than_the_kernel(pipeline, tmp
     pipeline(tmp_path / "out.hdf5", moving_window=MovingWindow(x=3, y=3))
     said = _matching(warnings, "moving_window", "resolution coarsens")
     assert "loses DEPTH" in said[0]
-    # the figure the docs table measures, so a warning and a page cannot disagree
+    # A literal, and only a literal. What actually ties it to the measured contrast table is
+    # test_docs_moving_window_examples.py::test_the_warning_quotes_the_figure_the_table_measures.
     assert "0.36" in said[0]
 
 

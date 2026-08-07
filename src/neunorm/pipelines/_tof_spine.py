@@ -526,6 +526,15 @@ def _validate_argument_combinations(
         _warn_on_spectrum_roi_frame(roi, rebin_by_spatial)
 
     if moving_window_config is not None:
+        if air_roi is not None:
+            raise ValueError(
+                "moving_window and air_roi cannot be combined. The air correction divides by the "
+                "mean over its region, and that mean's uncertainty is computed treating the pixels "
+                "as independent — which a moving window has just stopped being true. The scale "
+                "factor's error is understated (measured x2.1 for a 3x3 air region under a 3x3 "
+                "window, x2.4 under 5x5) and carries into every pixel of the result. This is the "
+                "same reason spectrum_roi is refused. Drop one of the two."
+            )
         if spectrum_roi is not None:
             raise ValueError(
                 "moving_window and spectrum_roi cannot be combined. A moving window makes "

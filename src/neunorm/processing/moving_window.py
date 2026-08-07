@@ -14,10 +14,14 @@ excluded, so the window here is a *normalized convolution*: the values and a goo
 filtered separately and divided, which returns the true level and contaminates nothing.
 
 **Variance propagation.** iBeatles carries no uncertainties. Every NeuNorm operation propagates
-variances, so this one does too: with weights ``w_j`` summing to one over the usable pixels,
-``Var_out = sum_j w_j**2 Var_j``. This assumes the input pixels are independent, which holds at the
-point the pipeline applies the filter (before normalization, with no earlier smoothing) — it is not
-true of the *output*, whose neighbouring pixels are correlated by construction.
+variances, so this one does too: with weights ``w_p`` summing to one over the usable pixels,
+``Var_out = sum_p w_p**2 Var_p``. The weights are per distinct SOURCE pixel, which matters at the
+frame edge: a boundary mode makes the window read some real pixels more than once, and a pixel read
+``m`` times carries weight ``m / k`` rather than ``1 / k``. Summing over window slots instead would
+understate the reported uncertainty by up to 2.78x at a mirrored 3x3 corner. This assumes the input
+pixels are independent, which holds at the point the pipeline applies the filter (before
+normalization, with no earlier smoothing) — it is not true of the *output*, whose neighbouring pixels
+are correlated by construction.
 
 **Sizes addressed by dim name.** iBeatles indexes positionally as ``(y, x, lambda)``. NeuNorm names
 its axes, and the event path produces ``(tof, x, y)`` — x before y — so a positional tuple would
@@ -36,7 +40,7 @@ from typing import Literal, Mapping, Optional
 
 import numpy as np
 import scipp as sc
-from scipy.ndimage import uniform_filter
+from scipy.ndimage import correlate1d, uniform_filter
 
 from neunorm.utils.progress import STAGE_MOVING_WINDOW, ProgressLike, resolve_progress
 
@@ -86,8 +90,8 @@ def _applicable_masks(data: sc.DataArray, masks: Mapping[str, sc.Variable]) -> l
     return [mask for mask in masks.values() if set(mask.dims) <= set(data.dims)]
 
 
-def _good_indicator(data: sc.DataArray, masks: Mapping[str, sc.Variable], dtype: np.dtype) -> Optional[np.ndarray]:
-    """1.0 where a pixel may be used, 0.0 where any mask flags it, in ``data``'s shape.
+def _usable_mask(data: sc.DataArray, masks: Mapping[str, sc.Variable]) -> Optional[np.ndarray]:
+    """Boolean array, ``True`` where a pixel may be used, in ``data``'s shape.
 
     Returns ``None`` when no mask applies, which is the caller's signal to take the plain
     (single-pass, exactly-scipy) path.
@@ -100,7 +104,72 @@ def _good_indicator(data: sc.DataArray, masks: Mapping[str, sc.Variable], dtype:
         # Broadcast by dim NAME: a 2-D (x, y) dead-pixel mask expands correctly over a (tof, x, y)
         # stack whatever the dim order is.
         bad |= sc.broadcast(mask, sizes=data.sizes).values
-    return (~bad).astype(dtype)
+    return ~bad
+
+
+def _slot_sources(length: int, axis_size: int, mode: str, origin: int):
+    """Which source index each of the ``length`` window slots reads, for every output position.
+
+    Recovered from scipy itself rather than by re-deriving its index arithmetic: correlating a ramp
+    with a one-hot kernel returns, at each output, the value of the source pixel that slot reads. The
+    ramp starts at 1 so that a slot filled by ``cval`` under the constant modes comes back as 0 and is
+    reported as invalid, which index arithmetic alone could not distinguish from source index 0.
+
+    Returns ``(sources, valid)``, each ``(length, axis_size)``.
+    """
+    ramp = np.arange(1, axis_size + 1, dtype=np.float64)
+    sources = np.empty((length, axis_size), dtype=np.int64)
+    valid = np.empty((length, axis_size), dtype=bool)
+    for slot in range(length):
+        one_hot = np.zeros(length, dtype=np.float64)
+        one_hot[slot] = 1.0
+        probe = correlate1d(ramp, one_hot, mode=mode, origin=origin, cval=0.0)
+        valid[slot] = probe > 0.5
+        sources[slot] = np.rint(probe).astype(np.int64) - 1
+    return sources, valid
+
+
+def _summed_with_squared_multiplicity(values: np.ndarray, axis: int, length: int, mode: str, origin: int):
+    """``sum_p m**2 values[p]`` along one axis, where ``m`` counts the slots that read source ``p``.
+
+    A boundary mode duplicates real pixels: at a mirrored corner a 3x3 window reads the corner pixel
+    four times, its two neighbours twice each and the diagonal once. The VALUE is unaffected — it is
+    linear, and a plain box filter already sums the duplicates correctly — but a variance is not.
+    ``Var(sum_p w_p x_p) = sum_p w_p**2 Var_p`` needs the weight on each distinct SOURCE pixel, so a
+    pixel read ``m`` times contributes ``m**2``, not ``m``. Summing over slots instead understates the
+    reported uncertainty wherever the window overhangs the frame — measured 2.78x low at a 3x3 corner.
+
+    Computed as the plain slot sum plus a correction, because ``m`` is 1 everywhere except within
+    ``length // 2`` of an edge: for each pair of slots that read the SAME source, that source's
+    coefficient gains 2 (summing ``m**2 - m = 2 * (number of unordered coincident pairs)``). The
+    correction touches only the few border positions where a coincidence occurs.
+    """
+    total = correlate1d(values, np.ones(length, dtype=values.dtype), axis=axis, mode=mode, origin=origin)
+    sources, valid = _slot_sources(length, values.shape[axis], mode, origin)
+    for first in range(length):
+        for second in range(first + 1, length):
+            coincident = valid[first] & valid[second] & (sources[first] == sources[second])
+            positions = np.flatnonzero(coincident)
+            if positions.size == 0:
+                continue
+            target = [slice(None)] * values.ndim
+            target[axis] = positions
+            total[tuple(target)] += 2.0 * np.take(values, sources[first][positions], axis=axis)
+    return total
+
+
+def _squared_multiplicity_sum(values: np.ndarray, window, mode: str, origin) -> np.ndarray:
+    """``sum_p m**2 values[p]`` over the whole window, applied axis by axis.
+
+    Separable, like the filter itself: the multiplicity of a source pixel factorizes across axes, so
+    squaring it does too.
+    """
+    result = values
+    for axis, length in enumerate(window):
+        if length == 1:
+            continue
+        result = _summed_with_squared_multiplicity(result, axis, length, mode, origin[axis])
+    return result
 
 
 def _validate(data: sc.DataArray, sizes: Mapping[str, int], kind: str, mode: str) -> None:
@@ -185,9 +254,11 @@ def moving_window(
 
     Notes
     -----
-    The variance follows the weights: with ``w_j = g_j / sum(g)`` over the good pixels ``g`` in the
-    window, ``Var_out = sum_j w_j**2 Var_j``, which reduces to ``sum(Var) / k**2`` for an average
-    over ``k`` unmasked pixels and to ``sum(Var)`` for a sum. That is correct per pixel and assumes
+    The variance follows the weights: with ``w_p = m_p g_p / G`` over the distinct source pixels the
+    window reads — ``g`` marking the usable ones, ``m_p`` how many slots read pixel ``p`` once the
+    boundary mode has been applied, and ``G = sum_p m_p g_p`` — ``Var_out = sum_p w_p**2 Var_p``. In
+    the interior every ``m_p`` is 1 and this reduces to ``sum(Var) / k**2`` for an average over ``k``
+    unmasked pixels and to ``sum(Var)`` for a sum. That is correct per pixel and assumes
     the *inputs* are independent. The outputs are not: neighbouring pixels share window members and
     are strongly correlated (+0.67 at 3x3, +0.81 at 5x5), which no later reduction can undo because
     scipp carries no covariance. ``docs/moving_window.md`` records the measurements.
@@ -225,41 +296,50 @@ def moving_window(
     float_dtype = values.dtype if values.dtype.kind == "f" else np.dtype(np.float64)
     source = values.astype(float_dtype, copy=False)
 
-    good = _good_indicator(data, data.masks if masks is None else masks, float_dtype)
+    usable = _usable_mask(data, data.masks if masks is None else masks)
 
     with resolve_progress(progress, stage, total=moving_window_step_count(data, masks)) as report:
-        if good is None:
+        if usable is None:
             # No mask applies: one pass, and bit-for-bit what scipy's uniform_filter gives, which is
             # what iBeatles' normalized box convolution computes.
             report(detail="moving window: values")
             filtered = uniform_filter(source, size=window, mode=mode, origin=origin)
-            weight = None
+            usable_count = None
             starved = None
         else:
             report(detail="moving window: usable-pixel weights")
             # uniform_filter divides by the kernel size, so this is the FRACTION of the window that
             # is usable. The same divisor sits in the numerator and cancels in the quotient.
-            weight = uniform_filter(good, size=window, mode=mode, origin=origin)
+            weight = uniform_filter(usable.astype(float_dtype), size=window, mode=mode, origin=origin)
             report(detail="moving window: values")
-            numerator = uniform_filter(source * good, size=window, mode=mode, origin=origin)
-            starved = weight <= 0
-            with np.errstate(invalid="ignore", divide="ignore"):
-                filtered = numerator / weight
+            # SELECT rather than multiply by an indicator: IEEE makes NaN * 0 and inf * 0 NaN, so a
+            # masked non-finite value — exactly the kind of pixel a mask exists to remove — would
+            # otherwise poison every output within a window of it.
+            selected = np.where(usable, source, float_dtype.type(0))
+            numerator = uniform_filter(selected, size=window, mode=mode, origin=origin)
+            # A window with G usable pixels has weight G / n_kernel, and G is a non-negative INTEGER,
+            # so a non-starved window has weight >= 1 / n_kernel. Testing `weight <= 0` instead
+            # assumed the weight pass returns exact zero for a fully masked window; scipy's separable
+            # running sum leaves a residue of order 1e-16 on float64, which slipped through and made
+            # the division a residue-by-residue quotient — measured negative counts and NEGATIVE
+            # variances. Half a pixel's weight separates the two cases by 16 orders of magnitude.
+            starved = weight < 0.5 / n_kernel
+            usable_count = n_kernel * np.where(starved, 1.0, weight)
+            filtered = numerator / np.where(starved, float_dtype.type(1), weight)
 
         out_variances = None
         if data.variances is not None:
             report(detail="moving window: variances")
             source_var = data.variances.astype(float_dtype, copy=False)
-            if good is None:
-                # Var(mean of k) = sum(Var) / k**2, and uniform_filter already divided by k once.
-                out_variances = uniform_filter(source_var, size=window, mode=mode, origin=origin) / n_kernel
+            if usable is None:
+                # Var(sum_p w_p x_p) = sum_p w_p**2 Var_p with w_p = m_p / n_kernel.
+                out_variances = _squared_multiplicity_sum(source_var, window, mode, origin) / (n_kernel * n_kernel)
             else:
-                # With G = n_kernel * weight usable pixels, Var = sum(g Var) / G**2, and
-                # sum(g Var) = n_kernel * uniform_filter(Var * g).
-                with np.errstate(invalid="ignore", divide="ignore"):
-                    out_variances = uniform_filter(source_var * good, size=window, mode=mode, origin=origin) / (
-                        n_kernel * weight * weight
-                    )
+                # Same, with w_p = m_p g_p / G and G = sum_p m_p g_p usable pixels in the window.
+                selected_var = np.where(usable, source_var, float_dtype.type(0))
+                out_variances = _squared_multiplicity_sum(selected_var, window, mode, origin) / (
+                    usable_count * usable_count
+                )
 
     if kind == "sum":
         # The same window without the divisor: a sum over k pixels is k times their mean, and a

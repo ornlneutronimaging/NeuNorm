@@ -83,8 +83,10 @@ express is that the pixel now shares most of its window with its neighbour:
 | kernel | reported per-pixel sigma | lag-1 neighbour correlation |
 |---|---|---|
 | 1x1 | 14.131 | +0.000 |
-| 3x3 | 4.713 | +0.671 |
-| 5x5 | 2.828 | +0.805 |
+| 3x3 | 4.713 | +0.670 |
+| 5x5 | 2.828 | +0.804 |
+
+Measured over the interior, outside the `k // 2` border, where the trade is the clean `1 / k`.
 
 A `k x k` window shares `k - 1` of its `k` columns with the window one pixel over, so the correlation
 is `(k - 1) / k`. scipp carries no covariance, so this cannot be propagated.
@@ -133,6 +135,13 @@ mode `scipy.ndimage.uniform_filter` accepts is available.
 Even window lengths are accepted, again as iBeatles accepts them. A window with no centre pixel leans
 one way: the response shifts by exactly -0.50 px along that axis. That is inherent to an even window
 rather than an error, so it is documented rather than refused.
+
+Inside that border the reported uncertainty is *larger* than in the interior, and correctly so. A
+mirrored edge makes the window read some real pixels more than once, and a pixel read `m` times
+carries weight `m / k` rather than `1 / k`, so it contributes `m²` to the variance. At a mirrored 3×3
+corner the four distinct pixels are read `(4, 2, 2, 1)` times and the variance is `25 / 81` of a
+single pixel's, not `9 / 81` — 2.78× what an independent-slot count would give. Values are unaffected:
+they are linear, so the duplication cancels out of them exactly.
 
 ## Scope
 
