@@ -50,6 +50,10 @@ MovingWindowKind = Literal["average", "sum"]
 #: Edge policies, passed straight through to :func:`scipy.ndimage.uniform_filter`. The default
 #: mirrors the frame edge, which is what iBeatles does; a mirrored and a shrink-to-real-pixels edge
 #: differ only within a ``k // 2`` border, and the interior is identical either way.
+#:
+#: The two constant modes are the only ones whose meaning depends on whether a mask applies — see
+#: the ``mode`` parameter of :func:`moving_window`. Every other mode reads only real pixels, so the
+#: weight pass returns exactly 1 and changes nothing.
 EDGE_MODES = ("reflect", "constant", "nearest", "mirror", "wrap", "grid-mirror", "grid-constant", "grid-wrap")
 
 
@@ -226,9 +230,22 @@ def moving_window(
         ``"average"`` divides by the number of pixels collected; ``"sum"`` does not. Applied before
         normalization the two are indistinguishable in the result, because the kernel count cancels
         in the sample/open-beam ratio.
+
+        Where a mask applies, ``"sum"`` is the mask-aware mean scaled by the NOMINAL window size —
+        ``k * average`` — and not the bare total of the pixels that survived. The two differ as soon
+        as one pixel is masked. Scaling is deliberate: a bare total falls with every masked pixel, so
+        it would not cancel in the sample/open-beam ratio, and a moving sum would stop agreeing with
+        a moving average exactly where the detector is worst.
     mode : str, optional
         Edge policy, passed to :func:`scipy.ndimage.uniform_filter`. Defaults to mirroring the frame
         edge, as iBeatles does. See :data:`EDGE_MODES`.
+
+        The two **constant** modes read differently depending on whether a mask applies, and the
+        difference is worth knowing before choosing one. With no mask they are scipy's: out-of-frame
+        slots contribute ``cval`` (0), so a pixel at the edge is pulled toward zero. With a mask the
+        normalized convolution divides by the weight actually collected, so those same out-of-frame
+        slots drop out and the edge pixel is the mean of the real pixels instead. Every other mode —
+        including the default — reads only real pixels either way, so nothing changes for them.
     masks : Mapping[str, sc.Variable], optional
         The masks that decide which pixels are usable. Defaults to ``data.masks``. Passed explicitly
         when filtering an array that does not carry the masks itself — the pipelines detect dead and

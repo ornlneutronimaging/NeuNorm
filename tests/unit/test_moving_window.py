@@ -432,6 +432,66 @@ def test_a_masked_non_finite_variance_does_not_spread():
     assert np.isfinite(moving_window(data, {"x": 3, "y": 3}).variances).all()
 
 
+def test_a_masked_sum_is_the_mean_scaled_by_the_nominal_window():
+    """Not the bare total of the pixels that survived — that would fall with every masked pixel.
+
+    Pinned because the two definitions agree exactly until one pixel is masked, and the scaled one is
+    what makes a moving sum and a moving average cancel identically in the sample/open-beam ratio.
+    """
+    values = np.full((5, 5), 10.0)
+    dead = np.zeros((5, 5), dtype=bool)
+    dead[2, 2] = True
+    data = sc.DataArray(sc.array(dims=["y", "x"], values=values, unit="counts"))
+    data.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=dead)
+
+    average = moving_window(data, {"x": 3, "y": 3})
+    total = moving_window(data, {"x": 3, "y": 3}, kind="sum")
+
+    # the window centred on (1,1) collects 8 usable pixels of 10.0; the mean is 10.0
+    np.testing.assert_allclose(average.values[1, 1], 10.0)
+    # scaled by the NOMINAL 9, not by the 8 that survived
+    np.testing.assert_allclose(total.values[1, 1], 90.0)
+    np.testing.assert_allclose(total.values, 9.0 * average.values)
+
+
+@pytest.mark.parametrize("mode", ["constant", "grid-constant"])
+def test_a_constant_edge_reads_differently_once_a_mask_applies(mode):
+    """Documented, and pinned so it stays deliberate rather than becoming a surprise.
+
+    With no mask the constant modes are scipy's: an out-of-frame slot contributes ``cval`` (0) and
+    pulls an edge pixel toward zero. With a mask the normalized convolution divides by the weight
+    actually collected, those slots drop out, and the edge pixel becomes the mean of the real pixels.
+    """
+    values = np.full((5, 5), 10.0)
+    unmasked = sc.DataArray(sc.array(dims=["y", "x"], values=values.copy(), unit="counts"))
+    with_mask = sc.DataArray(sc.array(dims=["y", "x"], values=values.copy(), unit="counts"))
+    # a mask that flags nothing: it changes which code path runs, not which pixels are usable
+    with_mask.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=np.zeros((5, 5), dtype=bool))
+
+    corner_unmasked = moving_window(unmasked, {"x": 3, "y": 3}, mode=mode).values[0, 0]
+    corner_masked = moving_window(with_mask, {"x": 3, "y": 3}, mode=mode).values[0, 0]
+
+    # four of the nine slots are in frame, so the zero-padded corner reads 4/9 of the true level
+    np.testing.assert_allclose(corner_unmasked, 10.0 * 4.0 / 9.0)
+    # renormalized, the corner is the mean of the four real pixels
+    np.testing.assert_allclose(corner_masked, 10.0)
+
+
+@pytest.mark.parametrize("mode", [m for m in EDGE_MODES if "constant" not in m])
+def test_every_other_edge_mode_reads_the_same_with_or_without_a_mask(mode):
+    """The default is in here: only the constant family has out-of-frame slots to drop."""
+    rng = np.random.default_rng(9)
+    values = rng.poisson(50, size=(7, 7)).astype(np.float64)
+    unmasked = sc.DataArray(sc.array(dims=["y", "x"], values=values.copy(), unit="counts"))
+    with_mask = sc.DataArray(sc.array(dims=["y", "x"], values=values.copy(), unit="counts"))
+    with_mask.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=np.zeros((7, 7), dtype=bool))
+
+    np.testing.assert_allclose(
+        moving_window(unmasked, {"x": 3, "y": 3}, mode=mode).values,
+        moving_window(with_mask, {"x": 3, "y": 3}, mode=mode).values,
+    )
+
+
 def test_data_without_variances_produces_none():
     assert moving_window(_ramp_array(), {"x": 3, "y": 3}).variances is None
 

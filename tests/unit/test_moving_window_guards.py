@@ -6,8 +6,9 @@ the whole reason this file exists: where a combination has no correct reading it
 it has one whose consequence is easy to miss it is said out loud, and the window itself is written
 into the output file so a filtered result stays identifiable after it leaves the pipeline.
 
-Every guard and warning here is mutation-tested by ``.harness/mutate_moving_window.py``: each is
-broken in turn and a named test from this file must fail.
+Each test below is written to fail if the guard it covers is removed or weakened, rather than to
+assert that some warning was emitted: the message content is checked, and the tests that pin silence
+are as load-bearing as the ones that pin noise.
 """
 
 import json

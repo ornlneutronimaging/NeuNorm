@@ -15,7 +15,7 @@ import h5py
 import numpy as np
 import pytest
 from PIL import Image
-from scipy.ndimage import convolve
+from scipy.ndimage import convolve, correlate, uniform_filter
 from test_progress_pipelines import (
     _spectra_file,
     _tpx3_event_file,
@@ -345,6 +345,55 @@ def test_a_dead_pixel_is_excluded_from_the_window_rather_than_averaged_in(pipeli
     got = _read(tmp_path / "out.hdf5")
     neighbourhood = (slice(None), slice(dead_y - 1, dead_y + 2), slice(dead_x - 1, dead_x + 2))
     np.testing.assert_allclose(got[neighbourhood], expected[neighbourhood], rtol=1e-6)
+
+
+@_TIFF_BASED
+def test_a_block_of_dead_pixels_survives_the_whole_pipeline(pipeline, tmp_path, monkeypatch):
+    """A masked BLOCK, big enough that some windows see nothing usable, written out and read back.
+
+    The other mask test here flags one pixel, which no window is starved by. A real detector loses
+    contiguous regions, and a window sitting inside one has nothing to average. This checks the whole
+    path survives that — on the FILE, since that is what a user gets.
+
+    What it deliberately does NOT claim is to guard the starvation threshold itself. Measured: with
+    that guard reverted the counts do go negative, but both stacks carry the same mask and the same
+    starved windows, so the weight residue cancels in sample/open-beam and the transmission comes out
+    finite and positive anyway. ``test_moving_window.py`` owns that check, where it can fail.
+    """
+    import neunorm.pipelines._tof_spine as spine
+
+    # This geometry is chosen, not arbitrary. A single clean block starves plenty of windows but the
+    # weight pass returns exact zero for them, so it cannot reach the branch where a fully masked
+    # window is told apart from a nearly-empty one by a 1e-16 residue. These four blocks do: 73 of
+    # the 284 starved windows come back from the weight pass as a nonzero residue.
+    rng = np.random.default_rng(0)
+    dead_block = np.zeros((_DETECTOR, _DETECTOR), dtype=bool)
+    for _ in range(rng.integers(2, 6)):
+        y, x = rng.integers(0, 20, 2)
+        height, width = rng.integers(8, 14, 2)
+        dead_block[y : y + height, x : x + width] = True
+
+    starved = correlate((~dead_block).astype(np.int64), np.ones((3, 3), dtype=np.int64), mode="reflect") == 0
+    residue = uniform_filter((~dead_block).astype(np.float64), size=3, mode="reflect")[starved]
+    assert (residue != 0.0).any(), "fixture no longer reaches the starved-window branch"
+
+    real_detect = spine.detect_dead_pixels
+
+    def fake_detect(hist):
+        mask = real_detect(hist)
+        mask.values[:] |= dead_block
+        return mask
+
+    monkeypatch.setattr(spine, "detect_dead_pixels", fake_detect)
+    result = pipeline(tmp_path / "out.hdf5", moving_window=MovingWindow(x=3, y=3))
+
+    written = _read(tmp_path / "out.hdf5")
+    uncertainty = _read(tmp_path / "out.hdf5", "uncertainty")
+    assert np.isfinite(written).all(), "non-finite transmission written to disk"
+    assert np.isfinite(uncertainty).all(), "non-finite uncertainty written to disk"
+    assert (uncertainty >= 0).all(), "negative uncertainty written to disk"
+    assert (written > 0).all(), "non-positive transmission written to disk"
+    assert result.variances is not None and (result.variances >= 0).all()
 
 
 # Provenance in the written file is covered by ``test_moving_window_guards.py``, alongside the
