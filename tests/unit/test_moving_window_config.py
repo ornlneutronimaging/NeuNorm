@@ -5,6 +5,8 @@ to use in this average") without adding five loose parameters to three pipelines
 two configurations that would quietly not do what was asked.
 """
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -92,10 +94,17 @@ def test_even_sizes_are_accepted_as_ibeatles_accepts_them():
 
 def test_provenance_records_what_a_reader_of_the_file_would_need():
     config = MovingWindow(x=3, y=5, kind="sum", mode="nearest")
-    assert config.provenance() == {
+    assert config.provenance_summary() == {
         "kind": "sum",
         "sizes": {"x": 3, "y": 5},
         "dimension": "2D",
         "mode": "nearest",
         "kernel_pixels": 15,
     }
+
+
+def test_provenance_is_a_json_string_because_the_writers_reject_a_bare_dict():
+    """The TIFF metadata converter accepts scalars and sequences and raises on a mapping."""
+    config = MovingWindow(x=3, y=5, kind="sum", mode="nearest")
+    assert isinstance(config.provenance(), str)
+    assert json.loads(config.provenance()) == config.provenance_summary()

@@ -11,6 +11,7 @@ tuple copied from an iBeatles configuration would silently transpose the two spa
 non-square kernel that is a wrong answer which still looks entirely plausible.
 """
 
+import json
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -103,7 +104,7 @@ class MovingWindow(BaseModel):
             product *= length
         return product
 
-    def provenance(self) -> dict:
+    def provenance_summary(self) -> dict:
         """What to record in the output file so a filtered result is identifiable later.
 
         A log line scrolls away; the pixels of a filtered image are no longer independent and nothing
@@ -116,3 +117,13 @@ class MovingWindow(BaseModel):
             "mode": self.mode,
             "kernel_pixels": self.kernel_pixels,
         }
+
+    def provenance(self) -> str:
+        """:meth:`provenance_summary` as a **JSON string**, which is what the writers accept.
+
+        Never a bare dict: the TIFF metadata converter accepts scalars and sequences and raises on a
+        mapping, so a dict here would write HDF5 output happily and then fail at export time on the
+        TIFF path. Same convention, and the same reason, as
+        :func:`~neunorm.data_models.roi.region_provenance`. Read it back with ``json.loads``.
+        """
+        return json.dumps(self.provenance_summary())

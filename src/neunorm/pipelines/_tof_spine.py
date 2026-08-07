@@ -482,6 +482,9 @@ def _apply_moving_window(
     open-beam pixels and put that contamination straight into the divisor.
     """
     sizes = config.sizes()
+    # Checked here rather than with the other guards: the axis lengths that matter are the ones AT
+    # the filter, after any crop and spatial rebin, and those are not known before the run starts.
+    _warn_on_a_kernel_large_for_its_axis(sample, config)
     window = run_progress.for_stage(
         STAGE_MOVING_WINDOW,
         total=moving_window_step_count(sample) + moving_window_step_count(ob, sample.masks),
@@ -498,6 +501,7 @@ def _validate_argument_combinations(
     rebin_by_spatial,
     tiff_one_file_per_image: bool,
     spectrum_roi,
+    moving_window_config: Optional[MovingWindow] = None,
 ) -> None:
     """Refuse the argument combinations that have no correct interpretation, and warn about the
     ones that do but whose consequence is easy to miss.
@@ -520,6 +524,89 @@ def _validate_argument_combinations(
                 "produce. Drop it, or run in image mode."
             )
         _warn_on_spectrum_roi_frame(roi, rebin_by_spatial)
+
+    if moving_window_config is not None:
+        if spectrum_roi is not None:
+            raise ValueError(
+                "moving_window and spectrum_roi cannot be combined. A moving window makes "
+                "neighbouring pixels correlated, and a region reduction over correlated pixels "
+                "under-reports its uncertainty by roughly sqrt(kernel pixels) — measured at x2.89 "
+                "for a 3x3 window and x4.78 for 5x5. scipp carries no covariance, so the "
+                "correlation cannot be propagated and the error bar would simply be wrong. The two "
+                "are alternative answers to low counting statistics — smoothing pixel by pixel, or "
+                "reducing over a region — so use one or the other."
+            )
+        _warn_on_the_moving_window_trade(moving_window_config, rebin_by_spatial)
+
+
+def _warn_on_the_moving_window_trade(config: MovingWindow, rebin_by_spatial) -> None:
+    """Say what the window costs, since the array gives no sign of having been filtered.
+
+    Said out loud on every use rather than left to the documentation: unlike a rebin, which visibly
+    shrinks the array, a moving window returns something the same shape as the input, so a filtered
+    result and an unfiltered one are indistinguishable by inspection.
+    """
+    kernel_pixels = config.kernel_pixels
+    logger.warning(
+        "moving_window {} ({}): per-pixel precision improves by about {:.1f}x while spatial "
+        "resolution coarsens by the window length on each axis. The array keeps its shape, so the "
+        "result presents as full resolution while carrying roughly one independent value per {} "
+        "pixels. A feature smaller than the window loses DEPTH, not just sharpness — measured, a "
+        "3-pixel feature retains 0.32 of its true contrast under a 5x5 window — so fitting one "
+        "returns the filter's depth rather than the sample's.",
+        config.sizes(),
+        config.kind,
+        np.sqrt(kernel_pixels),
+        kernel_pixels,
+    )
+
+    if rebin_by_spatial is not None:
+        factor_x, factor_y = (
+            (rebin_by_spatial, rebin_by_spatial)
+            if isinstance(rebin_by_spatial, (int, np.integer))
+            else tuple(rebin_by_spatial)
+        )
+        logger.warning(
+            "moving_window sizes are in POST-REBIN pixels, and rebin_by_spatial={} runs first, so "
+            "the two coarsenings compound: one output pixel draws on {} x {} detector pixels in "
+            "(x, y), not {} x {}.",
+            rebin_by_spatial,
+            config.x * int(factor_x),
+            config.y * int(factor_y),
+            config.x,
+            config.y,
+        )
+
+
+#: Warn once the mirrored frame edge reaches this fraction of an axis: past it the edge policy is
+#: shaping much of the result rather than a thin border.
+_EDGE_FRACTION_WARNING = 0.25
+
+
+def _warn_on_a_kernel_large_for_its_axis(data: sc.DataArray, config: MovingWindow) -> None:
+    """Warn when the window is big enough that the edge policy stops being a border effect.
+
+    A mirrored edge and a shrink-to-real-pixels edge differ only within ``k // 2`` of the frame
+    boundary, which is why mirroring is a safe default — but that argument only holds while the
+    border is a small part of the axis. Checked against the sizes as they are AT the filter, so a
+    crop or a spatial rebin that made the axis short is accounted for.
+    """
+    for dim, length in config.sizes().items():
+        if dim not in data.dims or length == 1:
+            continue
+        axis = data.sizes[dim]
+        touched = min(1.0, 2.0 * (length // 2) / axis)
+        if touched >= _EDGE_FRACTION_WARNING:
+            logger.warning(
+                "moving_window size {} on the {!r} axis, which is {} pixels here: {:.0%} of pixels "
+                "have the mirrored frame edge inside their window, so the edge policy shapes much "
+                "of the result rather than a thin border. The axis length is measured after any "
+                "roi crop and spatial rebin.",
+                length,
+                dim,
+                axis,
+                touched,
+            )
 
 
 def _warn_on_spectrum_roi_frame(roi, rebin_by_spatial) -> None:
@@ -625,6 +712,7 @@ def reduce_tof_stacks(
         rebin_by_spatial=rebin_by_spatial,
         tiff_one_file_per_image=tiff_one_file_per_image,
         spectrum_roi=spectrum_roi,
+        moving_window_config=moving_window_config,
     )
 
     # Apply ROI if specified
@@ -689,6 +777,9 @@ def reduce_tof_stacks(
     # issue asks for and the point iBeatles applies it.
     if moving_window_config is not None:
         sample, ob = _apply_moving_window(sample, ob, moving_window_config, run_progress=run_progress)
+        # Provenance in the file, not only in the log: the pixels of a filtered image are no longer
+        # independent and nothing in the array itself shows it, so the window travels with the data.
+        metadata["moving_window"] = moving_window_config.provenance()
 
     # Normalization
     transmission = normalize_transmission(
