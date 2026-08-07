@@ -14,7 +14,6 @@ are as load-bearing as the ones that pin noise.
 import json
 
 import h5py
-import numpy as np
 import pytest
 from loguru import logger
 from test_moving_window_pipeline import (  # the synthetic inputs and runners, built once
@@ -27,6 +26,13 @@ from test_moving_window_pipeline import (  # the synthetic inputs and runners, b
 )
 
 from neunorm.data_models.moving_window import MovingWindow
+
+#: One pipeline, for behaviour that provably lives in the shared spine rather than in any entry point
+#: — every refusal message, every warning's wording, and the provenance payload. Running those three
+#: times over exercises the same ``_validate_argument_combinations`` and the same metadata dict, and
+#: buys coverage of nothing. ``@_ALL`` is kept where reaching the guard from each pipeline is itself
+#: the claim: that each one refuses, and that each one stays silent when the feature is unused.
+_ONE = pytest.mark.parametrize("pipeline", ["venus_tpx1"], indirect=True)
 
 
 @pytest.fixture
@@ -54,7 +60,7 @@ def test_a_moving_window_with_spectrum_roi_is_refused(pipeline, tmp_path):  # no
         pipeline(tmp_path / "out.txt", spectrum_roi=(8, 8, 24, 24), moving_window=MovingWindow(x=3, y=3))
 
 
-@_ALL
+@_ONE
 def test_the_refusal_records_the_measured_reason(pipeline, tmp_path):  # noqa: F811
     """The message carries why, not just what: a region mean over smoothed pixels under-reports."""
     with pytest.raises(ValueError) as excinfo:
@@ -65,7 +71,7 @@ def test_the_refusal_records_the_measured_reason(pipeline, tmp_path):  # noqa: F
     assert "covariance" in message
 
 
-@_ALL
+@_ONE
 def test_the_refusal_happens_before_any_output_is_written(pipeline, tmp_path):  # noqa: F811
     """A run that is going to be rejected should be rejected before it does the work."""
     output = tmp_path / "out.txt"
@@ -87,7 +93,7 @@ def test_a_moving_window_with_air_roi_is_refused(pipeline, tmp_path):  # noqa: F
         pipeline(tmp_path / "out.hdf5", air_roi=(4, 4, 12, 12), moving_window=MovingWindow(x=3, y=3))
 
 
-@_ALL
+@_ONE
 def test_the_air_roi_refusal_records_the_measured_reason(pipeline, tmp_path):  # noqa: F811
     with pytest.raises(ValueError) as excinfo:
         pipeline(tmp_path / "out.hdf5", air_roi=(4, 4, 12, 12), moving_window=MovingWindow(x=3, y=3))
@@ -115,7 +121,7 @@ def test_spectrum_roi_alone_still_works(pipeline, tmp_path):  # noqa: F811
 # --------------------------------------------------------------------------------------------
 
 
-@_ALL
+@_ONE
 def test_the_trade_is_warned_about_with_the_actual_kernel(pipeline, tmp_path, warnings):  # noqa: F811
     said = _matching(warnings, "moving_window", "resolution coarsens")
     assert not said
@@ -128,7 +134,7 @@ def test_the_trade_is_warned_about_with_the_actual_kernel(pipeline, tmp_path, wa
     assert "one independent value per 9 pixels" in said[0]
 
 
-@_ALL
+@_ONE
 def test_the_warning_names_the_kernel_it_was_given(pipeline, tmp_path, warnings):  # noqa: F811
     """A 5x5 window must not report a 3x3 window's numbers."""
     pipeline(tmp_path / "out.hdf5", moving_window=MovingWindow(x=5, y=5))
@@ -138,7 +144,7 @@ def test_the_warning_names_the_kernel_it_was_given(pipeline, tmp_path, warnings)
     assert "one independent value per 25 pixels" in said[0]
 
 
-@_ALL
+@_ONE
 def test_the_trade_warning_covers_features_smaller_than_the_kernel(pipeline, tmp_path, warnings):  # noqa: F811
     """Losing DEPTH is a quantitative error, not a cosmetic blur, so it is stated."""
     pipeline(tmp_path / "out.hdf5", moving_window=MovingWindow(x=3, y=3))
@@ -232,7 +238,7 @@ def test_no_moving_window_warnings_from_a_plain_rebin_run(pipeline, tmp_path, wa
 # --------------------------------------------------------------------------------------------
 
 
-@_ALL
+@_ONE
 def test_the_window_is_recorded_in_the_written_hdf5(pipeline, tmp_path):  # noqa: F811
     """Kernel, kind and edge mode, so a filtered file is identifiable after it leaves here."""
     pipeline(tmp_path / "out.hdf5", moving_window=MovingWindow(x=3, y=5, kind="sum", mode="nearest"))
@@ -247,7 +253,7 @@ def test_the_window_is_recorded_in_the_written_hdf5(pipeline, tmp_path):  # noqa
     }
 
 
-@_ALL
+@_ONE
 def test_a_three_dimensional_window_records_its_tof_size(pipeline, tmp_path):  # noqa: F811
     pipeline(tmp_path / "out.hdf5", moving_window=MovingWindow(x=3, y=3, tof=3, dimension="3D"))
     with h5py.File(tmp_path / "out.hdf5", "r") as handle:
@@ -257,7 +263,7 @@ def test_a_three_dimensional_window_records_its_tof_size(pipeline, tmp_path):  #
     assert recorded["kernel_pixels"] == 27
 
 
-@_ALL
+@_ONE
 def test_nothing_is_recorded_when_no_window_ran(pipeline, tmp_path):  # noqa: F811
     pipeline(tmp_path / "out.hdf5")
     with h5py.File(tmp_path / "out.hdf5", "r") as handle:
@@ -272,14 +278,6 @@ def test_the_provenance_survives_the_tiff_writer_too(pipeline, tmp_path):  # noq
     assert result is not None
 
 
-# --------------------------------------------------------------------------------------------
-# The guards do not fire on what they should not
-# --------------------------------------------------------------------------------------------
-
-
-@_ALL
-def test_a_window_run_still_produces_the_expected_array(pipeline, tmp_path):  # noqa: F811
-    """Guards must not change what a legitimate run computes."""
-    filtered = pipeline(tmp_path / "out.hdf5", moving_window=MovingWindow(x=3, y=3))
-    assert np.isfinite(filtered.values).all()
-    assert filtered.variances is not None
+# That a legitimate run still computes the right array is pinned in
+# ``test_moving_window_pipeline.py``, against the scipy reference, rather than asserted here as
+# "finite and has variances" — which is not the expected array, and would pass on a wrong one.

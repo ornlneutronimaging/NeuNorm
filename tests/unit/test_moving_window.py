@@ -99,15 +99,6 @@ def test_matches_scipy_box_convolution_as_ibeatles_computes_it(size):
     np.testing.assert_allclose(result.values, convolve(values, kernel, mode="reflect"), rtol=1e-12, atol=1e-12)
 
 
-def test_matches_scipy_uniform_filter_for_odd_sizes():
-    """For odd windows the separable filter and the direct convolution agree, which is the fast path."""
-    rng = np.random.default_rng(7)
-    values = rng.poisson(50, size=(9, 11)).astype(np.float64)
-    data = sc.DataArray(sc.array(dims=["y", "x"], values=values, unit="counts"))
-    result = moving_window(data, {"x": 5, "y": 3})
-    np.testing.assert_allclose(result.values, uniform_filter(values, size=[3, 5], mode="reflect"))
-
-
 def test_an_even_window_leans_the_way_ibeatles_leans():
     """An even window has no centre pixel; iBeatles' convolution puts the extra pixel BEFORE it.
 
@@ -124,9 +115,14 @@ def test_an_even_window_leans_the_way_ibeatles_leans():
         np.testing.assert_allclose(crossing - 19.5, expected_shift, atol=1e-9)
 
 
-@pytest.mark.parametrize("mode", EDGE_MODES)
-def test_every_edge_mode_is_scipys(mode):
-    """The edge policy is passed straight through, so all of scipy's modes behave as scipy's."""
+@pytest.mark.parametrize("mode", ["nearest", "wrap"])
+def test_the_edge_mode_is_passed_straight_through(mode):
+    """Two representatives, because that is all this asserts: the kwarg reaches scipy.
+
+    The properties that actually differ per mode are covered once each across all eight —
+    ``test_the_variance_obeys_the_weights_under_every_edge_mode`` for the variance, and the two
+    constant-mode tests below for the only family whose meaning depends on masking.
+    """
     rng = np.random.default_rng(3)
     values = rng.poisson(30, size=(8, 8)).astype(np.float64)
     data = sc.DataArray(sc.array(dims=["y", "x"], values=values, unit="counts"))

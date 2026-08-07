@@ -46,6 +46,7 @@ from neunorm.tof.coordinate_converter import convert_tof_to_energy, convert_tof_
 from neunorm.tof.histogram_rebinner import _parse_bin_list, linear_bin_list, rebin_tof
 from neunorm.tof.pixel_detector import detect_dead_pixels, detect_hot_pixels
 from neunorm.tof.statistics_analyzer import analyze_statistics
+from neunorm.utils.masks import combined_mask
 from neunorm.utils.progress import (
     STAGE_EXPORT,
     STAGE_MOVING_WINDOW,
@@ -301,14 +302,14 @@ def _write_tiff_output(
     # (scipp), so both a spatial (y, x) mask and a 1-D per-frame (t) mask expand correctly to
     # the full (t, y, x) stack.
     if transmission.masks:
-        combined_mask = np.zeros_like(transmission.values, dtype=bool)
-        for mask in transmission.masks.values():
-            combined_mask |= sc.broadcast(mask, sizes=transmission.sizes).values
+        # skip_mismatched stays off: a mask this writer cannot broadcast must raise rather than be
+        # dropped from the file being written.
+        flattened = combined_mask(transmission.sizes, transmission.masks)
 
         # remove other masks
         transmission.masks.clear()
         # add combined mask back in with name "scitiff-mask"
-        transmission.masks["scitiff-mask"] = sc.array(dims=transmission.dims, values=combined_mask, dtype=bool)
+        transmission.masks["scitiff-mask"] = sc.array(dims=transmission.dims, values=flattened, dtype=bool)
 
     written_paths = write_tiff_stack(
         output_path,

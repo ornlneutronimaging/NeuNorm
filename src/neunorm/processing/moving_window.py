@@ -42,6 +42,7 @@ import numpy as np
 import scipp as sc
 from scipy.ndimage import correlate1d, uniform_filter
 
+from neunorm.utils.masks import combined_mask
 from neunorm.utils.progress import STAGE_MOVING_WINDOW, ProgressLike, resolve_progress
 
 #: What the window does with the pixels it collects: their mean, or their total.
@@ -100,15 +101,8 @@ def _usable_mask(data: sc.DataArray, masks: Mapping[str, sc.Variable]) -> Option
     Returns ``None`` when no mask applies, which is the caller's signal to take the plain
     (single-pass, exactly-scipy) path.
     """
-    applicable = _applicable_masks(data, masks)
-    if not applicable:
-        return None
-    bad = np.zeros(data.shape, dtype=bool)
-    for mask in applicable:
-        # Broadcast by dim NAME: a 2-D (x, y) dead-pixel mask expands correctly over a (tof, x, y)
-        # stack whatever the dim order is.
-        bad |= sc.broadcast(mask, sizes=data.sizes).values
-    return ~bad
+    bad = combined_mask(data.sizes, masks, skip_mismatched=True)
+    return None if bad is None else ~bad
 
 
 def _slot_sources(length: int, axis_size: int, mode: str, origin: int):

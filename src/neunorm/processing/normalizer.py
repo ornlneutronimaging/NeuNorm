@@ -14,6 +14,7 @@ from loguru import logger
 
 from neunorm.data_models.roi import ROI, MaskROI, RegionsLike, as_region_list, as_roi_bounds
 from neunorm.processing.dark_corrector import subtract_dark
+from neunorm.utils.masks import combined_mask
 from neunorm.utils.progress import STAGE_NORMALIZE, ProgressLike, resolve_progress
 
 # One region (rectangle or MaskROI) or a sequence of regions (pooled). A bare 4-int tuple/list is a
@@ -228,12 +229,10 @@ def _require_positive_finite_coefficient(coeff: sc.Variable, data: sc.DataArray,
     back from ``data.masks`` here.
     """
     values = np.atleast_1d(coeff.values).astype(float)
-    gap = np.zeros(values.shape, dtype=bool)
-    for mask in data.masks.values():
-        # A missing-bin mask (e.g. a 1-D per-bin tof mask) may be lower-dimensional than the
-        # coefficient; broadcast any mask whose dims are a subset of coeff's and drop those bins.
-        if set(mask.dims) <= set(coeff.dims):
-            gap |= np.atleast_1d(sc.broadcast(mask, sizes=coeff.sizes).values)
+    # A missing-bin mask (e.g. a 1-D per-bin tof mask) may be lower-dimensional than the
+    # coefficient; broadcast any mask whose dims are a subset of coeff's and drop those bins.
+    flagged = combined_mask(coeff.sizes, data.masks, skip_mismatched=True)
+    gap = np.zeros(values.shape, dtype=bool) if flagged is None else np.atleast_1d(flagged)
     checked = values[~gap]
     if checked.size == 0 or not np.all(np.isfinite(checked)) or float(np.min(checked)) <= 0:
         worst = float(np.min(checked)) if checked.size else float("nan")
