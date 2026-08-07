@@ -19,6 +19,7 @@ import numpy as np
 import scipp as sc
 from loguru import logger
 
+from neunorm.data_models.moving_window import MovingWindow
 from neunorm.data_models.roi import (
     MaskROI,
     RegionLike,
@@ -32,6 +33,7 @@ from neunorm.exporters.ascii_writer import ascii_spectrum_export_step_count, wri
 from neunorm.exporters.hdf5_writer import hdf5_export_step_count, write_hdf5
 from neunorm.exporters.tiff_writer import tiff_export_step_count, write_tiff_stack
 from neunorm.processing.air_region_corrector import apply_air_region_correction
+from neunorm.processing.moving_window import moving_window, moving_window_step_count
 from neunorm.processing.normalizer import normalize_step_count, normalize_transmission
 from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.spatial_rebinner import rebin_spatial
@@ -46,6 +48,7 @@ from neunorm.tof.pixel_detector import detect_dead_pixels, detect_hot_pixels
 from neunorm.tof.statistics_analyzer import analyze_statistics
 from neunorm.utils.progress import (
     STAGE_EXPORT,
+    STAGE_MOVING_WINDOW,
     STAGE_NORMALIZE,
     STAGE_REBIN_TOF,
     STAGE_REDUCE_SPECTRUM,
@@ -460,6 +463,65 @@ def _refuse_to_overwrite_an_input(hdf5_path: Path, metadata: dict) -> None:
         )
 
 
+def _apply_moving_window(
+    sample: sc.DataArray,
+    ob: sc.DataArray,
+    config: MovingWindow,
+    *,
+    run_progress: ProgressReporter,
+) -> tuple[sc.DataArray, sc.DataArray]:
+    """Filter both stacks with the same window, immediately before they are divided.
+
+    Both sides get the same kernel, which is what makes the moving sum and the moving average
+    indistinguishable in the result: the kernel count appears in the numerator and the denominator
+    and cancels.
+
+    The open beam is filtered with the **sample's** masks. Dead and hot pixels are detected from the
+    open beam but attached to the sample (see :func:`_attach_pixel_masks`), so the open beam carries
+    none of its own — filtering it mask-blind would let a bad detector pixel contaminate ``k**2``
+    open-beam pixels and put that contamination straight into the divisor.
+    """
+    sizes = config.sizes()
+    window = run_progress.for_stage(
+        STAGE_MOVING_WINDOW,
+        total=moving_window_step_count(sample) + moving_window_step_count(ob, sample.masks),
+    )
+    filtered_sample = moving_window(sample, sizes, kind=config.kind, mode=config.mode, progress=window)
+    filtered_ob = moving_window(ob, sizes, kind=config.kind, mode=config.mode, masks=sample.masks, progress=window)
+    return filtered_sample, filtered_ob
+
+
+def _validate_argument_combinations(
+    *,
+    roi,
+    air_roi,
+    rebin_by_spatial,
+    tiff_one_file_per_image: bool,
+    spectrum_roi,
+) -> None:
+    """Refuse the argument combinations that have no correct interpretation, and warn about the
+    ones that do but whose consequence is easy to miss.
+
+    Gathered in one place rather than scattered down the run, so that every refusal happens before
+    any work is done — a run that is going to be rejected should be rejected before it spends
+    minutes loading and rebinning — and so the list of what is incompatible with what can be read
+    without following the control flow of the whole reduction.
+    """
+    if spectrum_roi is not None:
+        if air_roi is not None:
+            raise ValueError(
+                "air_roi and spectrum_roi cannot be combined: the air correction rescales an image so "
+                "its air region reads 1.0, which has no meaning for a spectrum of one value per bin. "
+                "Drop air_roi, or run in image mode."
+            )
+        if tiff_one_file_per_image:
+            raise ValueError(
+                "tiff_one_file_per_image applies to TIFF image output, which spectrum_roi does not "
+                "produce. Drop it, or run in image mode."
+            )
+        _warn_on_spectrum_roi_frame(roi, rebin_by_spatial)
+
+
 def _warn_on_spectrum_roi_frame(roi, rebin_by_spatial) -> None:
     """Say out loud which pixel frame ``spectrum_roi`` was resolved in, when it is not the detector's.
 
@@ -499,6 +561,7 @@ def reduce_tof_stacks(
     tiff_one_file_per_image: bool = False,
     spectrum_roi: Optional[RegionsLike] = None,
     spectrum_roi_strict: bool = True,
+    moving_window_config: Optional[MovingWindow] = None,
     run_progress: ProgressReporter,
 ) -> sc.DataArray:
     """Crop, mask, rebin, normalize, label and write — the part every VENUS TOF pipeline shares.
@@ -542,6 +605,11 @@ def reduce_tof_stacks(
     spectrum_roi_strict : bool, optional
         Whether a non-positive or non-finite open-beam region mean raises. See
         :func:`~neunorm.processing.spectrum_reducer.normalize_roi_spectrum`.
+    moving_window_config : MovingWindow, optional
+        Replace each pixel by the average (or total) of a box around it, in **both** stacks,
+        immediately before they are divided. The kernel is expressed in post-crop,
+        post-spatial-rebin pixels, the same frame ``spectrum_roi`` documents, so a window of 3 on a
+        2x-rebinned stack spans 6 detector pixels.
     run_progress : ProgressReporter
         The run's reporter, already resolved by the entry point.
 
@@ -551,19 +619,13 @@ def reduce_tof_stacks(
         The normalized transmission that was written — an image stack, or a 1-D spectrum under
         ``spectrum_roi``.
     """
-    if spectrum_roi is not None:
-        if air_roi is not None:
-            raise ValueError(
-                "air_roi and spectrum_roi cannot be combined: the air correction rescales an image so "
-                "its air region reads 1.0, which has no meaning for a spectrum of one value per bin. "
-                "Drop air_roi, or run in image mode."
-            )
-        if tiff_one_file_per_image:
-            raise ValueError(
-                "tiff_one_file_per_image applies to TIFF image output, which spectrum_roi does not "
-                "produce. Drop it, or run in image mode."
-            )
-        _warn_on_spectrum_roi_frame(roi, rebin_by_spatial)
+    _validate_argument_combinations(
+        roi=roi,
+        air_roi=air_roi,
+        rebin_by_spatial=rebin_by_spatial,
+        tiff_one_file_per_image=tiff_one_file_per_image,
+        spectrum_roi=spectrum_roi,
+    )
 
     # Apply ROI if specified
     if roi:
@@ -622,6 +684,11 @@ def reduce_tof_stacks(
         )
         logger.success("{} pipeline completed successfully. Output written to {}", profile.label, output_description)
         return spectrum
+
+    # Moving window (optional), on both stacks, immediately before they are divided — the point the
+    # issue asks for and the point iBeatles applies it.
+    if moving_window_config is not None:
+        sample, ob = _apply_moving_window(sample, ob, moving_window_config, run_progress=run_progress)
 
     # Normalization
     transmission = normalize_transmission(
