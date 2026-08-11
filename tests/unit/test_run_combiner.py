@@ -444,3 +444,60 @@ def test_combine_runs_no_masks():
     np.testing.assert_allclose(combined.variances, expected_values)
     # There should be no masks in the combined result
     assert len(combined.masks) == 0
+
+
+def test_combine_runs_metadata_match_atol():
+    """Numeric metadata within metadata_match_atol combines (keeping the base
+    run's value); outside the tolerance, or for string metadata, it still
+    raises. The caller's arrays are never modified."""
+    from neunorm.processing.run_combiner import combine_runs
+
+    def make_run(slit, detector="SBIG"):
+        run = sc.DataArray(
+            data=sc.array(
+                dims=["N_image", "x", "y"],
+                values=np.ones((1, 5, 5)),
+                variances=np.ones((1, 5, 5)),
+                unit="counts",
+            ),
+        )
+        run.coords["MotSlitHR.RBV"] = sc.scalar(slit)
+        run.coords["ManufacturerStr"] = sc.scalar(detector)
+        return run
+
+    keys = ["MotSlitHR.RBV", "ManufacturerStr"]
+
+    # Default (atol=0) keeps the exact-match behavior.
+    with pytest.raises(ValueError, match="does not match"):
+        combine_runs([make_run(10.0), make_run(10.4)], metadata_keys_to_sum=[], metadata_check_match=keys)
+
+    # Within the tolerance the runs combine; the base run's value is kept and
+    # the second run is left untouched.
+    run_b = make_run(10.4)
+    combined = combine_runs(
+        [make_run(10.0), run_b],
+        metadata_keys_to_sum=[],
+        metadata_check_match=keys,
+        metadata_match_atol=1.0,
+    )
+    np.testing.assert_allclose(combined.values, np.full((1, 5, 5), 2.0))
+    assert combined.coords["MotSlitHR.RBV"].value == 10.0
+    assert run_b.coords["MotSlitHR.RBV"].value == 10.4
+
+    # Outside the tolerance it still raises.
+    with pytest.raises(ValueError, match="does not match"):
+        combine_runs(
+            [make_run(10.0), make_run(12.0)],
+            metadata_keys_to_sum=[],
+            metadata_check_match=keys,
+            metadata_match_atol=1.0,
+        )
+
+    # String metadata is never compared with a tolerance.
+    with pytest.raises(ValueError, match="does not match"):
+        combine_runs(
+            [make_run(10.0), make_run(10.0, detector="Andor")],
+            metadata_keys_to_sum=[],
+            metadata_check_match=keys,
+            metadata_match_atol=5.0,
+        )

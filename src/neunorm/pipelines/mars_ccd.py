@@ -41,6 +41,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
     roi: Optional[ROILike] = None,
     gamma_filter: bool = True,
     background_roi: Optional[BackgroundROILike] = None,
+    metadata_match_atol: float = 0.0,
 ) -> sc.DataArray:
     """Execute MARS CCD/CMOS normalization pipeline.
 
@@ -83,6 +84,10 @@ def run_mars_ccd_pipeline(  # noqa: C901
         normalization when proton charge is unavailable. Mutually exclusive with proton-charge
         correction. If ``roi`` is also given the detector is cropped first, so ``background_roi``
         indices are resolved in the post-crop frame.
+    metadata_match_atol : float, optional
+        Absolute tolerance for the metadata match check when combining runs
+        (exposure time and MotSlit aperture readback positions), by default
+        0.0 (exact match). Detector names always require an exact match.
 
     Notes
     -----
@@ -125,6 +130,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
             "MotSlitHL.RBV",
         ],
         normalize_by_runs=True,
+        metadata_match_atol=metadata_match_atol,
     )
 
     ob = combine_runs(
@@ -139,6 +145,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
             "MotSlitHL.RBV",
         ],
         normalize_by_runs=True,
+        metadata_match_atol=metadata_match_atol,
     )
 
     # Dark current is optional: only load/combine it when dark paths are provided.
@@ -153,6 +160,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
                 "ManufacturerStr",
             ],
             normalize_by_runs=True,
+            metadata_match_atol=metadata_match_atol,
         )
 
     # Apply ROI if specified
