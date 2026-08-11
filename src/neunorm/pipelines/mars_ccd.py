@@ -55,8 +55,8 @@ def run_mars_ccd_pipeline(  # noqa: C901
     roi: Optional[ROILike] = None,
     gamma_filter: bool = True,
     background_roi: Optional[BackgroundROILike] = None,
-    metadata_match_atol: float = 0.0,
     *,
+    metadata_match_atol: float = 0.0,
     progress: Progress = False,
 ) -> sc.DataArray:
     """Execute MARS CCD/CMOS normalization pipeline.
