@@ -9,6 +9,153 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Progress-reporting contract** — new `neunorm.utils.progress` module
+  ([#195](https://github.com/ornlneutronimaging/NeuNorm/issues/195)), the foundation for reporting
+  where a long normalization run has got to. Defines the immutable `ProgressEvent(stage, completed,
+  total, detail)` handed to user callbacks, the `Progress` / `ProgressCallback` types, the shared
+  `STAGE_*` labels, and `resolve_progress()`, which normalizes a caller's `progress` argument —
+  `False` (no reporting), `True` (NeuNorm drives a `tqdm` bar), or a callable — into a pre-bound
+  reporter. `completed` is an **absolute** count, so a `tqdm` adapter is
+  `bar.update(event.completed - bar.n)`; `tqdm.update()` takes a delta, and passing the absolute
+  count to it would overshoot. `total` is `None` where an item count is not knowable in advance.
+  Events are emitted synchronously from the calling thread, and a callback that raises is not
+  caught — that is how a caller cancels a run. `tqdm` is imported lazily, so the default
+  `progress=False` path never pays for it. `close()` releases the bars NeuNorm opened — a stage with
+  an indeterminate total has no completion point, and an abandoned stage never finishes — and never
+  touches a caller's callback, which may be a reusable object NeuNorm does not own.
+  Note that NeuNorm's log records and a `tqdm` bar both go to stderr, so log lines corrupt a bar.
+  NeuNorm does not manage that for you: routing loguru through `tqdm.write` means displacing handlers
+  that `add()` cannot faithfully restore, and silently rewriting an application's log format is worse
+  than a corrupted bar. Routing NeuNorm's log records around a bar is the caller's to do, in their own
+  application — `docs/progress.md` gives the remedy, and names the two ways to get it wrong.
+  This entry also corrects the long-stale `neunorm.utils` docstring, which advertised "progress
+  reporting" that did not exist and "validation helpers" that never have.
+
+- **Progress reporting through the image load path** — `load_tiff_stack`, `load_fits_stack` and
+  `load_stack` accept a keyword-only `progress` (and a `stage` label, so a direct open-beam or dark
+  load is not reported as `load_sample`). Each emits one event per file read, naming the file, then
+  announces the two whole-stack allocations that follow the read loop — the stack build and the
+  variances copy. Those two are where the memory actually peaks: the read loop only appends to a
+  list, so without them a bar reaches 100% at the last file and then goes silent through the part
+  that can exhaust RAM and start swapping. They are emitted as *notes*, which carry a label without
+  advancing the count, so a bar shows what is running without the count restarting on each call.
+  `load_stack` forwards both arguments to whichever leaf loader it dispatches to, which is what
+  gives the CCD pipelines per-file progress at all — they call `load_stack`, not the leaves.
+  A progress callback that raises propagates, and is not reported as a failed file read. All three
+  loaders again accept a non-sized iterable such as `Path.glob(...)`, as they did before reporting
+  was added.
+
+- **Progress reporting through the event-mode path** — `load_event_nexus` and both event converters
+  (`convert_events_to_histogram` and `convert_events_to_2d_histogram`) accept a keyword-only
+  `progress` and `stage`. The event path has no per-file loop, so what is reported is different in
+  kind: `load_event_nexus` counts its four full-event-length allocations (two h5py slab reads, the
+  event-id unroll, the TOF conversion), naming each before it runs, because that sequence is where
+  the event path peaks in memory. The converters emit one event per chunk — at the default 500M
+  events per chunk a typical run is a single tick, becoming a real progression only for
+  billion-event datasets. Both converters are instrumented deliberately: `mars_tpx3` uses the 2-D
+  one and `venus_tpx3_event` the 3-D one, so covering either alone would leave a pipeline silent.
+  This also **removes an ad-hoc `logger.info` chunk-percent print** that fired only every tenth
+  chunk when there was more than one, i.e. never below five billion events, and wrote to a channel
+  a caller could not redirect or disable.
+
+- **Progress reporting through the two dominant compute stages** — `apply_gamma_filter` and
+  `normalize_transmission` accept a keyword-only `progress` and `stage`. Neither has an item axis, so
+  both report named steps: the gamma filter reports four, the third being the
+  `scipy.ndimage.median_filter` that is most of its cost; the normalizer reports its separable
+  whole-array operations — the flux correction (background-ROI or proton-charge) and the division.
+  Each step is named before it runs and counted after it returns, so a failure never reports work
+  that did not happen. These are the two places a run goes quiet for longest: the gamma filter is
+  **on by default** on both CCD pipelines and MARS TPX3 and is the slowest stage per frame there,
+  and the normalizer dominates the TOF paths — at 300 x 512² its proton-charge steps take seconds
+  each. Work that is conditional on a value only known mid-run (the per-outlier variance
+  recomputation, the background-ROI variance term) is announced without advancing the count, so the
+  declared total always matches the steps that actually run whichever arguments are given.
+
+- **`ProgressReporter` is a context manager.** `with resolve_progress(...) as report:` releases the
+  progress bars on the way out whether the body returned or raised. Every instrumented function now
+  uses that shape, so a forgotten `finally` cannot leak an abandoned bar again — which it did once
+  already. Sink ownership travels with it: `resolve_progress` hands a callee a **borrowed** view of a
+  reporter it was given, so only whoever resolved a sink into being may retire it. Without that a
+  callee's `with` block would close the caller's bars, and since a bar is no longer auto-closed at
+  completion the caller's next event would rebuild it from zero — a pipeline's bar flickering back to
+  0% on every instrumented call it makes.
+
+- **Progress reporting through export, and through the dark-corrected normalizer** — `write_hdf5`,
+  `write_tiff_stack` and `normalize_with_dark` accept a keyword-only `progress` and `stage`. HDF5 is
+  the primary output format and `write_hdf5` has no item axis — the bulk data leaves in one or two
+  whole-array writes — so it reports named steps and can never be per-image: the transmission
+  dataset, the uncertainty dataset, the coordinate/mask section, and the metadata section. Its total
+  is computed, because the uncertainty write happens only for variance-bearing data and the metadata
+  section only when metadata is supplied. Every emit sits **outside** the writer's five non-re-raising
+  handlers (three `except Exception`, one `except (TypeError, ValueError)`, one `except TypeError`):
+  those exist so one un-writable metadata key or unserializable coordinate cannot abort the bulk-data
+  write, and a tick placed inside one would swallow a cancelling callback's exception, turning a
+  user's abort into a silently skipped metadata key. Cancelling — or any mid-write error, which was
+  already possible — leaves a partially-written file at the output path; that is now documented on the
+  parameter, since supporting cancellation makes it reachable on purpose. `write_tiff_stack` in `one_file_per_image` mode
+  is the one export path with a determinate item count and emits one event per file, naming it; stack
+  mode reports its single multi-page write as one step, so the default export path is not silent
+  either. `normalize_with_dark` — `normalize_transmission`'s sibling on the CCD path, which was
+  reporting nothing — reports its two dark subtractions and then hands its reporter to the normalizer,
+  so a dark-corrected run counts through both functions as **one continuous bar** rather than
+  restarting. Both totals come from one shared helper so they cannot drift apart. Its shared-dark
+  variance correction is announced too: that correction is **58% of the function's wall clock** at
+  80 x 512², and it ran outside the reporting context at first, so a caller saw the bar reach its total
+  and the bars vanish and then waited out more than half the call with nothing on screen. Reporting
+  does not change a single byte of any written file, nor any computed value: the dark normalizer's
+  output is bit-identical across seven correction branches, variances included.
+
+- **Progress documentation** — a new {doc}`progress <progress>` page (`docs/progress.md`, in the
+  toctree under "Using") covering what progress reporting tells you and what it deliberately does not:
+  you get movement and a per-stage rate, **not a whole-run ETA**, because stage costs differ by 60-120x
+  and which stages run depends on the arguments. Three worked examples — the built-in bar, a callback
+  driving your own bar, and cancelling a run — each executed and shown with its real output, plus a
+  per-stage table of what is counted and a plain list of the operations that are not.
+
+  It also documents the one interaction a user will otherwise hit blind: NeuNorm logs through loguru,
+  whose default handler writes to the same stderr `tqdm` draws on, so records garble the bars — five of
+  them in a measured MARS CCD run. The remedy given (remove your handler, add a `tqdm.write` sink with
+  `file=sys.stderr`, restore afterwards) was tested against the alternatives, and the two easy mistakes
+  are called out because both were measured: adding the sink *alongside* the default handler doubles the
+  collisions rather than removing them, and omitting `file=sys.stderr` silently moves every log record
+  to stdout. `docs/migration.md` gains the row for the lost 1.x flag — `Normalization(..., notebook=True)`
+  → `progress=` — which is why the regression went unnoticed for a whole major version.
+
+  Every Python block on the page is extracted and **executed** by `tests/unit/test_docs_progress_examples.py`,
+  including the log remedy, which is run in a subprocess and checked to leave zero collisions with the
+  records still on stderr. Six mutations of the documentation are each caught by those tests.
+
+- **`progress` on all six pipelines** — `run_mars_ccd_pipeline`, `run_venus_ccd_pipeline`,
+  `run_mars_tpx3_pipeline`, `run_venus_tpx1_pipeline`, `run_venus_tpx3_histogram_pipeline` and
+  `run_venus_tpx3_event_pipeline` take a keyword-only `progress`, which is what makes any of this
+  visible from the public API: `progress=True` draws one `tqdm` bar per stage, a callable receives every
+  event, and raising from it cancels the run. A CCD run draws seven bars — sample, open-beam and dark
+  loads, the run combine, the gamma filter, the normalization and the export; a TOF run adds the TOF
+  rebin and, for event input, histogramming.
+
+  Each **load stage counts across the whole run, not per input run**: three sample runs of 40 frames
+  count 1…120 under one total of 120. That matters beyond neatness — the documented `tqdm` adapter is
+  `bar.update(event.completed - bar.n)`, so a count that restarts per run computes a *negative* delta.
+  Stage totals are declared by the pipeline, because a handed-down reporter deliberately keeps the total
+  its caller bound; to stop those totals drifting from the ticks that actually arrive, each is derived
+  from a helper exported by the code that emits them — `GAMMA_FILTER_STEPS`,
+  `LOAD_EVENT_NEXUS_STEPS`, `normalize_step_count`, `normalize_with_dark_step_count`,
+  `hdf5_export_step_count`, `tiff_export_step_count`.
+
+  The event path reports differently, because reading one NeXus file is not one cheap item: each file is
+  named as it is opened and then counted in the four full-event-length allocations it performs, so a
+  single 40-million-event file still shows movement. Histogramming carries **no total** — the chunk
+  count follows from a file's event count, which is not known until the file is read — rather than an
+  assumed one-chunk-per-file that a large run would overshoot. Two operations no instrumented leaf
+  covers are now reported by the pipelines themselves: `combine_runs`, the largest silent block in a
+  multi-run job, and `rebin_tof`, whose median reduction is one of the slowest stages in a TOF run.
+  What is still not reported, deliberately: the ROI crop, the open-beam/dark averaging, dead/hot pixel
+  detection, the spatial rebin and the air-region correction — single whole-array passes between named
+  stages. Each pipeline's `progress` docstring lists what its own run leaves unreported, so it is not
+  left to be inferred from a bar that seems to pause — the lists differ, because the pipelines do:
+  VENUS TPX1 detects dead pixels but not hot ones, MARS CCD and MARS TPX3 have no air-region correction,
+  and only the TOF pipelines rebin.
+
 - **Per-image TIFF export** — `write_tiff_stack(..., one_file_per_image=True)`, exposed on the
   VENUS TOF pipelines as `tiff_one_file_per_image=True`, writes **one scitiff file per spectral
   image** (one normalization per file) named `<stem>_00000.tiff`, `<stem>_00001.tiff`, … in spectral
@@ -67,6 +214,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a pointer to the region-statistics parameters. Output-file provenance records a JSON summary
   (shape, selected-pixel count, source, sha256), including `air_roi`. Rectangle-only inputs are
   bit-identical to 2.2.x.
+
+### Changed
+
+- **Parameters added since v2.2.3 are now keyword-only, and the released positional order is guarded
+  by tests.** `rebin_reduction` and `tiff_one_file_per_image` on the three VENUS TOF pipelines,
+  `one_file_per_image` and `concat_stdevs_and_mask` on `write_tiff_stack`, and `image_dir` on
+  `load_metadata`, are keyword-only. All of them
+  had been added positionally on `next`, and `rebin_reduction` in particular was inserted immediately
+  after `rebin_by_tof`, shifting every later positional parameter — five of them in
+  `venus_tpx3_event`. None of it had been released, so the shift is undone rather than frozen: the
+  positional parameter names and order of all six pipelines and of `write_tiff_stack` are again
+  exactly those of v2.2.3 (some type annotations have widened since, which does not affect binding), and `tests/unit/test_public_signatures.py` pins them against the tag (not against the
+  current code) plus asserts that anything added since is keyword-only and that no released parameter
+  becomes positional-only. **No action is needed for any released caller** — this restores v2.2.3's
+  order rather than departing from it. Callers written against `next` since 3bd2b07 that passed those
+  four arguments positionally must switch to keywords; every in-repo and documented call site already
+  used keywords.
 
 ### Fixed
 

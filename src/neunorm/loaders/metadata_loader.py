@@ -18,6 +18,7 @@ def load_metadata(  # noqa: C901
     file_path: Union[str, Path],
     read_shutter_counts: bool = False,
     read_spectra_tof: bool = False,
+    *,
     image_dir: Optional[Union[str, Path]] = None,
 ) -> dict[str, sc.Variable]:
     """Load metadata from NeXus file.

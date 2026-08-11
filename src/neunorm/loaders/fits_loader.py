@@ -13,8 +13,16 @@ import scipp as sc
 from astropy.io import fits
 from loguru import logger
 
+from neunorm.utils.progress import STAGE_LOAD_SAMPLE, ProgressLike, resolve_progress
 
-def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray] = None) -> sc.DataArray:  # noqa: C901
+
+def load_fits_stack(  # noqa: C901
+    paths: Sequence[str | Path],
+    tof_edges: Optional[np.ndarray] = None,
+    *,
+    progress: ProgressLike = False,
+    stage: str = STAGE_LOAD_SAMPLE,
+) -> sc.DataArray:
     """
     Load FITS stack as scipp DataArray with metadata and optional TOF coordinates.
 
@@ -31,6 +39,15 @@ def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
         Time-of-flight values for the first dimension.
         Accepts either bin edges (N+1) or bin centers (N), where N is the
         number of images in the loaded stack.
+    progress : bool or callable, optional
+        Progress reporting, off by default. ``True`` draws a :mod:`tqdm` bar; a callable receives a
+        :class:`~neunorm.utils.progress.ProgressEvent` per file read, plus a note before each of the
+        two whole-stack allocations that follow the read loop. A pipeline normally passes a pre-bound
+        reporter here instead, so its per-file count spans every run rather than restarting.
+        See :mod:`neunorm.utils.progress`.
+    stage : str, optional
+        Stage label the events carry. Defaults to ``STAGE_LOAD_SAMPLE``; pass ``STAGE_LOAD_OB`` or
+        ``STAGE_LOAD_DARK`` when loading those, so a callback can tell the loads of a run apart.
 
     Returns
     -------
@@ -46,92 +63,111 @@ def load_fits_stack(paths: Sequence[str | Path], tof_edges: Optional[np.ndarray]
           along the stack dimension.
     """
 
-    if not paths:
-        raise ValueError("No file paths provided")
-
     # Load data and metadata
     data_list = []
     headers = []
 
-    try:
-        # Load all files
+    # A non-sized iterable (Path.glob(), a generator) was accepted before this function reported
+    # progress and must still be: materialise once so the count has a denominator. Wrapped so an
+    # iterator that raises is logged like any other read failure. This runs BEFORE the emptiness
+    # check because a generator is always truthy — an empty glob would otherwise skip the check and
+    # die later with IndexError on `data_list[0]`.
+    if not hasattr(paths, "__len__"):
+        try:
+            paths = list(paths)
+        except Exception as e:
+            logger.error("Failed to load FITS files: {}", e)
+            raise
+
+    if not paths:
+        raise ValueError("No file paths provided")
+
+    with resolve_progress(progress, stage, total=len(paths)) as report:
         for path in paths:
-            with fits.open(path) as hdul:
-                info_buf = io.StringIO()
-                hdul.info(output=info_buf)
-                logger.debug("FITS info for {}:\n{}", path, info_buf.getvalue().rstrip())
+            # The try covers only the read: an exception raised by a progress callback (which is how a
+            # caller cancels) must not be logged as a failed FITS read, so the tick is emitted outside.
+            try:
+                with fits.open(path) as hdul:
+                    info_buf = io.StringIO()
+                    hdul.info(output=info_buf)
+                    logger.debug("FITS info for {}:\n{}", path, info_buf.getvalue().rstrip())
 
-                # Assume data is in primary HDU. float32 is sufficient for neutron
-                # imaging (16-bit detectors) and halves the in-memory footprint of
-                # large stacks.
-                arr = hdul[0].data.astype(np.float32)
-                data_list.append(arr)
+                    # Assume data is in primary HDU. float32 is sufficient for neutron
+                    # imaging (16-bit detectors) and halves the in-memory footprint of
+                    # large stacks.
+                    arr = hdul[0].data.astype(np.float32)
+                    data_list.append(arr)
 
-                # Store header from first file
-                headers.append(hdul[0].header)
-    except Exception as e:
-        logger.error(f"Failed to load FITS files: {e}")
-        raise
+                    # Store header from first file
+                    headers.append(hdul[0].header)
+            except Exception as e:
+                logger.error("Failed to load FITS files: {}", e)
+                raise
+            report(detail=Path(path).name)
 
-    # Check shapes consistency
-    first_shape = data_list[0].shape
-    # Verify other shapes match
-    for i, arr in enumerate(data_list[1:]):
-        if arr.shape != first_shape:
-            raise ValueError(f"Shape mismatch in file {paths[i + 1]}: expected {first_shape}, got {arr.shape}")
+        # Check shapes consistency
+        first_shape = data_list[0].shape
+        # Verify other shapes match
+        for i, arr in enumerate(data_list[1:]):
+            if arr.shape != first_shape:
+                raise ValueError(f"Shape mismatch in file {paths[i + 1]}: expected {first_shape}, got {arr.shape}")
 
-    # Stack
-    full_data = np.stack(data_list, axis=0)
+        # The read loop only appended to a list; the memory peak is here and in the variances copy
+        # below. See the same comment in tiff_loader.
+        report.note(f"stacking {len(data_list)} frames")
+        full_data = np.stack(data_list, axis=0)
 
-    n_images, ny, nx = full_data.shape
+        n_images, ny, nx = full_data.shape
 
-    # Determine dimension names
-    # If tof_edges provided, use 'TOF', else uses 'N_image'
-    dim_name = "TOF" if tof_edges is not None else "N_image"
-    dims = [dim_name, "y", "x"]
+        # Determine dimension names
+        # If tof_edges provided, use 'TOF', else uses 'N_image'
+        dim_name = "TOF" if tof_edges is not None else "N_image"
+        dims = [dim_name, "y", "x"]
 
-    # Validate data for Poisson statistics: counts must be non-negative.
-    if np.any(full_data < 0):
-        raise ValueError(
-            "Loaded FITS data contains negative counts; cannot attach Poisson "
-            "variances (variance = counts) to negative data."
-        )
-
-    # Create DataArray
-    # Assuming variance = counts (Poisson) if not provided.
-    da = sc.DataArray(
-        data=sc.array(dims=dims, values=full_data, unit=sc.units.counts, variances=full_data.copy()),
-        coords={"y": sc.arange("y", ny, unit=None), "x": sc.arange("x", nx, unit=None)},
-    )
-
-    # Add TOF coordinate if provided
-    if tof_edges is not None:
-        tof_values = np.asarray(tof_edges)
-        if tof_values.ndim != 1:
-            raise ValueError(f"tof_edges must be a 1D array, got shape {tof_values.shape}")
-
-        if tof_values.size in (n_images, n_images + 1):
-            da.coords[dim_name] = sc.array(dims=[dim_name], values=tof_values, unit=sc.units.us)
-        else:
+        # Validate data for Poisson statistics: counts must be non-negative.
+        if np.any(full_data < 0):
             raise ValueError(
-                "Length of tof_edges must be number of images (bin centers) "
-                f"or number of images + 1 (bin edges), got {tof_values.size} "
-                f"with {n_images} images"
+                "Loaded FITS data contains negative counts; cannot attach Poisson "
+                "variances (variance = counts) to negative data."
             )
 
-    # Process header
-    if headers:
-        # Assume all headers have the same keys.
-        # Storing all as coords with dimension of the stack (e.g. 'N_image' or 'TOF')
-        for key in headers[0].keys():
-            if key not in ("COMMENT", "HISTORY"):  # Skip multi-line text fields
-                values = [hdr.get(key) for hdr in headers]
-                if len(set(str(v) for v in values)) == 1:
-                    # If all values are the same, store as scalar
-                    da.coords[key] = sc.scalar(value=values[0])
-                else:
-                    # Values differ across files, store as array with dimension of the stack
-                    da.coords[key] = sc.array(dims=[dim_name], values=values)
-                da.coords.set_aligned(key, False)
+        report.note(f"attaching variances ({full_data.nbytes / 1024**2:.1f} MiB)")
 
-    return da
+        # Create DataArray
+        # Assuming variance = counts (Poisson) if not provided.
+        da = sc.DataArray(
+            data=sc.array(dims=dims, values=full_data, unit=sc.units.counts, variances=full_data.copy()),
+            coords={"y": sc.arange("y", ny, unit=None), "x": sc.arange("x", nx, unit=None)},
+        )
+
+        # Add TOF coordinate if provided
+        if tof_edges is not None:
+            tof_values = np.asarray(tof_edges)
+            if tof_values.ndim != 1:
+                raise ValueError(f"tof_edges must be a 1D array, got shape {tof_values.shape}")
+
+            if tof_values.size in (n_images, n_images + 1):
+                da.coords[dim_name] = sc.array(dims=[dim_name], values=tof_values, unit=sc.units.us)
+            else:
+                raise ValueError(
+                    "Length of tof_edges must be number of images (bin centers) "
+                    f"or number of images + 1 (bin edges), got {tof_values.size} "
+                    f"with {n_images} images"
+                )
+
+        # Process header
+        if headers:
+            # Assume all headers have the same keys.
+            # Storing all as coords with dimension of the stack (e.g. 'N_image' or 'TOF')
+            for key in headers[0].keys():
+                if key not in ("COMMENT", "HISTORY"):  # Skip multi-line text fields
+                    values = [hdr.get(key) for hdr in headers]
+                    if len(set(str(v) for v in values)) == 1:
+                        # If all values are the same, store as scalar
+                        da.coords[key] = sc.scalar(value=values[0])
+                    else:
+                        # Values differ across files, store as array with dimension of the stack
+                        da.coords[key] = sc.array(dims=[dim_name], values=values)
+                    da.coords.set_aligned(key, False)
+
+        return da

@@ -25,6 +25,7 @@ The 1.x source is archived under
 | Primary output | TIFF | **HDF5** (TIFF secondary) |
 | TOF / event mode | none | **first-class** (VENUS, Timepix) |
 | Dev environment | conda `environment.yml` | **pixi** (`pixi.lock`) |
+| Progress feedback | `notebook=True` on `.load()` / `.normalization()` | `progress=True` or a callback on any of the six pipelines, reporting **every stage** ({doc}`progress`) |
 
 ## The fastest path: use a pipeline
 
@@ -114,6 +115,7 @@ transmission = normalize_transmission(sample, ob)  # T = sample / ob, variances 
 | `.get_normalized_data()` | the pipeline **returns** a `scipp.DataArray`; use `.values` for the NumPy array |
 | `from NeuNorm.roi import ROI; ROI(x0, y0, x1, y1)` | `from neunorm.data_models.roi import ROI; ROI(x0=10, y0=20, x1=30, y1=40)` (also `ROI(x0=10, y0=20, width=20, height=20)`), or a bare `(x0, y0, x1, y1)` tuple. Accepted by `apply_roi`, `apply_air_region_correction`, `normalize_transmission(background_roi=)`, and the pipelines. |
 | `NeuNorm.normalization.DataType` | not needed — inputs are explicit function arguments |
+| `.load(..., notebook=True)` and `.normalization(..., notebook=True)` (a widget progress bar) | `progress=True` on any of the six `run_*_pipeline` functions — `run_mars_ccd_pipeline(..., progress=True)` — or on the functions they call: `load_stack`, `load_tiff_stack`, `load_fits_stack`, `load_event_nexus`, `convert_events_to_histogram`, `convert_events_to_2d_histogram`, `apply_gamma_filter`, `normalize_transmission`, `normalize_with_dark`, `write_hdf5`, `write_tiff_stack`. Reports every stage rather than the load alone, and works in a terminal as well as a notebook (`tqdm.auto` picks the bar). Pass a **callable** instead to drive your own display, or to cancel a run by raising from it. See {doc}`progress`. |
 
 ## ROI
 
@@ -148,6 +150,7 @@ TIFF), so downstream tools can read it directly without re-running the pipeline.
 
 ## Next steps
 
+- {doc}`progress` — how to see where a long run has got to, and how to cancel one.
 - {doc}`api` — full API reference for every loader, processing function, and pipeline.
 - The per-workflow guides under {doc}`workflows/README` walk through each
   detector/facility combination end to end.

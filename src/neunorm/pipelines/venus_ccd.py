@@ -20,20 +20,34 @@ from neunorm.data_models.roi import (
     as_roi_bounds,
     region_provenance,
 )
-from neunorm.exporters.hdf5_writer import write_hdf5
-from neunorm.exporters.tiff_writer import write_tiff_stack
-from neunorm.filters.gamma_filter import apply_gamma_filter
+from neunorm.exporters.hdf5_writer import hdf5_export_step_count, write_hdf5
+from neunorm.exporters.tiff_writer import tiff_export_step_count, write_tiff_stack
+from neunorm.filters.gamma_filter import GAMMA_FILTER_STEPS, apply_gamma_filter
 from neunorm.loaders.stack_loader import load_stack
 from neunorm.processing.air_region_corrector import apply_air_region_correction
 from neunorm.processing.normalizer import (
     BackgroundROILike,
+    normalize_step_count,
     normalize_transmission,
     normalize_with_dark,
+    normalize_with_dark_step_count,
 )
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.run_combiner import combine_runs
 from neunorm.tof.pixel_detector import detect_dead_pixels
+from neunorm.utils.progress import (
+    STAGE_COMBINE_RUNS,
+    STAGE_EXPORT,
+    STAGE_GAMMA_FILTER,
+    STAGE_LOAD_DARK,
+    STAGE_LOAD_OB,
+    STAGE_LOAD_SAMPLE,
+    STAGE_NORMALIZE,
+    Progress,
+    resolve_progress,
+    total_across_groups,
+)
 
 
 def run_venus_ccd_pipeline(  # noqa: C901
@@ -45,6 +59,8 @@ def run_venus_ccd_pipeline(  # noqa: C901
     gamma_filter: bool = True,
     air_roi: Optional[RegionLike] = None,
     background_roi: Optional[BackgroundROILike] = None,
+    *,
+    progress: Progress = False,
 ) -> sc.DataArray:
     """Execute VENUS CCD/CMOS normalization pipeline.
 
@@ -94,6 +110,17 @@ def run_venus_ccd_pipeline(  # noqa: C901
         normalization when proton charge is unavailable. Mutually exclusive with proton-charge
         correction. If ``roi`` is also given the detector is cropped first, so ``background_roi``
         indices are resolved in the post-crop frame.
+    progress : bool or callable, optional
+        Progress reporting for the whole run, off by default (and free when off). ``True`` lets
+        NeuNorm draw one :mod:`tqdm` bar per stage; a callable receives a
+        :class:`~neunorm.utils.progress.ProgressEvent` for every item or step and is how any progress
+        library is driven. Raising from the callback cancels the run.
+
+        The stages reported are the sample, open-beam and dark loads — **one event per file**, counted
+        across all input runs rather than restarting per run — then the run combine, the gamma filter,
+        the normalization and the export. Not every operation in between is reported: the ROI crop, the
+        dark/open-beam averaging, the dead-pixel detection and the air-region correction are single
+        whole-array passes that run between named stages. See :mod:`neunorm.utils.progress`.
 
     Notes
     -----
@@ -117,169 +144,225 @@ def run_venus_ccd_pipeline(  # noqa: C901
     if output_path is None:
         raise ValueError("output_path is required")
 
-    # Load data
-    samples = [load_stack(paths) for paths in sample_paths]
-    ob = [load_stack(paths) for paths in ob_paths]
+    # One reporter for the whole run, resolved exactly once: a second resolve of `progress=True`
+    # would build a second tqdm sink and a duplicate set of bars. Each stage below takes its own
+    # view via `run_progress.for_stage(...)`, and the leaves it calls borrow that view, so only this
+    # context manager retires the bars — on the way out of a clean run and of a failed one alike.
+    with resolve_progress(progress) as run_progress:
+        # Load data. One reporter per input family, reused for every run in it: a borrowed view shares
+        # its counter cell, so N calls accumulate into one count across the whole run instead of
+        # restarting per run.
+        load_sample = run_progress.for_stage(STAGE_LOAD_SAMPLE, total=total_across_groups(sample_paths))
+        samples = [load_stack(paths, progress=load_sample) for paths in sample_paths]
+        load_ob = run_progress.for_stage(STAGE_LOAD_OB, total=total_across_groups(ob_paths))
+        ob = [load_stack(paths, progress=load_ob) for paths in ob_paths]
 
-    # Before combining, check that all sample runs have the same shape and some metadata keys match
-    # Keys to check ManufacturerStr. IntegratedPCharge is included in metadata checks and is
-    # effectively averaged/normalized across runs (not summed) when normalize_by_runs=True.
+        # Combining runs is the largest operation here that no instrumented leaf covers, and VENUS
+        # relies on it, so it is reported as named steps rather than left silent.
+        combine = run_progress.for_stage(STAGE_COMBINE_RUNS, total=3 if dark_paths else 2)
 
-    # When background_roi is used (proton-charge proxy), don't require/aggregate IntegratedPCharge.
-    pc_keys = () if background_roi is not None else ("IntegratedPCharge",)
+        # Before combining, check that all sample runs have the same shape and some metadata keys match
+        # Keys to check ManufacturerStr. IntegratedPCharge is included in metadata checks and is
+        # effectively averaged/normalized across runs (not summed) when normalize_by_runs=True.
 
-    sample = combine_runs(
-        samples,
-        metadata_keys_to_sum=pc_keys,
-        metadata_check_match=["ManufacturerStr"],
-        normalize_by_runs=True,
-    )
+        # When background_roi is used (proton-charge proxy), don't require/aggregate IntegratedPCharge.
+        pc_keys = () if background_roi is not None else ("IntegratedPCharge",)
 
-    ob = combine_runs(
-        ob,
-        metadata_keys_to_sum=pc_keys,
-        metadata_check_match=["ManufacturerStr"],
-        normalize_by_runs=True,
-    )
-
-    # Dark current is optional: only load/combine it when dark paths are provided.
-    dark = None
-    if dark_paths:
-        dark_runs = [load_stack(paths) for paths in dark_paths]
-        dark = combine_runs(
-            dark_runs,
+        combine.note(f"combining {len(samples)} sample run(s)")
+        sample = combine_runs(
+            samples,
             metadata_keys_to_sum=pc_keys,
             metadata_check_match=["ManufacturerStr"],
             normalize_by_runs=True,
         )
+        combine()
 
-    # Apply ROI if specified
-    if roi:
-        sample = apply_roi(sample, roi)
-        ob = apply_roi(ob, roi)
-        if dark is not None:
-            dark = apply_roi(dark, roi)
+        combine.note(f"combining {len(ob)} open-beam run(s)")
+        ob = combine_runs(
+            ob,
+            metadata_keys_to_sum=pc_keys,
+            metadata_check_match=["ManufacturerStr"],
+            normalize_by_runs=True,
+        )
+        combine()
 
-    # Average dark and OB
-    if dark is not None:
-        dark = prepare_reference(dark, dim="N_image")
-    ob = prepare_reference(ob, dim="N_image")
-
-    # Dead pixel detection
-    sample.masks["dead_pixels"] = detect_dead_pixels(sample)
-
-    # Gamma filtering (optional)
-    if gamma_filter:
-        sample = apply_gamma_filter(sample)
-
-    # Dark correction (optional) + normalization. The proton-charge coords are cast to float32
-    # so the division does not silently re-promote the float32 image data to float64 (the coord
-    # is float64 because metadata is parsed via float()). With a shared dark
-    # frame, normalize_with_dark subtracts the dark and normalizes in one step so the dark
-    # variance is not double-counted in the transmission uncertainty.
-    if background_roi is not None:
-        # Flux-proxy normalization from a sample-free ROI, replacing the proton-charge
-        # correction. With a shared dark, route through normalize_with_dark so the shared-dark
-        # variance double-count is corrected (k = co/cs).
-        if dark is not None:
-            transmission = normalize_with_dark(sample, ob, dark, background_roi=background_roi)
-        else:
-            transmission = normalize_transmission(sample, ob, background_roi=background_roi)
-        # IntegratedPCharge was neither used nor aggregated in this mode (pc_keys=()), so the
-        # combined array still carries the first run's loaded value as an unaligned coord. Drop it
-        # so a stale, never-aggregated proton charge does not reach the output coords/provenance.
-        if "IntegratedPCharge" in transmission.coords:
-            del transmission.coords["IntegratedPCharge"]
-    else:
-        proton_charge_sample = sample.coords["IntegratedPCharge"].astype("float32")
-        proton_charge_ob = ob.coords["IntegratedPCharge"].astype("float32")
-        if dark is not None:
-            transmission = normalize_with_dark(
-                sample,
-                ob,
-                dark,
-                proton_charge_sample=proton_charge_sample,
-                proton_charge_ob=proton_charge_ob,
+        # Dark current is optional: only load/combine it when dark paths are provided.
+        dark = None
+        if dark_paths:
+            load_dark = run_progress.for_stage(STAGE_LOAD_DARK, total=total_across_groups(dark_paths))
+            dark_runs = [load_stack(paths, progress=load_dark) for paths in dark_paths]
+            combine.note(f"combining {len(dark_runs)} dark run(s)")
+            dark = combine_runs(
+                dark_runs,
+                metadata_keys_to_sum=pc_keys,
+                metadata_check_match=["ManufacturerStr"],
+                normalize_by_runs=True,
             )
-        else:
-            logger.info("No dark current provided; skipping dark correction")
-            transmission = normalize_transmission(
-                sample=sample,
-                ob=ob,
-                proton_charge_sample=proton_charge_sample,
-                proton_charge_ob=proton_charge_ob,
+            combine()
+
+        # Apply ROI if specified
+        if roi:
+            sample = apply_roi(sample, roi)
+            ob = apply_roi(ob, roi)
+            if dark is not None:
+                dark = apply_roi(dark, roi)
+
+        # Average dark and OB
+        if dark is not None:
+            dark = prepare_reference(dark, dim="N_image")
+        ob = prepare_reference(ob, dim="N_image")
+
+        # Dead pixel detection
+        sample.masks["dead_pixels"] = detect_dead_pixels(sample)
+
+        # Gamma filtering (optional). The step count comes from the filter's own constant: a
+        # handed-down reporter keeps the total its caller bound, so a literal here could drift.
+        if gamma_filter:
+            sample = apply_gamma_filter(
+                sample, progress=run_progress.for_stage(STAGE_GAMMA_FILTER, total=GAMMA_FILTER_STEPS)
             )
 
-    # Air region correction (optional)
-    if air_roi is not None:
-        transmission = apply_air_region_correction(transmission, air_roi)
+        # Dark correction (optional) + normalization. The proton-charge coords are cast to float32
+        # so the division does not silently re-promote the float32 image data to float64 (the coord
+        # is float64 because metadata is parsed via float()). With a shared dark
+        # frame, normalize_with_dark subtracts the dark and normalizes in one step so the dark
+        # variance is not double-counted in the transmission uncertainty.
+        if background_roi is not None:
+            # Flux-proxy normalization from a sample-free ROI, replacing the proton-charge
+            # correction. With a shared dark, route through normalize_with_dark so the shared-dark
+            # variance double-count is corrected (k = co/cs).
+            if dark is not None:
+                transmission = normalize_with_dark(
+                    sample,
+                    ob,
+                    dark,
+                    background_roi=background_roi,
+                    progress=run_progress.for_stage(
+                        STAGE_NORMALIZE, total=normalize_with_dark_step_count(background_roi)
+                    ),
+                )
+            else:
+                transmission = normalize_transmission(
+                    sample,
+                    ob,
+                    background_roi=background_roi,
+                    progress=run_progress.for_stage(STAGE_NORMALIZE, total=normalize_step_count(background_roi)),
+                )
+            # IntegratedPCharge was neither used nor aggregated in this mode (pc_keys=()), so the
+            # combined array still carries the first run's loaded value as an unaligned coord. Drop it
+            # so a stale, never-aggregated proton charge does not reach the output coords/provenance.
+            if "IntegratedPCharge" in transmission.coords:
+                del transmission.coords["IntegratedPCharge"]
+        else:
+            proton_charge_sample = sample.coords["IntegratedPCharge"].astype("float32")
+            proton_charge_ob = ob.coords["IntegratedPCharge"].astype("float32")
+            if dark is not None:
+                transmission = normalize_with_dark(
+                    sample,
+                    ob,
+                    dark,
+                    proton_charge_sample=proton_charge_sample,
+                    proton_charge_ob=proton_charge_ob,
+                    progress=run_progress.for_stage(
+                        STAGE_NORMALIZE,
+                        total=normalize_with_dark_step_count(proton_charge_sample=proton_charge_sample),
+                    ),
+                )
+            else:
+                logger.info("No dark current provided; skipping dark correction")
+                transmission = normalize_transmission(
+                    sample=sample,
+                    ob=ob,
+                    proton_charge_sample=proton_charge_sample,
+                    proton_charge_ob=proton_charge_ob,
+                    progress=run_progress.for_stage(
+                        STAGE_NORMALIZE,
+                        total=normalize_step_count(proton_charge_sample=proton_charge_sample),
+                    ),
+                )
 
-    # Guarantee a float32 normalized data product, regardless of any
-    # intermediate dtype promotion. .astype converts values and variances.
-    transmission = transmission.astype("float32")
+        # Air region correction (optional)
+        if air_roi is not None:
+            transmission = apply_air_region_correction(transmission, air_roi)
 
-    # Write output
-    metadata = {
-        "sample_paths": [[str(p) for p in run] for run in sample_paths],
-        "ob_paths": [[str(p) for p in run] for run in ob_paths],
-        "gamma_filter_applied": gamma_filter,
-        "dark_correction_applied": dark is not None,
-        "processing_timestamp": datetime.now().isoformat(),
-        "version": __version__,
-    }
+        # Guarantee a float32 normalized data product, regardless of any
+        # intermediate dtype promotion. .astype converts values and variances.
+        transmission = transmission.astype("float32")
 
-    # Only record dark_paths when dark correction was actually applied.
-    if dark_paths:
-        metadata["dark_paths"] = [[str(p) for p in run] for run in dark_paths]
-
-    if roi:
-        metadata["roi_applied"] = region_provenance(roi)
-
-    if air_roi is not None:
-        metadata["air_roi"] = region_provenance(air_roi)
-
-    if background_roi is not None:
-        metadata["background_roi"] = as_region_provenance(background_roi)
-
-    if output_path.suffix.lower() in (".hdf5", ".h5"):
-        write_hdf5(output_path, transmission, dead_pixel_mask="dead_pixels", metadata=metadata)
-    elif output_path.suffix.lower() in (".tiff", ".tif"):
-        rename_map = {}
-        if "N_image" in transmission.dims:
-            rename_map["N_image"] = "z"  # TIFF stacks typically use 'z' for the stack dimension
-        if rename_map:
-            transmission = transmission.rename_dims(rename_map)
-
-        model = "Unknown"
-        if "ManufacturerStr" in sample.coords:
-            model = sample.coords["ManufacturerStr"].value
-        elif "ModelStr" in sample.coords:
-            model = sample.coords["ModelStr"].value
-        elif "Model" in sample.coords:
-            model = sample.coords["Model"].value
-
-        daqmetadata = {
-            "facility": "SNS",
-            "instrument": "VENUS",
-            "detector_type": model,
-            "source_type": "neutron",
+        # Write output
+        metadata = {
+            "sample_paths": [[str(p) for p in run] for run in sample_paths],
+            "ob_paths": [[str(p) for p in run] for run in ob_paths],
+            "gamma_filter_applied": gamma_filter,
+            "dark_correction_applied": dark is not None,
+            "processing_timestamp": datetime.now().isoformat(),
+            "version": __version__,
         }
 
-        # Combine all masks and broadcast to the shape of the transmission data.
-        # Mask must be same shape as the image data for scitiff.
-        if transmission.masks:
-            combined_mask = np.zeros_like(transmission.values, dtype=bool)
-            for mask in transmission.masks.values():
-                combined_mask |= mask.values
+        # Only record dark_paths when dark correction was actually applied.
+        if dark_paths:
+            metadata["dark_paths"] = [[str(p) for p in run] for run in dark_paths]
 
-            # remove other masks
-            transmission.masks.clear()
-            # add combined mask back in with name "scitiff-mask"
-            transmission.masks["scitiff-mask"] = sc.array(dims=transmission.dims, values=combined_mask, dtype=bool)
+        if roi:
+            metadata["roi_applied"] = region_provenance(roi)
 
-        write_tiff_stack(output_path, transmission, metadata=metadata, daqmetadata=daqmetadata)
-    else:
-        raise ValueError(f"Unsupported output file format: {output_path.suffix}")
+        if air_roi is not None:
+            metadata["air_roi"] = region_provenance(air_roi)
 
-    logger.success("VENUS CCD pipeline completed successfully. Output written to {}", output_path)
-    return transmission
+        if background_roi is not None:
+            metadata["background_roi"] = as_region_provenance(background_roi)
+
+        if output_path.suffix.lower() in (".hdf5", ".h5"):
+            write_hdf5(
+                output_path,
+                transmission,
+                dead_pixel_mask="dead_pixels",
+                metadata=metadata,
+                progress=run_progress.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(transmission, metadata)),
+            )
+        elif output_path.suffix.lower() in (".tiff", ".tif"):
+            rename_map = {}
+            if "N_image" in transmission.dims:
+                rename_map["N_image"] = "z"  # TIFF stacks typically use 'z' for the stack dimension
+            if rename_map:
+                transmission = transmission.rename_dims(rename_map)
+
+            model = "Unknown"
+            if "ManufacturerStr" in sample.coords:
+                model = sample.coords["ManufacturerStr"].value
+            elif "ModelStr" in sample.coords:
+                model = sample.coords["ModelStr"].value
+            elif "Model" in sample.coords:
+                model = sample.coords["Model"].value
+
+            daqmetadata = {
+                "facility": "SNS",
+                "instrument": "VENUS",
+                "detector_type": model,
+                "source_type": "neutron",
+            }
+
+            # Combine all masks and broadcast to the shape of the transmission data.
+            # Mask must be same shape as the image data for scitiff.
+            if transmission.masks:
+                combined_mask = np.zeros_like(transmission.values, dtype=bool)
+                for mask in transmission.masks.values():
+                    combined_mask |= mask.values
+
+                # remove other masks
+                transmission.masks.clear()
+                # add combined mask back in with name "scitiff-mask"
+                transmission.masks["scitiff-mask"] = sc.array(dims=transmission.dims, values=combined_mask, dtype=bool)
+
+            write_tiff_stack(
+                output_path,
+                transmission,
+                metadata=metadata,
+                daqmetadata=daqmetadata,
+                progress=run_progress.for_stage(STAGE_EXPORT, total=tiff_export_step_count(transmission)),
+            )
+        else:
+            raise ValueError(f"Unsupported output file format: {output_path.suffix}")
+
+        logger.success("VENUS CCD pipeline completed successfully. Output written to {}", output_path)
+        return transmission

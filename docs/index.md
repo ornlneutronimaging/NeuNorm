@@ -22,6 +22,13 @@ migration
 ```
 
 ```{toctree}
+:maxdepth: 1
+:caption: Using
+
+progress
+```
+
+```{toctree}
 :maxdepth: 2
 :caption: Workflows
 

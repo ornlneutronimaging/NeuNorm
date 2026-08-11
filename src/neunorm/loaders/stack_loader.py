@@ -9,9 +9,15 @@ import scipp as sc
 
 from neunorm.loaders.fits_loader import load_fits_stack
 from neunorm.loaders.tiff_loader import load_tiff_stack
+from neunorm.utils.progress import STAGE_LOAD_SAMPLE, ProgressLike
 
 
-def load_stack(paths: Sequence[str | Path]) -> sc.DataArray:
+def load_stack(
+    paths: Sequence[str | Path],
+    *,
+    progress: ProgressLike = False,
+    stage: str = STAGE_LOAD_SAMPLE,
+) -> sc.DataArray:
     """
     Load a stack of images from the given file paths, supporting both TIFF and FITS formats.
 
@@ -19,7 +25,25 @@ def load_stack(paths: Sequence[str | Path]) -> sc.DataArray:
     load_tiff_stack or load_fits_stack.
 
     Verify all files have the same extension and raise an error if not.
+
+    Parameters
+    ----------
+    paths : Sequence[str | Path]
+        Image files to load. All must share one extension.
+    progress : bool or callable, optional
+        Passed straight through to the chosen leaf loader, which emits one event per file. This
+        pass-through is what gives the CCD pipelines per-file progress: they call ``load_stack``
+        rather than the leaf loaders directly. See :mod:`neunorm.utils.progress`.
+    stage : str, optional
+        Stage label the events carry, also forwarded. Defaults to ``STAGE_LOAD_SAMPLE``; pass
+        ``STAGE_LOAD_OB`` or ``STAGE_LOAD_DARK`` when loading those, so a caller's callback can
+        tell the three loads of a run apart.
     """
+
+    # Materialise before indexing: this function subscripts `paths[0]` and iterates it twice, so a
+    # generator would raise TypeError. The leaf loaders accept one, so this does too.
+    if not hasattr(paths, "__len__"):
+        paths = list(paths)
 
     if not paths:
         raise ValueError("No file paths provided")
@@ -29,12 +53,12 @@ def load_stack(paths: Sequence[str | Path]) -> sc.DataArray:
         for path in paths:
             if Path(path).suffix.lower() != first_ext:
                 raise ValueError(f"All files must have the same extension. Found mixed extensions: {paths}")
-        return load_tiff_stack(paths)
+        return load_tiff_stack(paths, progress=progress, stage=stage)
     elif first_ext in (".fits", ".fit", ".fts"):
         for path in paths:
             if Path(path).suffix.lower() != first_ext:
                 raise ValueError(f"All files must have the same extension. Found mixed extensions: {paths}")
-        return load_fits_stack(paths)
+        return load_fits_stack(paths, progress=progress, stage=stage)
     else:
         raise ValueError(
             f"Unsupported file format: {first_ext}. Supported are TIFF (.tiff, .tif) and FITS (.fits, .fit, .fts)."

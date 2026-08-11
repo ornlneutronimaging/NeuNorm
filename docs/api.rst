@@ -128,3 +128,6 @@ Utilities
 
 .. automodule:: neunorm.utils.constants
    :members:
+
+.. automodule:: neunorm.utils.progress
+   :members:

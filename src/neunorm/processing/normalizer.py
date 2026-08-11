@@ -14,10 +14,67 @@ from loguru import logger
 
 from neunorm.data_models.roi import ROI, MaskROI, RegionsLike, as_region_list, as_roi_bounds
 from neunorm.processing.dark_corrector import subtract_dark
+from neunorm.utils.progress import STAGE_NORMALIZE, ProgressLike, resolve_progress
 
 # One region (rectangle or MaskROI) or a sequence of regions (pooled). A bare 4-int tuple/list is a
 # single rectangle. Kept as a named alias for backward compatibility with existing imports.
 BackgroundROILike = RegionsLike
+
+
+def normalize_step_count(background_roi=None, proton_charge_sample=None) -> int:
+    """How many progress steps :func:`normalize_transmission` will report for these arguments.
+
+    Shared with :func:`normalize_with_dark`, which reports its own dark subtractions and then hands its
+    reporter down: a borrowed reporter keeps the OUTER total, so the caller must declare the combined
+    count. Deriving both from one function is what stops the two drifting apart.
+
+    Public for the same reason a pipeline needs :data:`~neunorm.filters.gamma_filter.GAMMA_FILTER_STEPS`:
+    a caller that hands in a pre-bound ``ProgressReporter`` must declare that stage's total itself,
+    because ``resolve_progress`` does not let a callee re-bind one.
+
+    Parameters
+    ----------
+    background_roi : optional
+        The ``background_roi`` that will be passed to :func:`normalize_transmission`, or ``None``.
+    proton_charge_sample : optional
+        The ``proton_charge_sample`` that will be passed, or ``None``. Ignored when
+        ``background_roi`` is given, since the two corrections are mutually exclusive.
+
+    Returns
+    -------
+    int
+        The number of counted steps. Work announced with a note (the background-ROI variance term)
+        is deliberately not included: it does not advance the count.
+    """
+    n_steps = 1  # the division itself always runs
+    if background_roi is not None:
+        n_steps += 1
+    elif proton_charge_sample is not None:
+        n_steps += 2  # sample and OB are separate full-array divisions
+    return n_steps
+
+
+def normalize_with_dark_step_count(background_roi=None, proton_charge_sample=None) -> int:
+    """How many progress steps :func:`normalize_with_dark` will report for these arguments.
+
+    Its two dark subtractions plus whatever the delegate reports, so a pipeline declaring this as one
+    stage of a run gets one continuous count instead of a bar that stops short.
+
+    Parameters
+    ----------
+    background_roi : optional
+        The ``background_roi`` that will be passed to :func:`normalize_with_dark`, or ``None``.
+        Forwarded verbatim to :func:`normalize_step_count`.
+    proton_charge_sample : optional
+        The ``proton_charge_sample`` that will be passed, or ``None``. Ignored when ``background_roi``
+        is given, since the two corrections are mutually exclusive.
+
+    Returns
+    -------
+    int
+        The number of counted steps, dark subtractions included.
+    """
+    return 2 + normalize_step_count(background_roi, proton_charge_sample)
 
 
 def _as_plain_int_bounds(bounds: tuple) -> tuple[int, int, int, int]:
@@ -358,6 +415,9 @@ def normalize_transmission(  # noqa: C901
     pc_uncertainty: float = 0.005,
     background_roi: Optional[BackgroundROILike] = None,
     background_roi_strict: bool = True,
+    *,
+    progress: ProgressLike = False,
+    stage: str = STAGE_NORMALIZE,
 ) -> sc.DataArray:
     """
     Normalize sample by open beam to compute transmission.
@@ -404,6 +464,15 @@ def normalize_transmission(  # noqa: C901
         ``ValueError``. ``False`` skips only that guard and lets zeros propagate through the
         division (inf/nan output) — the legacy 1.x semantics, for downstreams reproducing 1.x
         outputs bit for bit. Structural errors (bad ROI bounds, missing dims) always raise.
+    progress : bool or callable, optional
+        Progress reporting, off by default. This function has no item axis, so it reports named
+        whole-array steps — the flux correction (background-ROI or proton-charge) and the division —
+        with the total computed from the correction actually requested. Work conditional on a value
+        only known mid-run is announced without advancing the count. Accepts an existing
+        ``ProgressReporter``, which is how ``normalize_with_dark`` makes its steps continue one count
+        rather than opening a second bar. See :mod:`neunorm.utils.progress`.
+    stage : str, optional
+        Stage label the events carry. Defaults to ``STAGE_NORMALIZE``.
 
     Returns
     -------
@@ -434,117 +503,141 @@ def normalize_transmission(  # noqa: C901
 
     roi_list = as_region_list(background_roi, arg_name="background_roi") if background_roi is not None else None
 
-    # Background-ROI flux normalization: when no proton charge is available
-    # (e.g. MARS), scale each image by its pooled mean counts in one or more sample-free ROIs so
-    # per-image beam-flux differences cancel: T = (S/mean(S[B])) / (O/mean(O[B])). First-order UQ.
-    if background_roi is not None:
-        if proton_charge_sample is not None or proton_charge_ob is not None:
-            raise ValueError(
-                "background_roi and proton_charge_sample/proton_charge_ob are mutually exclusive: "
-                "background_roi is the flux-normalization proxy for when proton charge is unavailable."
-            )
-        logger.info("Applying background-ROI flux normalization with ROI(s) {}", roi_list)
-        cs, co = _background_roi_means(sample, ob, roi_list, strict=background_roi_strict)
-        # scipp refuses to broadcast a variance-bearing scalar across the image (it would introduce
-        # correlations), so divide by the variance-free means and re-add their variance contribution
-        # below. Handle cs and co INDEPENDENTLY — the two inputs may carry variance on one side only
-        # (a variance-bearing co would otherwise make `ob / co` raise).
-        cs_var = sc.variances(cs) if cs.variances is not None else None
-        co_var = sc.variances(co) if co.variances is not None else None
-        cs.variances = None
-        co.variances = None
-        sample_corrected = sample / cs
-        ob_corrected = ob / co
-    else:
-        # Proton-charge correction must be applied to both sample and OB, or to neither: a one-sided
-        # correction leaves counts/charge uncancelled, so the transmission would not be dimensionless.
-        if (proton_charge_sample is None) != (proton_charge_ob is None):
-            raise ValueError(
-                "proton_charge_sample and proton_charge_ob must both be provided or both omitted; "
-                "a one-sided proton-charge correction yields a non-dimensionless transmission."
-            )
-
-        # Apply proton charge corrections if provided
-        if proton_charge_sample is not None:
-            if isinstance(proton_charge_sample, sc.Variable):
-                logger.info(
-                    f"Applying proton charge correction: Sample mean pc={proton_charge_sample.mean().value} "
-                    f"{proton_charge_sample.unit}"
+    # No item axis: a sequence of separable whole-array operations, each allocating arrays the size
+    # of the stack. The count is computed from the arguments because the work varies — the
+    # background-ROI and proton-charge corrections are mutually exclusive, and either may be absent —
+    # so a literal total would leave the bar short or overshooting.
+    with resolve_progress(progress, stage, total=normalize_step_count(background_roi, proton_charge_sample)) as report:
+        # Background-ROI flux normalization: when no proton charge is available
+        # (e.g. MARS), scale each image by its pooled mean counts in one or more sample-free ROIs so
+        # per-image beam-flux differences cancel: T = (S/mean(S[B])) / (O/mean(O[B])). First-order UQ.
+        if background_roi is not None:
+            if proton_charge_sample is not None or proton_charge_ob is not None:
+                raise ValueError(
+                    "background_roi and proton_charge_sample/proton_charge_ob are mutually exclusive: "
+                    "background_roi is the flux-normalization proxy for when proton charge is unavailable."
                 )
-                sample_corrected = sample / proton_charge_sample
-            else:
-                logger.info(f"  Applying proton charge correction: Sample pc={proton_charge_sample} C")
-                sample_corrected = sample / sc.scalar(proton_charge_sample, unit="C")
-
-            # Add proton charge systematic uncertainty
-            if sample_corrected.variances is not None:
-                pc_contribution = (pc_uncertainty * sample_corrected.values) ** 2
-                sample_corrected.variances = sample_corrected.variances + pc_contribution
+            logger.info("Applying background-ROI flux normalization with ROI(s) {}", roi_list)
+            report.note("background-ROI flux normalization")
+            cs, co = _background_roi_means(sample, ob, roi_list, strict=background_roi_strict)
+            # scipp refuses to broadcast a variance-bearing scalar across the image (it would introduce
+            # correlations), so divide by the variance-free means and re-add their variance contribution
+            # below. Handle cs and co INDEPENDENTLY — the two inputs may carry variance on one side only
+            # (a variance-bearing co would otherwise make `ob / co` raise).
+            cs_var = sc.variances(cs) if cs.variances is not None else None
+            co_var = sc.variances(co) if co.variances is not None else None
+            cs.variances = None
+            co.variances = None
+            sample_corrected = sample / cs
+            ob_corrected = ob / co
+            report()
         else:
-            sample_corrected = sample
-
-        if proton_charge_ob is not None:
-            if isinstance(proton_charge_ob, sc.Variable):
-                logger.info(
-                    f"Applying proton charge correction: OB mean pc={proton_charge_ob.mean().value} "
-                    f"{proton_charge_ob.unit}"
+            # Proton-charge correction must be applied to both sample and OB, or to neither: a one-sided
+            # correction leaves counts/charge uncancelled, so the transmission would not be dimensionless.
+            if (proton_charge_sample is None) != (proton_charge_ob is None):
+                raise ValueError(
+                    "proton_charge_sample and proton_charge_ob must both be provided or both omitted; "
+                    "a one-sided proton-charge correction yields a non-dimensionless transmission."
                 )
-                ob_corrected = ob / proton_charge_ob
-            else:
-                logger.info(f"  Applying proton charge correction: OB pc={proton_charge_ob:.1f} C")
-                ob_corrected = ob / sc.scalar(proton_charge_ob, unit="C")
 
-            # Add proton charge systematic uncertainty
-            if ob_corrected.variances is not None:
-                pc_contribution = (pc_uncertainty * ob_corrected.values) ** 2
-                ob_corrected.variances = ob_corrected.variances + pc_contribution
+            # Apply proton charge corrections if provided
+            if proton_charge_sample is not None:
+                report.note("proton-charge correction, sample")
+                if isinstance(proton_charge_sample, sc.Variable):
+                    logger.info(
+                        f"Applying proton charge correction: Sample mean pc={proton_charge_sample.mean().value} "
+                        f"{proton_charge_sample.unit}"
+                    )
+                    sample_corrected = sample / proton_charge_sample
+                else:
+                    logger.info(f"  Applying proton charge correction: Sample pc={proton_charge_sample} C")
+                    sample_corrected = sample / sc.scalar(proton_charge_sample, unit="C")
+
+                # Add proton charge systematic uncertainty
+                if sample_corrected.variances is not None:
+                    pc_contribution = (pc_uncertainty * sample_corrected.values) ** 2
+                    sample_corrected.variances = sample_corrected.variances + pc_contribution
+                report()
+            else:
+                sample_corrected = sample
+
+            if proton_charge_ob is not None:
+                report.note("proton-charge correction, open beam")
+                if isinstance(proton_charge_ob, sc.Variable):
+                    logger.info(
+                        f"Applying proton charge correction: OB mean pc={proton_charge_ob.mean().value} "
+                        f"{proton_charge_ob.unit}"
+                    )
+                    ob_corrected = ob / proton_charge_ob
+                else:
+                    logger.info(f"  Applying proton charge correction: OB pc={proton_charge_ob:.1f} C")
+                    ob_corrected = ob / sc.scalar(proton_charge_ob, unit="C")
+
+                # Add proton charge systematic uncertainty
+                if ob_corrected.variances is not None:
+                    pc_contribution = (pc_uncertainty * ob_corrected.values) ** 2
+                    ob_corrected.variances = ob_corrected.variances + pc_contribution
+                report()
+            else:
+                ob_corrected = ob
+
+        report.note("dividing sample by open beam")
+        # Normalize
+        if sample_corrected.dims == ob_corrected.dims:
+            transmission = sample_corrected / ob_corrected
         else:
-            ob_corrected = ob
+            # Need to broadcast to match dimensions
+            ob_corrected_broadcast = ob_corrected.copy()
+            ob_var = ob_corrected_broadcast.variances.copy() if ob_corrected_broadcast.variances is not None else None
+            ob_corrected_broadcast.variances = None
+            transmission = sample_corrected / ob_corrected_broadcast
+            # Recombine variances across the broadcast (scipp cannot propagate a variance-bearing
+            # denominator here, so the OB term is added manually). Handle EITHER side carrying variance:
+            # a no-variance sample must not drop the OB contribution. When only the sample carries
+            # variance, the division above already propagated it (the OB term is zero).
+            if ob_var is not None:
+                # Var(T) = (Var(Sample) / OB^2) + (Sample^2 * Var(OB) / OB^4)
+                ob_term = sample_corrected.values**2 * ob_var / ob_corrected_broadcast.values**4
+                if sample_corrected.variances is not None:
+                    transmission.variances = sample_corrected.variances / ob_corrected_broadcast.values**2 + ob_term
+                else:
+                    transmission.variances = ob_term
 
-    # Normalize
-    if sample_corrected.dims == ob_corrected.dims:
-        transmission = sample_corrected / ob_corrected
-    else:
-        # Need to broadcast to match dimensions
-        ob_corrected_broadcast = ob_corrected.copy()
-        ob_var = ob_corrected_broadcast.variances.copy() if ob_corrected_broadcast.variances is not None else None
-        ob_corrected_broadcast.variances = None
-        transmission = sample_corrected / ob_corrected_broadcast
-        # Recombine variances across the broadcast (scipp cannot propagate a variance-bearing
-        # denominator here, so the OB term is added manually). Handle EITHER side carrying variance:
-        # a no-variance sample must not drop the OB contribution. When only the sample carries
-        # variance, the division above already propagated it (the OB term is zero).
-        if ob_var is not None:
-            # Var(T) = (Var(Sample) / OB^2) + (Sample^2 * Var(OB) / OB^4)
-            ob_term = sample_corrected.values**2 * ob_var / ob_corrected_broadcast.values**4
-            if sample_corrected.variances is not None:
-                transmission.variances = sample_corrected.variances / ob_corrected_broadcast.values**2 + ob_term
-            else:
-                transmission.variances = ob_term
+        report()
 
-    # copy dropped unaligned coordinates from input
-    for coord in sample.coords:
-        if not sample.coords[coord].aligned:
-            transmission.coords[coord] = sample.coords[coord]
+        # copy dropped unaligned coordinates from input
+        for coord in sample.coords:
+            if not sample.coords[coord].aligned:
+                transmission.coords[coord] = sample.coords[coord]
 
-    # First-order contribution of the background-ROI mean uncertainty, added here because scipp
-    # could not propagate it through the shared-scalar division above. Treats sample/ob/cs/co as
-    # independent: Var(T) += T^2 * (Var(cs)/cs^2 + Var(co)/co^2). Accumulate whichever side carries
-    # variance (inputs may be variance-bearing on one side only).
-    if background_roi is not None and transmission.variances is not None and (cs_var is not None or co_var is not None):
-        coeff_rel_var = None
-        if cs_var is not None:
-            coeff_rel_var = cs_var / (cs * cs)
-        if co_var is not None:
-            co_term = co_var / (co * co)
-            coeff_rel_var = co_term if coeff_rel_var is None else coeff_rel_var + co_term
-        extra = sc.array(dims=list(transmission.dims), values=transmission.values**2) * coeff_rel_var
-        # Keep the variance dtype stable (float32 pipelines), matching normalize_with_dark.
-        transmission.variances = transmission.variances + extra.values.astype(transmission.variances.dtype, copy=False)
+        # First-order contribution of the background-ROI mean uncertainty, added here because scipp
+        # could not propagate it through the shared-scalar division above. Treats sample/ob/cs/co as
+        # independent: Var(T) += T^2 * (Var(cs)/cs^2 + Var(co)/co^2). Accumulate whichever side carries
+        # variance (inputs may be variance-bearing on one side only).
+        #
+        # Announced, not counted: whether it runs depends on the variances present on the result, which
+        # is not known when the total is computed from the arguments.
+        if (
+            background_roi is not None
+            and transmission.variances is not None
+            and (cs_var is not None or co_var is not None)
+        ):
+            report.note("background-ROI variance contribution")
+            coeff_rel_var = None
+            if cs_var is not None:
+                coeff_rel_var = cs_var / (cs * cs)
+            if co_var is not None:
+                co_term = co_var / (co * co)
+                coeff_rel_var = co_term if coeff_rel_var is None else coeff_rel_var + co_term
+            extra = sc.array(dims=list(transmission.dims), values=transmission.values**2) * coeff_rel_var
+            # Keep the variance dtype stable (float32 pipelines), matching normalize_with_dark.
+            transmission.variances = transmission.variances + extra.values.astype(
+                transmission.variances.dtype, copy=False
+            )
 
-    logger.success("✓ Transmission normalized")
+        logger.success("✓ Transmission normalized")
 
-    return transmission
+        return transmission
 
 
 def normalize_with_dark(
@@ -556,6 +649,9 @@ def normalize_with_dark(
     pc_uncertainty: float = 0.005,
     background_roi: Optional[BackgroundROILike] = None,
     background_roi_strict: bool = True,
+    *,
+    progress: ProgressLike = False,
+    stage: str = STAGE_NORMALIZE,
 ) -> sc.DataArray:
     """Dark-correct and normalize in one step, treating the shared dark frame correctly.
 
@@ -592,6 +688,12 @@ def normalize_with_dark(
     background_roi_strict : bool, optional
         See ``normalize_transmission``: ``False`` skips the strictly-positive/finite pooled-mean
         guard and lets zeros propagate (legacy 1.x semantics).
+    progress : bool or callable, optional
+        Progress reporting, off by default. Reports the two dark subtractions, then hands the reporter
+        to ``normalize_transmission`` so its steps continue the same count instead of restarting. The
+        declared total therefore covers both. See :mod:`neunorm.utils.progress`.
+    stage : str, optional
+        Stage label the events carry. Defaults to ``STAGE_NORMALIZE``.
 
     Returns
     -------
@@ -600,67 +702,86 @@ def normalize_with_dark(
     """
     roi_list = as_region_list(background_roi, arg_name="background_roi") if background_roi is not None else None
 
-    sample_dc = subtract_dark(sample, dark)
-    ob_dc = subtract_dark(ob, dark)
-    transmission = normalize_transmission(
-        sample_dc,
-        ob_dc,
-        proton_charge_sample,
-        proton_charge_ob,
-        pc_uncertainty,
-        background_roi=background_roi,
-        background_roi_strict=background_roi_strict,
-    )
+    # Two dark subtractions of our own, then whatever normalize_transmission will report. It receives
+    # this reporter and borrows it, and a borrowed reporter keeps the OUTER total, so the combined
+    # count has to be declared here or the bar would stop short.
+    n_steps = normalize_with_dark_step_count(background_roi, proton_charge_sample)
+    with resolve_progress(progress, stage, total=n_steps) as report:
+        report.note("dark-correcting sample")
+        sample_dc = subtract_dark(sample, dark)
+        report()
+        report.note("dark-correcting open beam")
+        ob_dc = subtract_dark(ob, dark)
+        report()
+        transmission = normalize_transmission(
+            sample_dc,
+            ob_dc,
+            proton_charge_sample,
+            proton_charge_ob,
+            pc_uncertainty,
+            background_roi=background_roi,
+            background_roi_strict=background_roi_strict,
+            progress=report,
+            stage=stage,
+        )
 
-    # Correct the shared-dark double-count. normalize_transmission propagated
-    # Var(dark) through BOTH numerator and denominator as if they were independent; the true
-    # propagation (dark appears once) is smaller by 2*k^2*s*Var(D)/o^3. Subtract that term.
-    if transmission.variances is None or dark.variances is None:
+        # Correct the shared-dark double-count. normalize_transmission propagated
+        # Var(dark) through BOTH numerator and denominator as if they were independent; the true
+        # propagation (dark appears once) is smaller by 2*k^2*s*Var(D)/o^3. Subtract that term.
+        if transmission.variances is None or dark.variances is None:
+            return transmission
+
+        # The correction below is the majority of this function's cost — 58% of the wall clock at
+        # 80 x 512² — and it used to run after the progress context had closed, so a caller watched the
+        # bar reach its total and the bars vanish, then waited out more than half the call with nothing
+        # on screen. Announced rather than counted, and announced only after the guard above, so the
+        # label never names work that is being skipped: whether it runs is not knowable until the
+        # delegate has returned.
+        report.note("correcting shared-dark variance")
+
+        # Use scipp's unit-carrying value/variance accessors so (a) the (3D sample) vs (2D ob/dark)
+        # broadcast and the per-image proton-charge ratio align by dimension name and (b) scipp
+        # validates units: counts * counts**2 / counts**3 = dimensionless, matching Var(T).
+        s_v = sc.values(sample_dc)  # counts
+        o_v = sc.values(ob_dc)  # counts
+        var_d_v = sc.variances(dark)  # counts**2
+        over_count = 2.0 * s_v * var_d_v / (o_v**3)
+
+        # The over-count scales with the squared flux coefficient k applied to S/O: k = pc_ob/pc_sample
+        # for proton charge, or k = co/cs (ratio of dark-corrected ROI means) for background_roi. Use
+        # the coefficient values only (variance-free) — this is a variance correction, first-order in k.
+        if background_roi is not None:
+            cs, co = _background_roi_means(sample_dc, ob_dc, roi_list, strict=background_roi_strict)
+            cs_v, co_v = sc.values(cs), sc.values(co)
+            k_squared = (co_v / cs_v) ** 2
+        else:
+            k_squared = _proton_charge_ratio_squared(proton_charge_sample, proton_charge_ob)
+        if k_squared is not None:
+            over_count = k_squared * over_count
+
+        # background_roi shares the dark across BOTH ROI means: cs = mean(S-D) and co = mean(O-D) use the
+        # same ROI dark pixels, so Cov(cs, co) = Var(mean(D_roi)) > 0. normalize_transmission added the
+        # ROI-mean term T^2 * (Var(cs)/cs^2 + Var(co)/co^2) treating cs and co as independent; subtract
+        # the missing covariance term 2 * T^2 * Cov(cs,co) / (cs*co) too — the ROI-mean analog of the
+        # pixel-level correction. (The in-ROI pixel<->mean correlation stays uncorrected, as
+        # documented; for a clean background ROI the dark-mean covariance is the only remaining term.)
+        if background_roi is not None:
+            # Cov(cs,co) is mask-consistent with cs/co (it counts only the ROI dark pixels left unmasked
+            # in BOTH sample and OB), so a dead/hot pixel masked from one side does not pollute it.
+            cov_cs_co = _roi_dark_mean_covariance(sample_dc, ob_dc, dark, roi_list)
+            t_v = sc.values(transmission)
+            over_count = over_count + 2.0 * t_v * t_v * cov_cs_co / (cs_v * co_v)
+
+        over_values = sc.to_unit(over_count, "dimensionless").transpose(transmission.dims).values
+        # Match the variance dtype so the correction never promotes a float32 pipeline to float64.
+        over_values = over_values.astype(transmission.variances.dtype, copy=False)
+        # Zero the correction where ob-dark == 0 (those pixels are already inf/nan in T).
+        over_values = np.where(np.isfinite(over_values), over_values, 0.0)
+        # Clamp to >= 0 defensively; the corrected variance is a true (non-negative) variance.
+        transmission.variances = np.clip(transmission.variances - over_values, 0.0, None)
+        logger.success("✓ Shared-dark variance double-count corrected")
+
         return transmission
-
-    # Use scipp's unit-carrying value/variance accessors so (a) the (3D sample) vs (2D ob/dark)
-    # broadcast and the per-image proton-charge ratio align by dimension name and (b) scipp
-    # validates units: counts * counts**2 / counts**3 = dimensionless, matching Var(T).
-    s_v = sc.values(sample_dc)  # counts
-    o_v = sc.values(ob_dc)  # counts
-    var_d_v = sc.variances(dark)  # counts**2
-    over_count = 2.0 * s_v * var_d_v / (o_v**3)
-
-    # The over-count scales with the squared flux coefficient k applied to S/O: k = pc_ob/pc_sample
-    # for proton charge, or k = co/cs (ratio of dark-corrected ROI means) for background_roi. Use
-    # the coefficient values only (variance-free) — this is a variance correction, first-order in k.
-    if background_roi is not None:
-        cs, co = _background_roi_means(sample_dc, ob_dc, roi_list, strict=background_roi_strict)
-        cs_v, co_v = sc.values(cs), sc.values(co)
-        k_squared = (co_v / cs_v) ** 2
-    else:
-        k_squared = _proton_charge_ratio_squared(proton_charge_sample, proton_charge_ob)
-    if k_squared is not None:
-        over_count = k_squared * over_count
-
-    # background_roi shares the dark across BOTH ROI means: cs = mean(S-D) and co = mean(O-D) use the
-    # same ROI dark pixels, so Cov(cs, co) = Var(mean(D_roi)) > 0. normalize_transmission added the
-    # ROI-mean term T^2 * (Var(cs)/cs^2 + Var(co)/co^2) treating cs and co as independent; subtract
-    # the missing covariance term 2 * T^2 * Cov(cs,co) / (cs*co) too — the ROI-mean analog of the
-    # pixel-level correction. (The in-ROI pixel<->mean correlation stays uncorrected, as
-    # documented; for a clean background ROI the dark-mean covariance is the only remaining term.)
-    if background_roi is not None:
-        # Cov(cs,co) is mask-consistent with cs/co (it counts only the ROI dark pixels left unmasked
-        # in BOTH sample and OB), so a dead/hot pixel masked from one side does not pollute it.
-        cov_cs_co = _roi_dark_mean_covariance(sample_dc, ob_dc, dark, roi_list)
-        t_v = sc.values(transmission)
-        over_count = over_count + 2.0 * t_v * t_v * cov_cs_co / (cs_v * co_v)
-
-    over_values = sc.to_unit(over_count, "dimensionless").transpose(transmission.dims).values
-    # Match the variance dtype so the correction never promotes a float32 pipeline to float64.
-    over_values = over_values.astype(transmission.variances.dtype, copy=False)
-    # Zero the correction where ob-dark == 0 (those pixels are already inf/nan in T).
-    over_values = np.where(np.isfinite(over_values), over_values, 0.0)
-    # Clamp to >= 0 defensively; the corrected variance is a true (non-negative) variance.
-    transmission.variances = np.clip(transmission.variances - over_values, 0.0, None)
-    logger.success("✓ Shared-dark variance double-count corrected")
-
-    return transmission
 
 
 def _proton_charge_ratio_squared(
