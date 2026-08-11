@@ -4,8 +4,24 @@ Module for combining multiple runs of neutron imaging data into a single dataset
 
 from typing import Sequence
 
+import numpy as np
 import scipp as sc
 from loguru import logger
+
+
+def _metadata_matches(a: sc.Variable, b: sc.Variable, atol: float) -> bool:
+    """True when two metadata coords are identical, or — for numeric values of
+    the same unit and shape — differ element-wise by at most ``atol``."""
+    if sc.identical(a, b):
+        return True
+    if atol <= 0 or a.unit != b.unit or a.shape != b.shape:
+        return False
+    try:
+        av = np.asarray(a.value if a.ndim == 0 else a.values, dtype=float)
+        bv = np.asarray(b.value if b.ndim == 0 else b.values, dtype=float)
+    except (TypeError, ValueError):
+        return False  # non-numeric (e.g. string) values must match exactly
+    return bool(np.all(np.abs(av - bv) <= atol))
 
 
 def combine_runs(  # noqa: C901
@@ -13,6 +29,7 @@ def combine_runs(  # noqa: C901
     metadata_keys_to_sum: Sequence[str] = ("acquisition_time", "p_charge"),
     metadata_check_match: Sequence[str] = (),
     normalize_by_runs: bool = False,
+    metadata_match_atol: float = 0.0,
 ) -> sc.DataArray:
     """Combine multiple runs by summing with metadata aggregation.
 
@@ -35,6 +52,12 @@ def combine_runs(  # noqa: C901
         Sequence of metadata keys that must match across all runs for combination, by default ()
     normalize_by_runs : bool, optional
         Whether to normalize the combined data by the number of runs, by default False
+    metadata_match_atol : float, optional
+        Absolute tolerance for the ``metadata_check_match`` comparison of numeric
+        values (same unit and shape required), by default 0.0 (exact match).
+        Non-numeric values (e.g. detector names) always require an exact match.
+        Useful for slit/aperture readback positions that jitter slightly
+        between runs.
 
     Returns
     -------
@@ -77,7 +100,7 @@ def combine_runs(  # noqa: C901
             if key not in run.coords:
                 logger.error("Metadata key '{}' not found in run {} for matching", key, i)
                 raise ValueError(f"Metadata key '{key}' not found in run {i} for matching")
-            if not sc.identical(run.coords[key], base_metadata[key]):
+            if not _metadata_matches(run.coords[key], base_metadata[key], metadata_match_atol):
                 logger.error(
                     "Metadata key '{}' does not match between run {} and base run: {} vs {}",
                     key,
@@ -91,10 +114,20 @@ def combine_runs(  # noqa: C901
                     f" {base_metadata[key].value if base_metadata[key].ndim == 0 else base_metadata[key].values}"
                 )
 
-    # Combine data by summing across runs
+    # Combine data by summing across runs. Coords that matched only within
+    # metadata_match_atol would still fail scipp's exact aligned-coord check
+    # in `+=`, so they are aligned to the base run's value on a shallow copy
+    # (the caller's array is left untouched; metadata_keys_to_sum below still
+    # aggregates the original per-run values).
     combined = runs[0].copy()
     for run in runs[1:]:
-        combined += run
+        patched = None
+        for key in metadata_check_match:
+            if not sc.identical(run.coords[key], base_metadata[key]):
+                if patched is None:
+                    patched = run.copy(deep=False)
+                patched.coords[key] = base_metadata[key]
+        combined += patched if patched is not None else run
 
     if normalize_by_runs:
         combined /= len(runs)
