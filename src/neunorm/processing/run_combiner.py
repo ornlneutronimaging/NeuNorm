@@ -29,6 +29,7 @@ def combine_runs(  # noqa: C901
     metadata_keys_to_sum: Sequence[str] = ("acquisition_time", "p_charge"),
     metadata_check_match: Sequence[str] = (),
     normalize_by_runs: bool = False,
+    *,
     metadata_match_atol: float = 0.0,
 ) -> sc.DataArray:
     """Combine multiple runs by summing with metadata aggregation.

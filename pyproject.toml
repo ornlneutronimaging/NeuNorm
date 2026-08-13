@@ -155,6 +155,12 @@ astropy = "*"
 pydantic = ">=2.0"
 loguru = ">=0.7"
 tqdm = "*"
+# exporters/tiff_writer.py imports scitiff at module level, and every pipeline imports
+# write_tiff_stack -- so omitting it here made the conda package's pipelines unimportable.
+# It went unnoticed because neunorm/__init__.py pulls in nothing but _version, so the
+# conda-verify import check passed regardless (see the extra-commands in
+# .github/workflows/test_and_deploy.yaml, which now import a pipeline instead).
+scitiff = ">=26.1"
 
 [tool.pixi.package]
 name = "NeuNorm"
