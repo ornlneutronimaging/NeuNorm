@@ -45,6 +45,7 @@ from neunorm.pipelines.venus_tpx1 import run_venus_tpx1_pipeline
 from neunorm.pipelines.venus_tpx3_event import run_venus_tpx3_event_pipeline
 from neunorm.pipelines.venus_tpx3_histogram import run_venus_tpx3_histogram_pipeline
 from neunorm.processing.normalizer import normalize_transmission, normalize_with_dark
+from neunorm.processing.run_combiner import combine_runs
 from neunorm.tof.event_converter import (
     convert_events_to_2d_histogram,
     convert_events_to_histogram,
@@ -131,6 +132,13 @@ RELEASED_POSITIONAL = {
     "load_metadata": (
         load_metadata,
         ["file_path", "read_shutter_counts", "read_spectra_tof"],
+    ),
+    # `combine_runs` gained `metadata_match_atol` since v2.2.3, appended positionally. Nothing
+    # released shifted (it went last), but it was the one addition the guard below could not see,
+    # because this entry did not exist. It is keyword-only now, and guarded here.
+    "combine_runs": (
+        combine_runs,
+        ["runs", "metadata_keys_to_sum", "metadata_check_match", "normalize_by_runs"],
     ),
     "load_stack": (load_stack, ["paths"]),
     "load_tiff_stack": (load_tiff_stack, ["paths", "tof_edges"]),
