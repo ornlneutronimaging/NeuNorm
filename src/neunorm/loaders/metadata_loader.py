@@ -81,8 +81,9 @@ def load_metadata(  # noqa: C901
         # data source instead of the known-mismatched raw DAS-log path.
         if image_dir is not None:
             # Resolve to an absolute path (like the DAS-log branch above) so a relative image_dir
-            # does not depend on the current working directory. Missing directories still fail fast
-            # in load_spectra_tof / load_shutter_counts with a clear FileNotFoundError.
+            # does not depend on the current working directory. Note the two readers diverge on a
+            # directory that does not exist: load_spectra_tof raises FileNotFoundError, while
+            # load_shutter_counts only warns and returns an empty array.
             image_path = Path(image_dir).resolve()
             metadata["image_file_path"] = sc.scalar(str(image_path))
 
