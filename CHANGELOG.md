@@ -214,23 +214,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a pointer to the region-statistics parameters. Output-file provenance records a JSON summary
   (shape, selected-pixel count, source, sha256), including `air_roi`. Rectangle-only inputs are
   bit-identical to 2.2.x.
+- **A tolerance for the run-combine metadata match check** — `metadata_match_atol` on `combine_runs`
+  and `run_mars_ccd_pipeline` ([#209](https://github.com/ornlneutronimaging/NeuNorm/issues/209)).
+  `combine_runs` compared every coordinate named in `metadata_check_match` with `sc.identical`, which
+  is exact, so a slit aperture readback (`MotSlit*.RBV`) differing in its last decimal place between
+  two runs of the same measurement aborted the combine — and with it the whole MARS CCD pipeline,
+  which checks four of those readbacks. The new parameter defaults to `0.0`, which is exactly the
+  previous exact-match behavior. Given a positive tolerance, numeric coordinates **of the same unit
+  and shape** match when they differ element-wise by at most `atol`; a unit or shape mismatch remains
+  a mismatch whatever the tolerance, and non-numeric values (the detector and manufacturer name
+  coordinates) still require exact equality, so a tolerance cannot mask a genuinely different
+  detector. Coordinates that match only within the tolerance would still fail scipp's exact
+  aligned-coordinate check in `+=`, so they are aligned to the base run's value on a **shallow copy**
+  taken per run before summing: the caller's arrays are never modified, and `metadata_keys_to_sum`
+  still aggregates each run's original values rather than the aligned ones. `run_mars_ccd_pipeline`
+  forwards the tolerance to all three of its combine steps — sample, open beam and dark.
 
 ### Changed
 
 - **Parameters added since v2.2.3 are now keyword-only, and the released positional order is guarded
   by tests.** `rebin_reduction` and `tiff_one_file_per_image` on the three VENUS TOF pipelines,
-  `one_file_per_image` and `concat_stdevs_and_mask` on `write_tiff_stack`, and `image_dir` on
-  `load_metadata`, are keyword-only. All of them
+  `one_file_per_image` and `concat_stdevs_and_mask` on `write_tiff_stack`, `image_dir` on
+  `load_metadata`, and `metadata_match_atol` on `combine_runs`, are keyword-only. All of them
   had been added positionally on `next`, and `rebin_reduction` in particular was inserted immediately
   after `rebin_by_tof`, shifting every later positional parameter — five of them in
   `venus_tpx3_event`. None of it had been released, so the shift is undone rather than frozen: the
-  positional parameter names and order of all six pipelines and of `write_tiff_stack` are again
+  positional parameter names and order of all six pipelines, of `write_tiff_stack` and of
+  `combine_runs` are again
   exactly those of v2.2.3 (some type annotations have widened since, which does not affect binding), and `tests/unit/test_public_signatures.py` pins them against the tag (not against the
   current code) plus asserts that anything added since is keyword-only and that no released parameter
   becomes positional-only. **No action is needed for any released caller** — this restores v2.2.3's
   order rather than departing from it. Callers written against `next` since 3bd2b07 that passed those
-  four arguments positionally must switch to keywords; every in-repo and documented call site already
-  used keywords.
+  four arguments positionally, or `metadata_match_atol` positionally since 4a976e2, must switch to
+  keywords; every in-repo and documented call site already used keywords. `combine_runs` was itself
+  absent from the guard until now, which is why its addition was the one that slipped through
+  positionally — it is covered by both assertions from this release on.
 
 ### Fixed
 
@@ -264,6 +282,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shared-dark covariance) by adding the repeated pixels' variances as if from independent samples.
   Pooled statistics now reduce over the **union** of the regions (each selected, unmasked pixel
   counted once); non-overlapping lists are unchanged, bit-for-bit.
+- **VENUS TPX1 read its TOF and shutter-count sidecars from the wrong directory, and its `tof` axis
+  was not a bin-edge axis** ([#187](https://github.com/ornlneutronimaging/NeuNorm/issues/187)).
+  `load_metadata` located the `*_Spectra.txt` and `*_ShutterCount.txt` sidecar files through the
+  raw-acquisition directory recorded in the NeXus DAS log (`BL10:Exp:IM:ImageFilePath`). VENUS TPX1
+  images come from the auto-reduction tree, which holds a different frame count than the raw tree, so
+  the spectra read from there did not correspond to the image stack that had just been loaded — a
+  silent mismatch between the TOF axis and the frames it labelled. `load_metadata` now takes a
+  keyword-only `image_dir`: when given, both sidecars are read from that directory, and the returned
+  `image_file_path` records it, so the stored provenance names the directory the data actually came
+  from instead of the known-mismatched DAS-log path. `image_dir` is resolved to an absolute path, so a
+  relative value does not depend on the working directory, and a missing directory still fails fast
+  with `FileNotFoundError` from the sidecar readers. Omitting `image_dir` leaves the DAS-log behavior
+  unchanged. `run_venus_tpx1_pipeline` passes the parent directory of the TIFFs it loaded, for both
+  the sample and open-beam legs.
+
+  Separately, the pipeline built the `tof` coordinate straight from the sidecar's `shutter_time`
+  column, which holds the **left (opening) edge** of each frame's bin — N values for N frames. scipp
+  needs N+1 values for a bin-edge axis, so `tof` was a point coordinate and `rebin_by_tof` could not
+  operate on a TPX1 result at all. The pipeline now appends the closing edge, extrapolated from the
+  last observed step (exact for VENUS's fixed-width TOF grid). **The `tof` coordinate of a TPX1
+  result therefore carries one more element than it did in v2.2.3** — that is what makes it a
+  bin-edge axis; the frame data itself is unchanged. An empty TIFF path group now raises `ValueError`
+  naming the problem rather than failing obscurely further in.
 
 ## [2.2.3] - 2026-07-14
 
@@ -498,6 +539,7 @@ documentation are archived under
 [`archive/neunorm-1.x/`](archive/neunorm-1.x/); released 1.x versions remain
 available on PyPI and the `conda-forge` channel (`pip install "NeuNorm<2"`).
 
+[2.2.3]: https://github.com/ornlneutronimaging/NeuNorm/releases/tag/v2.2.3
 [2.2.2]: https://github.com/ornlneutronimaging/NeuNorm/releases/tag/v2.2.2
 [2.2.1]: https://github.com/ornlneutronimaging/NeuNorm/releases/tag/v2.2.1
 [2.2.0]: https://github.com/ornlneutronimaging/NeuNorm/releases/tag/v2.2.0
