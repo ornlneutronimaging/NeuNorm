@@ -109,6 +109,14 @@ jobs:
           module-name: ${{ env.MODULE_NAME }}
           local-channel: /tmp/local-channel
           python-version: "3.11"
+          # `module-name` only reaches `neunorm`, whose __init__ imports nothing but
+          # _version -- so that check passes even when a run-dependency needed by the
+          # actual library is missing from the recipe, which is how a missing scitiff
+          # shipped in every 2.x conda package. Import the real surface instead: every
+          # pipeline, which transitively pulls the exporters, loaders and processing
+          # modules and therefore every third-party run-dependency.
+          extra-commands: |
+            python -c "import neunorm.pipelines.mars_ccd, neunorm.pipelines.mars_tpx3, neunorm.pipelines.venus_ccd, neunorm.pipelines.venus_tpx1, neunorm.pipelines.venus_tpx3_event, neunorm.pipelines.venus_tpx3_histogram"
 
       - name: Upload conda package as artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
