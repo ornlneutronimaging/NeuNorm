@@ -95,6 +95,9 @@ def test_load_tiff_stack_negative_pixels_zeroed(tmp_path):
     Seen on VENUS run 28787 (IPTS-38504): a glitching Timepix chip wrote
     wrapped values around ±32k into a handful of autoreduced float32 frames.
     """
+    import io
+
+    from loguru import logger
     from PIL import Image
 
     from neunorm.loaders.tiff_loader import load_tiff_stack
@@ -106,7 +109,17 @@ def test_load_tiff_stack_negative_pixels_zeroed(tmp_path):
     for i, frame in enumerate([clean, glitched, clean]):
         Image.fromarray(frame).save(tmp_path / f"image{i:03d}.tif")
 
-    da = load_tiff_stack(sorted(tmp_path.glob("*.tif")))
+    captured = io.StringIO()
+    sink_id = logger.add(captured, level="WARNING", format="{message}")
+    try:
+        da = load_tiff_stack(sorted(tmp_path.glob("*.tif")))
+    finally:
+        logger.remove(sink_id)
+
+    warning_text = captured.getvalue()
+    assert "2 negative pixel" in warning_text
+    assert "across 1 of 3 frame" in warning_text
+    assert "most negative value: -50474.6" in warning_text
 
     assert da.values.min() == 0.0
     assert da.values[1, 1, 2] == 0.0
