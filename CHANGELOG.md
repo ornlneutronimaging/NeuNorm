@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.3.0] - 2026-08-13
-
 ### Added
 
 - **Resonance mode: ROI-level normalization producing a transmission spectrum**
@@ -75,6 +73,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`neunorm.exporters.ascii_writer`** — the package's first text exporter. `write_ascii_spectrum`
   writes the three-column spectrum; a spectrum that is not 1-D, or that carries no variances, is
   rejected rather than written with a fabricated uncertainty column.
+
+### Changed
+
+- **The three VENUS TOF pipelines share one implementation.** `venus_tpx1`, `venus_tpx3_histogram` and
+  `venus_tpx3_event` each carried the same ~150 lines — crop, dead/hot detection, spatial rebin, TOF
+  rebin, normalize, air correction, coordinate labelling, export — so that middle now lives once in
+  `neunorm.pipelines._tof_spine.reduce_tof_stacks` and each entry point keeps only its own loading and
+  metadata. 409/405/418 lines become 271/263/287, and all three `# noqa: C901` complexity suppressions
+  are gone. Public signatures are unchanged apart from the two new keyword-only parameters.
+
+  The differences that genuinely exist between the three are now named in a `TofPipelineProfile` rather
+  than implied by which copy of the code you are reading, **including two that look like oversights and
+  are preserved exactly**: `venus_tpx3_histogram` re-detects its dead/hot masks from the *sample* after
+  a spatial rebin where its own pre-rebin detection and both other pipelines read the open beam, and
+  `venus_tpx1` passes no `hot_pixel_mask` to the HDF5 writer. Changing either would change published
+  output, so neither was changed here.
+
+  Behaviour-preserving, and verified rather than asserted: every pipeline's written `transmission`,
+  `uncertainty`, `tof`/`spectra_tof`/`wavelength`/`energy` coordinates and every mask are bit-identical
+  before and after, across 31 runs covering all three pipelines against ten argument combinations plus
+  three untouched pipelines as controls.
+
+## [2.3.0] - 2026-08-13
+
+### Added
 
 - **Progress-reporting contract** — new `neunorm.utils.progress` module
   ([#195](https://github.com/ornlneutronimaging/NeuNorm/issues/195)), the foundation for reporting
@@ -305,25 +328,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   forwards the tolerance to all three of its combine steps — sample, open beam and dark.
 
 ### Changed
-
-- **The three VENUS TOF pipelines share one implementation.** `venus_tpx1`, `venus_tpx3_histogram` and
-  `venus_tpx3_event` each carried the same ~150 lines — crop, dead/hot detection, spatial rebin, TOF
-  rebin, normalize, air correction, coordinate labelling, export — so that middle now lives once in
-  `neunorm.pipelines._tof_spine.reduce_tof_stacks` and each entry point keeps only its own loading and
-  metadata. 409/405/418 lines become 271/263/287, and all three `# noqa: C901` complexity suppressions
-  are gone. Public signatures are unchanged apart from the two new keyword-only parameters.
-
-  The differences that genuinely exist between the three are now named in a `TofPipelineProfile` rather
-  than implied by which copy of the code you are reading, **including two that look like oversights and
-  are preserved exactly**: `venus_tpx3_histogram` re-detects its dead/hot masks from the *sample* after
-  a spatial rebin where its own pre-rebin detection and both other pipelines read the open beam, and
-  `venus_tpx1` passes no `hot_pixel_mask` to the HDF5 writer. Changing either would change published
-  output, so neither was changed here.
-
-  Behaviour-preserving, and verified rather than asserted: every pipeline's written `transmission`,
-  `uncertainty`, `tof`/`spectra_tof`/`wavelength`/`energy` coordinates and every mask are bit-identical
-  before and after, across 31 runs covering all three pipelines against ten argument combinations plus
-  three untouched pipelines as controls.
 
 - **Parameters added since v2.2.3 are now keyword-only, and the released positional order is guarded
   by tests.** `rebin_reduction` and `tiff_one_file_per_image` on the three VENUS TOF pipelines,
