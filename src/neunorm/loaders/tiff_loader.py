@@ -122,7 +122,10 @@ def load_tiff_stack(  # noqa: C901
             logger.warning(
                 "Loaded TIFF data contains {} negative pixel(s) across {} of {} frame(s) "
                 "(most negative value: {:.1f}); zeroing them to keep Poisson variances valid.",
-                int(negative.sum()), n_frames, n_images, float(full_data.min()),
+                int(negative.sum()),
+                n_frames,
+                n_images,
+                float(full_data.min()),
             )
             full_data[negative] = 0.0
 
