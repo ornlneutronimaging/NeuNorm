@@ -111,12 +111,20 @@ def load_tiff_stack(  # noqa: C901
         dim_name = "TOF" if tof_edges is not None else "N_image"
         dims = [dim_name, "y", "x"]
 
-        # Validate data for Poisson statistics: counts must be non-negative.
-        if np.any(full_data < 0):
-            raise ValueError(
-                "Loaded TIFF data contains negative counts; cannot attach Poisson "
-                "variances (variance = counts) to negative data."
+        # Poisson statistics (variance = counts) needs non-negative data. Real
+        # acquisitions occasionally contain a few negative pixels — e.g. a
+        # glitching Timepix chip writing wrapped values around ±32k into the
+        # autoreduced frames. Those pixels carry no physical information, so
+        # they are zeroed (count 0 → variance 0) instead of aborting the load.
+        negative = full_data < 0
+        if negative.any():
+            n_frames = np.unique(np.nonzero(negative)[0]).size
+            logger.warning(
+                "Loaded TIFF data contains {} negative pixel(s) across {} of {} frame(s) "
+                "(most negative value: {:.1f}); zeroing them to keep Poisson variances valid.",
+                int(negative.sum()), n_frames, n_images, float(full_data.min()),
             )
+            full_data[negative] = 0.0
 
         report.note(f"attaching variances ({full_data.nbytes / 1024**2:.1f} MiB)")
 

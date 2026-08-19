@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`load_tiff_stack` no longer aborts on negative pixels** — real acquisitions occasionally
+  contain a few garbage negative values (seen on VENUS run 28787, IPTS-38504: a glitching Timepix
+  chip wrote wrapped values around ±32k into 8 of 1390 autoreduced float32 frames). Such pixels
+  carry no physical information, so instead of raising `ValueError` the loader now zeroes them
+  (count 0 → variance 0, keeping the Poisson variances valid) and logs a warning with the pixel
+  and frame counts. NaN was rejected as the replacement: scipp's plain `sum`/`mean` are not
+  NaN-aware, so a single NaN pixel would poison TOF-rebinned bins, combined runs, and pooled ROI
+  spectra downstream.
+
 ## [2.3.0] - 2026-08-13
 
 ### Added

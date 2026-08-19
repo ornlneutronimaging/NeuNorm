@@ -87,3 +87,31 @@ def test_load_tiff_stack_tof_centers():
     assert not da.coords.is_edges("TOF")
     assert da.coords["TOF"].values.shape == (3,)
     np.testing.assert_equal(da.coords["TOF"].values, (1000, 1500, 2000))
+
+
+def test_load_tiff_stack_negative_pixels_zeroed(tmp_path):
+    """Detector-glitch negative pixels are zeroed with a warning, not fatal.
+
+    Seen on VENUS run 28787 (IPTS-38504): a glitching Timepix chip wrote
+    wrapped values around ±32k into a handful of autoreduced float32 frames.
+    """
+    from PIL import Image
+
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    clean = np.full((5, 5), 7.0, dtype=np.float32)
+    glitched = clean.copy()
+    glitched[1, 2] = -32565.0
+    glitched[3, 4] = -50474.6
+    for i, frame in enumerate([clean, glitched, clean]):
+        Image.fromarray(frame).save(tmp_path / f"image{i:03d}.tif")
+
+    da = load_tiff_stack(sorted(tmp_path.glob("*.tif")))
+
+    assert da.values.min() == 0.0
+    assert da.values[1, 1, 2] == 0.0
+    assert da.values[1, 3, 4] == 0.0
+    # variance = counts stays valid and untouched pixels are preserved
+    assert da.variances.min() == 0.0
+    assert da.values[0].min() == 7.0
+    assert da.values[1, 0, 0] == 7.0
