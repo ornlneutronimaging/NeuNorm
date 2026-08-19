@@ -19,6 +19,7 @@ import numpy as np
 import scipp as sc
 from loguru import logger
 
+from neunorm.data_models.moving_window import MovingWindow
 from neunorm.data_models.roi import (
     MaskROI,
     RegionLike,
@@ -32,6 +33,7 @@ from neunorm.exporters.ascii_writer import ascii_spectrum_export_step_count, wri
 from neunorm.exporters.hdf5_writer import hdf5_export_step_count, write_hdf5
 from neunorm.exporters.tiff_writer import tiff_export_step_count, write_tiff_stack
 from neunorm.processing.air_region_corrector import apply_air_region_correction
+from neunorm.processing.moving_window import moving_window, moving_window_step_count
 from neunorm.processing.normalizer import normalize_step_count, normalize_transmission
 from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.spatial_rebinner import rebin_spatial
@@ -44,8 +46,10 @@ from neunorm.tof.coordinate_converter import convert_tof_to_energy, convert_tof_
 from neunorm.tof.histogram_rebinner import _parse_bin_list, linear_bin_list, rebin_tof
 from neunorm.tof.pixel_detector import detect_dead_pixels, detect_hot_pixels
 from neunorm.tof.statistics_analyzer import analyze_statistics
+from neunorm.utils.masks import combined_mask
 from neunorm.utils.progress import (
     STAGE_EXPORT,
+    STAGE_MOVING_WINDOW,
     STAGE_NORMALIZE,
     STAGE_REBIN_TOF,
     STAGE_REDUCE_SPECTRUM,
@@ -298,14 +302,14 @@ def _write_tiff_output(
     # (scipp), so both a spatial (y, x) mask and a 1-D per-frame (t) mask expand correctly to
     # the full (t, y, x) stack.
     if transmission.masks:
-        combined_mask = np.zeros_like(transmission.values, dtype=bool)
-        for mask in transmission.masks.values():
-            combined_mask |= sc.broadcast(mask, sizes=transmission.sizes).values
+        # skip_mismatched stays off: a mask this writer cannot broadcast must raise rather than be
+        # dropped from the file being written.
+        flattened = combined_mask(transmission.sizes, transmission.masks)
 
         # remove other masks
         transmission.masks.clear()
         # add combined mask back in with name "scitiff-mask"
-        transmission.masks["scitiff-mask"] = sc.array(dims=transmission.dims, values=combined_mask, dtype=bool)
+        transmission.masks["scitiff-mask"] = sc.array(dims=transmission.dims, values=flattened, dtype=bool)
 
     written_paths = write_tiff_stack(
         output_path,
@@ -460,6 +464,171 @@ def _refuse_to_overwrite_an_input(hdf5_path: Path, metadata: dict) -> None:
         )
 
 
+def _apply_moving_window(
+    sample: sc.DataArray,
+    ob: sc.DataArray,
+    config: MovingWindow,
+    *,
+    run_progress: ProgressReporter,
+) -> tuple[sc.DataArray, sc.DataArray]:
+    """Filter both stacks with the same window, immediately before they are divided.
+
+    Both sides get the same kernel, which is what makes the moving sum and the moving average
+    indistinguishable in the result: the kernel count appears in the numerator and the denominator
+    and cancels.
+
+    The open beam is filtered with the **sample's** masks. Dead and hot pixels are detected from the
+    open beam but attached to the sample (see :func:`_attach_pixel_masks`), so the open beam carries
+    none of its own — filtering it mask-blind would let a bad detector pixel contaminate ``k**2``
+    open-beam pixels and put that contamination straight into the divisor.
+    """
+    sizes = config.sizes()
+    # Checked here rather than with the other guards: the axis lengths that matter are the ones AT
+    # the filter, after any crop and spatial rebin, and those are not known before the run starts.
+    _warn_on_a_kernel_large_for_its_axis(sample, config)
+    window = run_progress.for_stage(
+        STAGE_MOVING_WINDOW,
+        total=moving_window_step_count(sample) + moving_window_step_count(ob, sample.masks),
+    )
+    filtered_sample = moving_window(sample, sizes, kind=config.kind, mode=config.mode, progress=window)
+    filtered_ob = moving_window(ob, sizes, kind=config.kind, mode=config.mode, masks=sample.masks, progress=window)
+    return filtered_sample, filtered_ob
+
+
+def _validate_argument_combinations(
+    *,
+    roi,
+    air_roi,
+    rebin_by_spatial,
+    tiff_one_file_per_image: bool,
+    spectrum_roi,
+    moving_window_config: Optional[MovingWindow] = None,
+) -> None:
+    """Refuse the argument combinations that have no correct interpretation, and warn about the
+    ones that do but whose consequence is easy to miss.
+
+    Gathered in one place rather than scattered down the run, so the list of what is incompatible
+    with what can be read without following the control flow of the whole reduction, and so a run
+    that is going to be rejected is rejected before it crops, rebins, normalizes or writes anything.
+
+    It does NOT run before the expensive part. Every entry point loads and run-combines both stacks
+    before it reaches :func:`reduce_tof_stacks`, so a rejected run still pays for the load — minutes,
+    on a large TOF stack. Moving these checks into the three entry points would fix that, but the
+    warnings below would then fire twice unless refusals and warnings were split first.
+    """
+    if spectrum_roi is not None:
+        if air_roi is not None:
+            raise ValueError(
+                "air_roi and spectrum_roi cannot be combined: the air correction rescales an image so "
+                "its air region reads 1.0, which has no meaning for a spectrum of one value per bin. "
+                "Drop air_roi, or run in image mode."
+            )
+        if tiff_one_file_per_image:
+            raise ValueError(
+                "tiff_one_file_per_image applies to TIFF image output, which spectrum_roi does not "
+                "produce. Drop it, or run in image mode."
+            )
+        _warn_on_spectrum_roi_frame(roi, rebin_by_spatial)
+
+    if moving_window_config is not None:
+        if air_roi is not None:
+            raise ValueError(
+                "moving_window and air_roi cannot be combined. The air correction divides by the "
+                "mean over its region, and that mean's uncertainty is computed treating the pixels "
+                "as independent — which a moving window has just stopped being true. The scale "
+                "factor's error is understated (measured x2.1 for a 3x3 air region under a 3x3 "
+                "window, x2.4 under 5x5) and carries into every pixel of the result. This is the "
+                "same reason spectrum_roi is refused. Drop one of the two."
+            )
+        if spectrum_roi is not None:
+            raise ValueError(
+                "moving_window and spectrum_roi cannot be combined. A moving window makes "
+                "neighbouring pixels correlated, and a region reduction over correlated pixels "
+                "under-reports its uncertainty by roughly sqrt(kernel pixels) — measured at x2.9 "
+                "for a 3x3 window and x4.7 for 5x5. scipp carries no covariance, so the "
+                "correlation cannot be propagated and the error bar would simply be wrong. The two "
+                "are alternative answers to low counting statistics — smoothing pixel by pixel, or "
+                "reducing over a region — so use one or the other."
+            )
+        _warn_on_the_moving_window_trade(moving_window_config, rebin_by_spatial)
+
+
+def _warn_on_the_moving_window_trade(config: MovingWindow, rebin_by_spatial) -> None:
+    """Say what the window costs, since the array gives no sign of having been filtered.
+
+    Said out loud on every use rather than left to the documentation: unlike a rebin, which visibly
+    shrinks the array, a moving window returns something the same shape as the input, so a filtered
+    result and an unfiltered one are indistinguishable by inspection.
+    """
+    kernel_pixels = config.kernel_pixels
+    logger.warning(
+        "moving_window {} ({}): per-pixel precision improves by about {:.1f}x while spatial "
+        "resolution coarsens by the window length on each axis. The array keeps its shape, so the "
+        "result presents as full resolution while carrying roughly one independent value per {} "
+        "pixels. A feature smaller than the window loses DEPTH, not just sharpness — measured, a "
+        "3-pixel feature retains 0.36 of its true contrast under a 5x5 window — so fitting one "
+        "returns the filter's depth rather than the sample's.",
+        config.sizes(),
+        config.kind,
+        np.sqrt(kernel_pixels),
+        kernel_pixels,
+    )
+
+    if rebin_by_spatial is not None:
+        factor_x, factor_y = (
+            (rebin_by_spatial, rebin_by_spatial)
+            if isinstance(rebin_by_spatial, (int, np.integer))
+            else tuple(rebin_by_spatial)
+        )
+        logger.warning(
+            "moving_window sizes are in POST-REBIN pixels, and rebin_by_spatial={} runs first, so "
+            "the two coarsenings compound: one output pixel draws on {} x {} detector pixels in "
+            "(x, y), not {} x {}.",
+            rebin_by_spatial,
+            config.x * int(factor_x),
+            config.y * int(factor_y),
+            config.x,
+            config.y,
+        )
+
+
+#: Warn once the mirrored frame edge reaches this fraction of an axis: past it the edge policy is
+#: shaping much of the result rather than a thin border.
+_EDGE_FRACTION_WARNING = 0.25
+
+
+def _warn_on_a_kernel_large_for_its_axis(data: sc.DataArray, config: MovingWindow) -> None:
+    """Warn when the window is big enough that the edge policy stops being a border effect.
+
+    A mirrored edge and a shrink-to-real-pixels edge differ only within ``k // 2`` of the frame
+    boundary, which is why mirroring is a safe default — but that argument only holds while the
+    border is a small part of the axis. Checked against the sizes as they are AT the filter, so a
+    crop or a spatial rebin that made the axis short is accounted for.
+
+    A window of length ``k`` overhangs the frame from exactly ``k - 1`` output positions, whatever
+    its parity: an odd window reaches ``k // 2`` positions at each end, and an even one — which sits
+    one pixel to the left — reaches ``k // 2`` at the start and one fewer at the end. Counting
+    ``2 * (k // 2)`` overstated every even window by one position.
+    """
+    for dim, length in config.sizes().items():
+        if dim not in data.dims or length == 1:
+            continue
+        axis = data.sizes[dim]
+        touched = min(1.0, (length - 1) / axis)
+        if touched >= _EDGE_FRACTION_WARNING:
+            logger.warning(
+                "moving_window size {} on the {!r} axis, which is {} pixels here: {:.0%} of pixels "
+                "have the frame edge inside their window, so the {!r} edge policy shapes much of "
+                "the result rather than a thin border. The axis length is measured after any roi "
+                "crop and spatial rebin.",
+                length,
+                dim,
+                axis,
+                touched,
+                config.mode,
+            )
+
+
 def _warn_on_spectrum_roi_frame(roi, rebin_by_spatial) -> None:
     """Say out loud which pixel frame ``spectrum_roi`` was resolved in, when it is not the detector's.
 
@@ -499,6 +668,7 @@ def reduce_tof_stacks(
     tiff_one_file_per_image: bool = False,
     spectrum_roi: Optional[RegionsLike] = None,
     spectrum_roi_strict: bool = True,
+    moving_window_config: Optional[MovingWindow] = None,
     run_progress: ProgressReporter,
 ) -> sc.DataArray:
     """Crop, mask, rebin, normalize, label and write — the part every VENUS TOF pipeline shares.
@@ -542,6 +712,11 @@ def reduce_tof_stacks(
     spectrum_roi_strict : bool, optional
         Whether a non-positive or non-finite open-beam region mean raises. See
         :func:`~neunorm.processing.spectrum_reducer.normalize_roi_spectrum`.
+    moving_window_config : MovingWindow, optional
+        Replace each pixel by the average (or total) of a box around it, in **both** stacks,
+        immediately before they are divided. The kernel is expressed in post-crop,
+        post-spatial-rebin pixels, the same frame ``spectrum_roi`` documents, so a window of 3 on a
+        2x-rebinned stack spans 6 detector pixels.
     run_progress : ProgressReporter
         The run's reporter, already resolved by the entry point.
 
@@ -551,19 +726,14 @@ def reduce_tof_stacks(
         The normalized transmission that was written — an image stack, or a 1-D spectrum under
         ``spectrum_roi``.
     """
-    if spectrum_roi is not None:
-        if air_roi is not None:
-            raise ValueError(
-                "air_roi and spectrum_roi cannot be combined: the air correction rescales an image so "
-                "its air region reads 1.0, which has no meaning for a spectrum of one value per bin. "
-                "Drop air_roi, or run in image mode."
-            )
-        if tiff_one_file_per_image:
-            raise ValueError(
-                "tiff_one_file_per_image applies to TIFF image output, which spectrum_roi does not "
-                "produce. Drop it, or run in image mode."
-            )
-        _warn_on_spectrum_roi_frame(roi, rebin_by_spatial)
+    _validate_argument_combinations(
+        roi=roi,
+        air_roi=air_roi,
+        rebin_by_spatial=rebin_by_spatial,
+        tiff_one_file_per_image=tiff_one_file_per_image,
+        spectrum_roi=spectrum_roi,
+        moving_window_config=moving_window_config,
+    )
 
     # Apply ROI if specified
     if roi:
@@ -622,6 +792,14 @@ def reduce_tof_stacks(
         )
         logger.success("{} pipeline completed successfully. Output written to {}", profile.label, output_description)
         return spectrum
+
+    # Moving window (optional), on both stacks, immediately before they are divided — the point the
+    # issue asks for and the point iBeatles applies it.
+    if moving_window_config is not None:
+        sample, ob = _apply_moving_window(sample, ob, moving_window_config, run_progress=run_progress)
+        # Provenance in the file, not only in the log: the pixels of a filtered image are no longer
+        # independent and nothing in the array itself shows it, so the window travels with the data.
+        metadata["moving_window"] = moving_window_config.provenance()
 
     # Normalization
     transmission = normalize_transmission(

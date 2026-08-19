@@ -9,6 +9,7 @@ from typing import Literal, Optional, Sequence
 import scipp as sc
 
 from neunorm import __version__
+from neunorm.data_models.moving_window import MovingWindow
 from neunorm.data_models.roi import RegionLike, RegionsLike, ROILike
 from neunorm.loaders.metadata_loader import load_metadata
 from neunorm.loaders.tiff_loader import load_tiff_stack
@@ -57,6 +58,7 @@ def run_venus_tpx3_histogram_pipeline(
     tiff_one_file_per_image: bool = False,
     spectrum_roi: Optional[RegionsLike] = None,
     spectrum_roi_strict: bool = True,
+    moving_window: Optional[MovingWindow] = None,
     progress: Progress = False,
 ) -> sc.DataArray:
     """Execute VENUS TPX3 histogram normalization pipeline.
@@ -126,6 +128,16 @@ def run_venus_tpx3_histogram_pipeline(
         file. When ``True`` each spectral image is written as its own scitiff file
         (``<stem>_00000.tiff``, ``<stem>_00001.tiff``, …, one normalization per file), which suits
         tools such as ImageJ that expect individual images. Ignored for HDF5 output.
+    moving_window : MovingWindow, optional
+        Replace each pixel by the average — or, with ``kind="sum"``, the total — of a box of pixels
+        around it, applied to **both** stacks immediately before they are divided. Off by default.
+        Sizes are given by dimension name (``MovingWindow(x=3, y=3)``) in **post-crop,
+        post-spatial-rebin** pixels, so a window of 3 on a ``rebin_by_spatial=2`` stack spans 6
+        detector pixels. Dead and hot pixels are excluded from the window rather than averaged into
+        it. A ``k x k`` window improves per-pixel precision by ``k`` and coarsens spatial resolution
+        by ``k`` while the array keeps its shape; ``docs/moving_window.md`` has the measured trade.
+        Cannot be combined with ``spectrum_roi`` or ``air_roi``: both reduce over a region
+        assuming its pixels are independent, which a window has just stopped being true.
     progress : bool or callable, optional
         Progress reporting for the whole run, off by default (and free when off). ``True`` lets
         NeuNorm draw one :mod:`tqdm` bar per stage; a callable receives a
@@ -263,5 +275,6 @@ def run_venus_tpx3_histogram_pipeline(
             tiff_one_file_per_image=tiff_one_file_per_image,
             spectrum_roi=spectrum_roi,
             spectrum_roi_strict=spectrum_roi_strict,
+            moving_window_config=moving_window,
             run_progress=run_progress,
         )
