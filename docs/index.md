@@ -26,6 +26,7 @@ migration
 :caption: Using
 
 progress
+resonance_mode
 ```
 
 ```{toctree}

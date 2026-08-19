@@ -16,6 +16,9 @@ from pydantic import BaseModel, Field, field_validator
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 
+from neunorm.data_models.roi import RegionsLike
+from neunorm.processing.spectrum_reducer import _symmetrize_masks, roi_mean_spectrum
+
 
 class ResonanceDetectionConfig(BaseModel):
     """
@@ -70,53 +73,53 @@ class ResonanceDetectionConfig(BaseModel):
         return v
 
 
-def _calculate_snr_poisson(
+def _calculate_snr_from_variances(
     energy: np.ndarray,
     peak_indices: np.ndarray,
-    spectrum_ta_counts: np.ndarray,
-    spectrum_ob_counts: np.ndarray,
+    transmission: sc.DataArray,
+    spectrum_ob: sc.DataArray,
     window_fraction: float = 0.15,
 ) -> np.ndarray:
+    """SNR per peak, taking sigma_T from the **propagated** variance instead of assuming raw counts.
+
+    Same estimator as the Poisson-counts version this replaced — resonance depth over the quadrature
+    sum of the peak's and the background's transmission uncertainty, with background windows that scale
+    as ``dE/E`` — and the same branch structure, bin for bin. Only where sigma_T comes from differs.
+
+    That substitution is why it exists. The old form hard-coded ``sigma_T = T*sqrt(1/S + 1/OB)``, i.e.
+    ``Var(S) = S``, which holds only for raw summed counts: hand it region **means** and the bracket
+    grows by the pixel count, shrinking every SNR by ``1/sqrt(N_pixels)`` — measured 282.8 -> 28.3 over
+    a 10x10 detector, which takes four detected peaks to zero against the default ``min_snr=50``.
+    Reading the variance the reduction already propagated is scale-free, so the same spectrum gives the
+    same SNR whether it is expressed as sums or as means.
+
+    It is also numerically neutral where the old formula was right. For Poisson pixels
+    ``Var(mean) = sum(Var)/N**2``, so ``Var(T)/T**2 = 1/S_sum + 1/OB_sum`` — algebraically identical to
+    the hard-coded bracket. Measured on synthetic Poisson data the detected peaks are unchanged and the
+    SNR values agree to 1.9e-16 relative.
+
+    Where the two DO differ is input whose variances are not Poisson — dark-subtracted or run-combined
+    counts, whose variances are inflated relative to their values. There the old formula understated
+    sigma_T and this one reports the uncertainty the data actually carries, so the SNR comes out lower,
+    and correctly so. That is a deliberate change, not an incidental one.
+
+    ``spectrum_ob`` is taken only for the ``> 0`` validity tests, so a bin the old code skipped is
+    still skipped for the same reason rather than for a different one.
     """
-    Calculate SNR using Poisson statistics with relative energy windows.
-
-    Uses proper Poisson uncertainty propagation: σ_T = T × √(1/S + 1/OB)
-    Background windows scale with energy (ΔE/E = constant) to match TOF physics.
-
-    Parameters
-    ----------
-    energy : np.ndarray
-        Energy bin centers (eV)
-    peak_indices : np.ndarray
-        Indices of detected peaks in spectrum
-    spectrum_ta_counts : np.ndarray
-        Sample counts (integrated over spatial dimensions)
-    spectrum_ob_counts : np.ndarray
-        Open beam counts (integrated over spatial dimensions)
-    window_fraction : float
-        Relative window size (default: 0.15 = ±15% of peak energy)
-
-    Returns
-    -------
-    np.ndarray
-        SNR value for each peak
-    """
+    values = transmission.values
+    stdevs = np.sqrt(transmission.variances)
+    ob_values = spectrum_ob.values
     snr_values = []
 
     for idx in peak_indices:
         peak_energy = energy[idx]
 
-        # Get counts at peak
-        s_peak = spectrum_ta_counts[idx]
-        ob_peak = spectrum_ob_counts[idx]
-
-        if ob_peak <= 0:
+        if ob_values[idx] <= 0:
             snr_values.append(0.0)
             continue
 
-        # Transmission and uncertainty at peak
-        t_peak = s_peak / ob_peak
-        sigma_t_peak = t_peak * np.sqrt(1.0 / max(s_peak, 1) + 1.0 / max(ob_peak, 1))
+        t_peak = values[idx]
+        sigma_t_peak = stdevs[idx]
 
         # Define background windows in RELATIVE energy
         gap = window_fraction
@@ -129,22 +132,14 @@ def _calculate_snr_poisson(
             snr_values.append(0.0)
             continue
 
-        # Get background counts
-        s_bg = spectrum_ta_counts[bg_region]
-        ob_bg = spectrum_ob_counts[bg_region]
-
         # Only use bins with OB counts > 0
-        valid = ob_bg > 0
+        valid = ob_values[bg_region] > 0
         if np.sum(valid) == 0:
             snr_values.append(0.0)
             continue
 
-        # Calculate transmission and uncertainties in background
-        t_bg = s_bg[valid] / ob_bg[valid]
-        t_background = np.median(t_bg)
-
-        sigma_t_bg_array = t_bg * np.sqrt(1.0 / np.maximum(s_bg[valid], 1) + 1.0 / np.maximum(ob_bg[valid], 1))
-        sigma_t_background = np.median(sigma_t_bg_array)
+        t_background = np.median(values[bg_region][valid])
+        sigma_t_background = np.median(stdevs[bg_region][valid])
 
         # Signal = resonance depth
         signal = abs(t_background - t_peak)
@@ -158,12 +153,87 @@ def _calculate_snr_poisson(
     return np.array(snr_values)
 
 
+def _with_poisson_variances(data: sc.DataArray) -> sc.DataArray:
+    """``data`` with ``Var = counts`` filled in when it carries no variances.
+
+    Counting data has Poisson variance whether or not anything recorded it, and the SNR step needs a
+    variance to read. Synthesizing it here is what makes the variance-routed SNR reproduce the old
+    counts formula exactly on inputs that never carried variances — which is all of the existing
+    resonance test data. Negative values (dark-subtracted counts scattering below zero) are floored at
+    zero rather than given a negative variance.
+
+    The values and the variances are held in the SAME float dtype, because scipp requires it. That is
+    not a detail: ``float32`` is what ``event_converter`` and ``tiff_loader`` produce natively and
+    integer counts are what a hand-built histogram carries, and a mismatched pair raises a scipp dtype
+    error that names nothing in NeuNorm. Integer input is promoted to ``float64``; a float input keeps
+    its own precision.
+    """
+    if data.variances is not None:
+        return data
+    values = np.asarray(data.values)
+    # float32 stays float32; integer and everything else become float64
+    dtype = values.dtype if values.dtype in (np.float32, np.float64) else np.float64
+    values = values.astype(dtype, copy=False)
+    out = data.copy(deep=False)
+    out.data = sc.array(
+        dims=data.dims,
+        values=values,
+        variances=np.clip(values, 0.0, None).astype(dtype, copy=False),
+        unit=data.unit,
+    )
+    return out
+
+
+def _region_spectra(
+    hist_ta: sc.DataArray,
+    hist_ob: sc.DataArray,
+    spectrum_roi: Optional[RegionsLike],
+) -> tuple[sc.DataArray, sc.DataArray]:
+    """Sample and open-beam spectra as mask-aware pooled region **means** over the same region.
+
+    ``spectrum_roi=None`` uses the whole detector, which is what this function replaced —
+    ``hist.sum(["x", "y"])`` on each side independently. Two changes come with it, and only the second
+    is about the mean:
+
+    Both sides are given the union of both sides' masks first. A region mean divides by its own count
+    of unmasked pixels, so masking a dead pixel on the sample alone makes the numerator and the
+    denominator average over different pixel sets — and the dead pixel still inflates the open beam.
+    Measured with one of four pixels dead under non-uniform flux: 0.400 from the ratio of sums, 0.533
+    from the ratio of means, 0.800 once the masks match, against a true 0.800. **The mean alone does
+    not fix this**; it removes the ``N_s != N_o`` scale error, and mask symmetry removes the bias.
+
+    A stack with no ``x``/``y`` dims is already a spectrum and is passed through, so callers handing in
+    pre-reduced data keep working.
+    """
+    if "x" not in hist_ta.dims or "y" not in hist_ta.dims:
+        if spectrum_roi is not None:
+            raise ValueError(
+                f"spectrum_roi needs 'x' and 'y' dimensions to select a region; got dims {hist_ta.dims}. "
+                "The input looks already reduced to a spectrum."
+            )
+        return _with_poisson_variances(hist_ta), _with_poisson_variances(hist_ob)
+
+    ta = _with_poisson_variances(hist_ta)
+    ob = _with_poisson_variances(hist_ob)
+    ta, ob = _symmetrize_masks(ta, ob)
+
+    regions = spectrum_roi if spectrum_roi is not None else (0, 0, ta.sizes["x"], ta.sizes["y"])
+    # strict=False on both sides: a fully absorbing bin (transmission 0) is exactly what a resonance
+    # dip looks like, and an empty open-beam bin is handled downstream by the `> 0` validity tests
+    # rather than by aborting a detection run.
+    spectrum_ta = roi_mean_spectrum(ta, regions, strict=False, region_arg="spectrum_roi", name="hist_ta")
+    spectrum_ob = roi_mean_spectrum(ob, regions, strict=False, region_arg="spectrum_roi", name="hist_ob")
+    return spectrum_ta, spectrum_ob
+
+
 def detect_resonances(
     hist_ta: sc.DataArray,
     hist_ob: sc.DataArray,
     config: Optional[ResonanceDetectionConfig] = None,
     known_resonances: Optional[np.ndarray] = None,
     validation_tolerance: float = 0.05,
+    *,
+    spectrum_roi: Optional[RegionsLike] = None,
 ) -> Dict:
     """
     Auto-detect resonance dips in neutron transmission data.
@@ -171,7 +241,7 @@ def detect_resonances(
     Uses tiered filtering approach:
     1. Background subtraction (Gaussian filter)
     2. Initial peak detection (scipy.signal.find_peaks)
-    3. SNR filtering (Poisson statistics with relative energy windows)
+    3. SNR filtering (from the propagated transmission variance, with relative energy windows)
     4. Peak shape filtering (width and prominence/width ratio)
 
     Parameters
@@ -186,6 +256,23 @@ def detect_resonances(
         Known resonance energies (eV) for validation
     validation_tolerance : float
         Relative tolerance for matching known resonances (default: 0.05 = ±5%)
+    spectrum_roi : ROI, MaskROI, tuple, or a sequence of them, optional
+        Restrict the integrated spectrum to a region instead of the whole detector, so a resonance is
+        looked for where the sample actually is. ``None`` (default) uses the whole detector, which is
+        the historical behaviour. Indices are resolved against the arrays as passed.
+
+    Notes
+    -----
+    The integrated spectrum is a mask-aware pooled region **mean**, and both inputs are given the union
+    of both inputs' masks before it is taken. Two independent reductions —
+    ``hist_ta.sum(["x", "y"])`` and ``hist_ob.sum(["x", "y"])`` — are each mask-aware, but a mask
+    present on only one side excludes a pixel from that side alone, so the numerator and the
+    denominator cover different pixels and the ratio is biased. Measured with one of four pixels dead
+    under non-uniform flux: 0.400 from the ratio of sums against a true 0.800.
+
+    The SNR is computed from the propagated transmission variance rather than from a hard-coded Poisson
+    formula over raw counts, which is what lets the spectrum be a mean at all. For Poisson counts the
+    two agree to floating-point round-off, so detection on counting data is unchanged.
 
     Returns
     -------
@@ -212,10 +299,14 @@ def detect_resonances(
     logger.info(f"  SNR window: ±{config.snr_window_fraction * 100:.0f}% of E (relative)")
     logger.info(f"  Min SNR: {config.min_snr}")
 
-    # Step 1: Compute integrated transmission spectrum
+    # Step 1: Compute integrated transmission spectrum — the mask-aware pooled region MEAN of each
+    # side, over the same region, divided once. The region is collapsed before the division because
+    # (Sum a)/(Sum b) != Sum(a/b), the same identity aggregate_resonance_image states for the
+    # spectral direction.
     logger.info("Computing integrated transmission spectrum...")
-    spectrum_ta = hist_ta.sum(["x", "y"])
-    spectrum_ob = hist_ob.sum(["x", "y"])
+    if spectrum_roi is not None:
+        logger.info("  Restricting the spectrum to region(s) {}", spectrum_roi)
+    spectrum_ta, spectrum_ob = _region_spectra(hist_ta, hist_ob, spectrum_roi)
     integrated_transmission = spectrum_ta / spectrum_ob
 
     # Extract numpy arrays
@@ -248,16 +339,13 @@ def detect_resonances(
             "n_shape_filtered": 0,
         }
 
-    # Step 4: SNR filtering with Poisson statistics
-    logger.info("Applying SNR filter (Poisson statistics)...")
-    spectrum_ta_counts = spectrum_ta.values
-    spectrum_ob_counts = spectrum_ob.values
-
-    snr_values = _calculate_snr_poisson(
+    # Step 4: SNR filtering from the propagated transmission variance
+    logger.info("Applying SNR filter (propagated transmission variance)...")
+    snr_values = _calculate_snr_from_variances(
         energy_centers,
         peaks_initial,
-        spectrum_ta_counts,
-        spectrum_ob_counts,
+        integrated_transmission,
+        spectrum_ob,
         window_fraction=config.snr_window_fraction,
     )
 

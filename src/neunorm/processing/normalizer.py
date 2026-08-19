@@ -112,9 +112,17 @@ def _unmasked_count(region: sc.DataArray) -> sc.Variable:
 
     Sums a dimensionless field of ones carrying the region's masks, so masked pixels are excluded and
     a per-image ``(spectral, x, y)`` mask yields a per-spectral count (a scalar for a 2D/absent mask).
+
+    The counter is BUILT rather than copied from ``region``. A ``region.copy()`` here duplicates the
+    region's values and variances only to overwrite them with ones, which doubles peak memory for a
+    region the size of the frame — and ``roi_mean_spectrum`` is called with the whole detector when
+    ``detect_resonances`` is given no region. The returned shape is unchanged: the sizes and the masks
+    are the same, so the count is the same per-spectral vector it always was.
     """
-    counter = region.copy()
-    counter.data = sc.ones(sizes=region.data.sizes, dtype="int64", unit="one")
+    counter = sc.DataArray(
+        sc.ones(sizes=region.data.sizes, dtype="int64", unit="one"),
+        masks={name: mask for name, mask in region.masks.items()},
+    )
     return sc.sum(counter, dim=["x", "y"]).data
 
 

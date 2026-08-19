@@ -464,6 +464,16 @@ TPX3 records individual neutron events with:
 - ROI applied (if any)
 - Software version
 
+#### Resonance mode: a spectrum instead of images
+
+Both TPX3 modes accept `spectrum_roi`, which replaces the output above with a **1-D transmission
+spectrum** — one point per TOF bin, the sample's mean counts over the region divided by the open beam's
+mean counts over the same region — written as a three-column
+`bin_index,transmission,uncertainty` ASCII file plus an HDF5 sibling carrying the `N+1` `tof` bin edges,
+the per-bin `spectra_tof` time and the provenance. Everything before the normalization is unchanged, so
+a spectrum run and an image run of the same data see the same counts; frame-index binning applies as it
+does here, and TIFF output is refused for a spectrum. See {doc}`../resonance_mode`.
+
 ---
 
 ### A.6 Pulse ID Reconstruction Detail

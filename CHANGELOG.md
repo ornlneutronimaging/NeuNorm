@@ -11,6 +11,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Resonance mode: ROI-level normalization producing a transmission spectrum**
+  ([#197](https://github.com/ornlneutronimaging/NeuNorm/issues/197)). A new keyword-only
+  `spectrum_roi` on `run_venus_tpx1_pipeline`, `run_venus_tpx3_histogram_pipeline` and
+  `run_venus_tpx3_event_pipeline` switches the output from a stack of normalized images to a **1-D
+  transmission spectrum**: for each spectral bin the sample's mean counts over the region are divided
+  by the open beam's mean counts over the same region, giving one point per bin. Written as a
+  three-column ASCII file — `bin_index,transmission,uncertainty`, comma-delimited with exactly one
+  plain header line — which is the `*_Spectra.txt` shape the ORNL imaging tools exchange and which
+  NeuNorm's own reader parses with `np.loadtxt(path, skiprows=1, delimiter=",")`. An HDF5 file is
+  written alongside it carrying the time axis, the masks and the provenance that three columns cannot
+  hold. See `docs/resonance_mode.md`.
+
+  The requirement is an order of operations: the region is collapsed to one number per bin **before**
+  the division, because the ratio of means is not the mean of ratios — about 1.2% apart on synthetic
+  Poisson counts over a 64-pixel region, and the per-pixel form additionally yields NaN wherever an
+  open-beam pixel recorded zero counts in a bin. The region mean is the same mask-aware pooled mean
+  `background_roi` and `air_roi` already use, so rectangles, arbitrary-shape `MaskROI` selections and
+  pooled lists all behave identically, and a dead pixel inside the region is excluded from the summed
+  counts and the pixel count alike.
+
+  Both sides are given the **union of both sides' masks** before the collapse. A region mean divides by
+  its own count of unmasked pixels, so a pixel masked on the sample alone leaves numerator and
+  denominator averaging over different pixels while the dead pixel goes on inflating the open beam:
+  measured on four pixels with one dead under non-uniform flux, 0.400 from a ratio of sums and 0.533
+  from a ratio of means against a true 0.800, which only mask symmetry recovers. Switching from sums to
+  means is not by itself the fix.
+
+  Frame-index binning works as in image mode — `rebin_by_tof` takes the same integer factor, `True`, or
+  explicit `[[start, stop], ...]` list, and the stacks are binned before the region is collapsed, so a
+  spectrum run and an image run of the same data see the same counts. `bin_index` is each point's first
+  input frame, which is the file index when no rebinning ran: a gapped list `[[0, 2], [4, 6]]` gives
+  rows indexed 0 and 4, and the dropped span has no row. `spectrum_roi_strict` (default `True`) guards
+  a non-positive or non-finite **open-beam** region mean; a zero *sample* mean is a real measurement — a
+  fully absorbing bin — and gives transmission 0.0. TIFF output is refused for a spectrum, because the
+  TIFF writer would otherwise quietly produce a multi-page file of 1x1-pixel images.
+
+  `spectrum_roi` indices are resolved against the arrays as normalization sees them, so after a `roi`
+  crop or a `rebin_by_spatial` they are **not** detector pixels — the same caveat `background_roi`
+  carries. A run that combines them warns, because the numbers look plausible either way.
+
+  Scope is the three VENUS TOF pipelines. The CCD pipelines and MARS TPX3 collapse or lack a spectral
+  axis at normalization time, so they have no per-bin open beam to divide by.
+
+- **`detect_resonances` takes a `spectrum_roi`**, so peaks are looked for where the sample is rather
+  than across the whole detector. Its integrated spectrum is now the mask-aware pooled region mean with
+  the masks symmetrized, instead of two independent bare sums — dividing two sums with no pixel count
+  is biased whenever the two sides carry different masks (measured 0.400 against a true 0.800). The SNR
+  is computed from the propagated transmission variance instead of a Poisson formula hard-coded over
+  raw counts, which is what allows the spectrum to be a mean at all: feeding means to the old formula
+  would have shrunk every SNR by `1/sqrt(N_pixels)`. For counting data the two agree to floating-point
+  round-off — measured maximum relative SNR difference 1.9e-16 on synthetic Poisson data, with
+  identical peaks — so detection on existing data is unchanged.
+
+- **`neunorm.processing.spectrum_reducer`** — `roi_mean_spectrum` promotes the pooled region mean to a
+  documented public function (no numerical change; the existing private helper stays the single
+  implementation), and `normalize_roi_spectrum` reduces a sample and open-beam pair to a transmission
+  spectrum carrying the `N+1` `tof` bin edges, so the result can be rebinned again or converted to
+  wavelength or energy. It reuses `normalize_transmission`, so the proton-charge correction and its
+  0.5% systematic come with it. Sample and open-beam inputs whose aligned time axes disagree raise a
+  message naming the axis, the deviation and both inputs, rather than a raw scipp `DatasetError`.
+
+- **`neunorm.exporters.ascii_writer`** — the package's first text exporter. `write_ascii_spectrum`
+  writes the three-column spectrum; a spectrum that is not 1-D, or that carries no variances, is
+  rejected rather than written with a fabricated uncertainty column.
+
 - **Progress-reporting contract** — new `neunorm.utils.progress` module
   ([#195](https://github.com/ornlneutronimaging/NeuNorm/issues/195)), the foundation for reporting
   where a long normalization run has got to. Defines the immutable `ProgressEvent(stage, completed,
@@ -240,6 +305,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   forwards the tolerance to all three of its combine steps — sample, open beam and dark.
 
 ### Changed
+
+- **The three VENUS TOF pipelines share one implementation.** `venus_tpx1`, `venus_tpx3_histogram` and
+  `venus_tpx3_event` each carried the same ~150 lines — crop, dead/hot detection, spatial rebin, TOF
+  rebin, normalize, air correction, coordinate labelling, export — so that middle now lives once in
+  `neunorm.pipelines._tof_spine.reduce_tof_stacks` and each entry point keeps only its own loading and
+  metadata. 409/405/418 lines become 271/263/287, and all three `# noqa: C901` complexity suppressions
+  are gone. Public signatures are unchanged apart from the two new keyword-only parameters.
+
+  The differences that genuinely exist between the three are now named in a `TofPipelineProfile` rather
+  than implied by which copy of the code you are reading, **including two that look like oversights and
+  are preserved exactly**: `venus_tpx3_histogram` re-detects its dead/hot masks from the *sample* after
+  a spatial rebin where its own pre-rebin detection and both other pipelines read the open beam, and
+  `venus_tpx1` passes no `hot_pixel_mask` to the HDF5 writer. Changing either would change published
+  output, so neither was changed here.
+
+  Behaviour-preserving, and verified rather than asserted: every pipeline's written `transmission`,
+  `uncertainty`, `tof`/`spectra_tof`/`wavelength`/`energy` coordinates and every mask are bit-identical
+  before and after, across 31 runs covering all three pipelines against ten argument combinations plus
+  three untouched pipelines as controls.
 
 - **Parameters added since v2.2.3 are now keyword-only, and the released positional order is guarded
   by tests.** `rebin_reduction` and `tiff_one_file_per_image` on the three VENUS TOF pipelines,

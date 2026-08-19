@@ -64,6 +64,7 @@ STAGE_COMBINE_RUNS = "combine_runs"
 STAGE_GAMMA_FILTER = "gamma_filter"
 STAGE_REBIN_TOF = "rebin_tof"
 STAGE_NORMALIZE = "normalize"
+STAGE_REDUCE_SPECTRUM = "reduce_spectrum"
 STAGE_EXPORT = "export"
 
 __all__ = [
@@ -76,6 +77,7 @@ __all__ = [
     "STAGE_LOAD_SAMPLE",
     "STAGE_NORMALIZE",
     "STAGE_REBIN_TOF",
+    "STAGE_REDUCE_SPECTRUM",
     "NULL_REPORTER",
     "Progress",
     "ProgressCallback",

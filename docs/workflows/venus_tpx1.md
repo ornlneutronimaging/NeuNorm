@@ -344,6 +344,24 @@ flowchart TD
 - Software version
 - ROI applied (if any)
 
+### Resonance mode: a spectrum instead of images
+
+Passing `spectrum_roi` replaces the output above with a **1-D transmission spectrum** — one point per
+TOF bin, the sample's mean counts over the region divided by the open beam's mean counts over the same
+region — written as a three-column ASCII file plus an HDF5 sibling:
+
+| Output | Dimensions | Description |
+|--------|------------|-------------|
+| `bin_index,transmission,uncertainty` ASCII | (N_bins,) | comma-delimited, one plain header line |
+| Transmission | (TOF,) | dimensionless, in the HDF5 sibling |
+| Uncertainty | (TOF,) | propagated 1σ |
+| tof coordinate | (N_bins + 1,) | bin edges, so the spectrum can be rebinned again |
+| spectra_tof | (N_bins,) | each bin's representative time |
+
+Everything before the normalization is unchanged, so a spectrum run and an image run of the same data
+see the same counts. Frame-index binning applies as it does here. TIFF output is refused for a spectrum.
+See {doc}`../resonance_mode` for the format, the coordinate-frame caveat and worked examples.
+
 ---
 
 ## 4. Coordinate Conversions
