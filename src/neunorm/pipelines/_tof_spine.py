@@ -507,10 +507,14 @@ def _validate_argument_combinations(
     """Refuse the argument combinations that have no correct interpretation, and warn about the
     ones that do but whose consequence is easy to miss.
 
-    Gathered in one place rather than scattered down the run, so that every refusal happens before
-    any work is done — a run that is going to be rejected should be rejected before it spends
-    minutes loading and rebinning — and so the list of what is incompatible with what can be read
-    without following the control flow of the whole reduction.
+    Gathered in one place rather than scattered down the run, so the list of what is incompatible
+    with what can be read without following the control flow of the whole reduction, and so a run
+    that is going to be rejected is rejected before it crops, rebins, normalizes or writes anything.
+
+    It does NOT run before the expensive part. Every entry point loads and run-combines both stacks
+    before it reaches :func:`reduce_tof_stacks`, so a rejected run still pays for the load — minutes,
+    on a large TOF stack. Moving these checks into the three entry points would fix that, but the
+    warnings below would then fire twice unless refusals and warnings were split first.
     """
     if spectrum_roi is not None:
         if air_roi is not None:
@@ -600,22 +604,28 @@ def _warn_on_a_kernel_large_for_its_axis(data: sc.DataArray, config: MovingWindo
     boundary, which is why mirroring is a safe default — but that argument only holds while the
     border is a small part of the axis. Checked against the sizes as they are AT the filter, so a
     crop or a spatial rebin that made the axis short is accounted for.
+
+    A window of length ``k`` overhangs the frame from exactly ``k - 1`` output positions, whatever
+    its parity: an odd window reaches ``k // 2`` positions at each end, and an even one — which sits
+    one pixel to the left — reaches ``k // 2`` at the start and one fewer at the end. Counting
+    ``2 * (k // 2)`` overstated every even window by one position.
     """
     for dim, length in config.sizes().items():
         if dim not in data.dims or length == 1:
             continue
         axis = data.sizes[dim]
-        touched = min(1.0, 2.0 * (length // 2) / axis)
+        touched = min(1.0, (length - 1) / axis)
         if touched >= _EDGE_FRACTION_WARNING:
             logger.warning(
                 "moving_window size {} on the {!r} axis, which is {} pixels here: {:.0%} of pixels "
-                "have the mirrored frame edge inside their window, so the edge policy shapes much "
-                "of the result rather than a thin border. The axis length is measured after any "
-                "roi crop and spatial rebin.",
+                "have the frame edge inside their window, so the {!r} edge policy shapes much of "
+                "the result rather than a thin border. The axis length is measured after any roi "
+                "crop and spatial rebin.",
                 length,
                 dim,
                 axis,
                 touched,
+                config.mode,
             )
 
 

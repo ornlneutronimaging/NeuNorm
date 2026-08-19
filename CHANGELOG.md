@@ -31,8 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   improves per-pixel precision by `k` and coarsens resolution by `k` — while the array keeps its
   shape, so the result presents as full resolution while carrying roughly one independent value per
   `k**2` pixels. NeuNorm says so at run time, records the window under `/metadata/moving_window`, and
-  refuses to combine it with `spectrum_roi`, where a region reduction over correlated pixels
-  under-reports its uncertainty by roughly `sqrt(kernel pixels)`. Applied before normalization
+  refuses to combine it with `spectrum_roi` or `air_roi`, where a region reduction over correlated
+  pixels under-reports its uncertainty by roughly `sqrt(kernel pixels)`. Applied before normalization
   `kind="sum"` and `kind="average"` give indistinguishable transmission, because the kernel count
   cancels in the ratio. See `docs/moving_window.md`, whose three measurement tables are regenerated
   and checked by the test suite.

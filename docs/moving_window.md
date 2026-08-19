@@ -91,11 +91,17 @@ Measured over the interior, outside the `k // 2` border, where the trade is the 
 A `k x k` window shares `k - 1` of its `k` columns with the window one pixel over, so the correlation
 is `(k - 1) / k`. scipp carries no covariance, so this cannot be propagated.
 
-That is why `moving_window` and `spectrum_roi` are refused together. A region reduction divides by an
+That is why `moving_window` is refused together with `spectrum_roi`, and with `air_roi`. A region reduction divides by an
 `n` the pixels no longer have, and under-reports its uncertainty by roughly `sqrt(kernel pixels)` —
 measured at x2.9 for a 3x3 window and x4.7 for 5x5, over a 32x32 region. The reported error bar
 shrinks while the true spread of the estimator barely moves, so the two are alternative answers to
 low counting statistics rather than stages of one workflow.
+
+`air_roi` is refused for the same reason and not because it is an alternative: the air correction
+divides by the mean over its region, and that mean's uncertainty is computed treating the pixels as
+independent. Measured over 3000 trials, a 3x3 air region under a 3x3 window under-reports by x2.1,
+and under 5x5 by x2.4 — and unlike a spectrum, that error is folded into every pixel of the image
+through the scale factor.
 
 ## Where the window sits, and what its sizes mean
 

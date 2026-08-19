@@ -18,7 +18,8 @@ variances, so this one does too: with weights ``w_p`` summing to one over the us
 ``Var_out = sum_p w_p**2 Var_p``. The weights are per distinct SOURCE pixel, which matters at the
 frame edge: a boundary mode makes the window read some real pixels more than once, and a pixel read
 ``m`` times carries weight ``m / k`` rather than ``1 / k``. Summing over window slots instead would
-understate the reported uncertainty by up to 2.78x at a mirrored 3x3 corner. This assumes the input
+understate the reported variance by up to 2.78x at a mirrored 3x3 corner — 1.67x in sigma, which is
+what a user reads off an error bar. This assumes the input
 pixels are independent, which holds at the point the pipeline applies the filter (before
 normalization, with no earlier smoothing) — it is not true of the *output*, whose neighbouring pixels
 are correlated by construction.
@@ -135,7 +136,8 @@ def _summed_with_squared_multiplicity(values: np.ndarray, axis: int, length: int
     linear, and a plain box filter already sums the duplicates correctly — but a variance is not.
     ``Var(sum_p w_p x_p) = sum_p w_p**2 Var_p`` needs the weight on each distinct SOURCE pixel, so a
     pixel read ``m`` times contributes ``m**2``, not ``m``. Summing over slots instead understates the
-    reported uncertainty wherever the window overhangs the frame — measured 2.78x low at a 3x3 corner.
+    reported variance wherever the window overhangs the frame — measured 2.78x low at a 3x3 corner,
+    which is 1.67x in sigma.
 
     Computed as the plain slot sum plus a correction, because ``m`` is 1 everywhere except within
     ``length // 2`` of an edge: for each pair of slots that read the SAME source, that source's

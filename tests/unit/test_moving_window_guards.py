@@ -191,15 +191,17 @@ def test_no_compounding_warning_without_a_spatial_rebin(pipeline, tmp_path, warn
 def test_a_kernel_large_for_its_axis_is_warned_about(pipeline, tmp_path, warnings):  # noqa: F811
     """The mirrored-edge argument only holds while the border is a small part of the axis."""
     pipeline(tmp_path / "out.hdf5", moving_window=MovingWindow(x=17, y=17))
-    said = _matching(warnings, "mirrored frame edge inside their window")
+    said = _matching(warnings, "the frame edge inside their window")
     assert said
     assert "32 pixels here" in said[0]
+    # names the edge policy actually in use, rather than always saying "mirrored"
+    assert "'reflect' edge policy" in said[0]
 
 
 @_TIFF_BASED
 def test_a_small_kernel_on_a_full_axis_is_not_warned_about(pipeline, tmp_path, warnings):  # noqa: F811
     pipeline(tmp_path / "out.hdf5", moving_window=MovingWindow(x=3, y=3))
-    assert not _matching(warnings, "mirrored frame edge inside their window")
+    assert not _matching(warnings, "the frame edge inside their window")
 
 
 @_TIFF_BASED
@@ -207,7 +209,7 @@ def test_the_axis_length_is_the_one_at_the_filter_not_the_detectors(pipeline, tm
     """A crop shortens the axis, so a window that was safe on the full frame may not be."""
     # 32 -> 10 pixels wide after this crop; a 5-wide window then reaches the edge from 40% of pixels
     pipeline(tmp_path / "out.hdf5", roi=(10, 10, 20, 30), moving_window=MovingWindow(x=5, y=5))
-    said = _matching(warnings, "mirrored frame edge inside their window", "'x'")
+    said = _matching(warnings, "the frame edge inside their window", "'x'")
     assert said
     assert "10 pixels here" in said[0]
 
@@ -223,7 +225,7 @@ def test_no_warnings_when_unused(pipeline, tmp_path, warnings):  # noqa: F811
     pipeline(tmp_path / "out.hdf5")
     assert not _matching(warnings, "moving_window")
     assert not _matching(warnings, "POST-REBIN pixels")
-    assert not _matching(warnings, "mirrored frame edge inside their window")
+    assert not _matching(warnings, "the frame edge inside their window")
 
 
 @_TIFF_BASED

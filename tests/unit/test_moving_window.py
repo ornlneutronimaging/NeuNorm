@@ -298,7 +298,7 @@ def test_variance_at_a_mirrored_border_counts_a_duplicated_pixel_once(sizes):
 
     ``Var(sum_p w_p x_p) = sum_p w_p**2 Var_p`` is over distinct SOURCE pixels. Summing over window
     SLOTS instead treats a pixel read twice as two independent measurements and understates the
-    reported uncertainty — by 2.78x at a mirrored 3x3 corner, entirely inside the border where no
+    reported variance — by 2.78x at a mirrored 3x3 corner (1.67x in sigma), entirely inside the border where no
     interior-only test can see it.
     """
     shape = (9, 9)
@@ -426,6 +426,35 @@ def test_a_masked_non_finite_variance_does_not_spread():
     data = sc.DataArray(sc.array(dims=["y", "x"], values=values, variances=variances, unit="counts"))
     data.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=dead)
     assert np.isfinite(moving_window(data, {"x": 3, "y": 3}).variances).all()
+
+
+@pytest.mark.parametrize("kind", ["average", "sum"])
+def test_a_fully_masked_window_is_left_alone_by_both_kinds(kind):
+    """A starved pixel keeps its INPUT value, unscaled — including under ``kind="sum"``.
+
+    The fallback that restores those pixels runs after the sum's ``k`` scaling, so the restored value
+    is the raw input rather than ``input * k``. Nothing pinned that ordering: every other
+    starved-window test uses the default kind, and every ``kind="sum"`` test uses data in which no
+    window is starved. Swapping the two blocks therefore left the whole suite green while returning
+    ``input * k`` at exactly the dead-detector regions a real VENUS run has — and because both stacks
+    carry the same masks, the error largely cancels in the sample/open-beam ratio, so no
+    pipeline-level test can see it either. The unit level is the only place it can fail.
+    """
+    values = np.arange(25, dtype=float).reshape(5, 5)
+    variances = np.full((5, 5), 2.0)
+    dead = np.zeros((5, 5), dtype=bool)
+    dead[0:3, 0:3] = True  # the 3x3 window centred on (1, 1) sees nothing usable
+
+    data = sc.DataArray(sc.array(dims=["y", "x"], values=values.copy(), variances=variances.copy(), unit="counts"))
+    data.masks["dead_pixels"] = sc.array(dims=["y", "x"], values=dead)
+
+    result = moving_window(data, {"x": 3, "y": 3}, kind=kind)
+
+    # (1, 1) is starved whatever the kind, so it comes back exactly as it went in
+    np.testing.assert_allclose(result.values[1, 1], values[1, 1])
+    np.testing.assert_allclose(result.variances[1, 1], variances[1, 1])
+    # ... and emphatically NOT scaled by the kernel size, which is what a reordering would give
+    assert result.values[1, 1] != pytest.approx(values[1, 1] * 9)
 
 
 def test_a_masked_sum_is_the_mean_scaled_by_the_nominal_window():

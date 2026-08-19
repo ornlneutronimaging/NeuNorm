@@ -152,7 +152,8 @@ def run_venus_tpx1_pipeline(
         detector pixels. Dead and hot pixels are excluded from the window rather than averaged into
         it. A ``k x k`` window improves per-pixel precision by ``k`` and coarsens spatial resolution
         by ``k`` while the array keeps its shape; ``docs/moving_window.md`` has the measured trade.
-        Cannot be combined with ``spectrum_roi``.
+        Cannot be combined with ``spectrum_roi`` or ``air_roi``: both reduce over a region
+        assuming its pixels are independent, which a window has just stopped being true.
     progress : bool or callable, optional
         Progress reporting for the whole run, off by default (and free when off). ``True`` lets
         NeuNorm draw one :mod:`tqdm` bar per stage; a callable receives a
