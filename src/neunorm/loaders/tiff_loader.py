@@ -116,10 +116,10 @@ def load_tiff_stack(  # noqa: C901
         # glitching Timepix chip writing wrapped values around ±32k into the
         # autoreduced frames. Those pixels carry no physical information, so
         # they are zeroed (count 0 → variance 0) instead of aborting the load.
-        negative = full_data < 0
-        if negative.any():
-            n_frames = np.unique(np.nonzero(negative)[0]).size
-            logger.warning(
+negative = full_data < 0
+if negative.any():
+    frame_has_negative = negative.reshape(n_images, -1).any(axis=1)
+    n_frames = int(frame_has_negative.sum())
                 "Loaded TIFF data contains {} negative pixel(s) across {} of {} frame(s) "
                 "(most negative value: {:.1f}); zeroing them to keep Poisson variances valid.",
                 int(negative.sum()),
