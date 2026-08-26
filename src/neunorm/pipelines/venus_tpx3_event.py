@@ -135,6 +135,27 @@ def run_venus_tpx3_event_pipeline(
         file. When ``True`` each spectral image is written as its own scitiff file
         (``<stem>_00000.tiff``, ``<stem>_00001.tiff``, …, one normalization per file), which suits
         tools such as ImageJ that expect individual images. Ignored for HDF5 output.
+    spectrum_roi : ROI, MaskROI, tuple, or a sequence of them, optional
+        Reduce to a **1-D transmission spectrum** over this region instead of a stack of normalized
+        images ("resonance mode"). For each spectral bin the sample's mean counts over the region are
+        divided by the open beam's mean counts over the same region, giving one point per bin. The
+        region is collapsed **before** the division: the ratio of means is not the mean of ratios, and
+        the per-pixel form additionally yields NaN wherever an open-beam pixel recorded zero counts in
+        a bin. Rectangles, arbitrary-shape ``MaskROI`` selections and pooled lists of either are all
+        accepted, and both sides are given the union of both sides' masks before the collapse. Indices
+        are resolved in **post-crop, post-spatial-rebin** pixels — the same frame as ``air_roi`` — and
+        the run warns when a crop or a spatial rebin makes that not the detector frame. Off by
+        default.
+
+        Output follows ``output_path``'s suffix: ``.txt`` writes the three-column
+        ``bin_index,transmission,uncertainty`` table plus an HDF5 sibling carrying the time axis,
+        masks and provenance that three columns cannot hold; ``.hdf5``/``.h5`` writes only the HDF5.
+        TIFF is refused. Cannot be combined with ``air_roi``, ``tiff_one_file_per_image`` or
+        ``moving_window``.
+    spectrum_roi_strict : bool, optional
+        Whether a non-positive or non-finite **open-beam** region mean raises rather than producing
+        inf/nan, by default ``True``. The sample side is deliberately not guarded: a zero sample mean
+        is a measurement — a fully absorbing bin — not a fault. Only meaningful with ``spectrum_roi``.
     moving_window : MovingWindow, optional
         Replace each pixel by the average — or, with ``kind="sum"``, the total — of a box of pixels
         around it, applied to **both** stacks immediately before they are divided. Off by default.
@@ -166,10 +187,14 @@ def run_venus_tpx3_event_pipeline(
     This function writes the normalized transmission data to disk in either HDF5 or TIFF format,
     depending on the file extension of `output_path`. Metadata and detector masks are included in the output.
 
+    With ``spectrum_roi`` the output is a 1-D spectrum instead: ``.txt`` writes the three-column ASCII
+    table and an HDF5 file alongside it, ``.hdf5``/``.h5`` writes only HDF5, and TIFF is refused.
+
     Returns
     -------
     sc.DataArray
-        Final normalized transmission DataArray with metadata and masks
+        Final normalized transmission DataArray with metadata and masks — an image stack, or a 1-D
+        transmission spectrum when ``spectrum_roi`` is given.
     """
     # Accept an ROI or a bare (x0, y0, x1, y1) tuple for every ROI argument; coerce to bounds
     # tuples up front so cropping and provenance see a consistent form.
