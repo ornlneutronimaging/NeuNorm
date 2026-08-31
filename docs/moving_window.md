@@ -25,11 +25,11 @@ transmission = run_venus_tpx1_pipeline(
 ```python
 from neunorm.data_models.moving_window import MovingWindow
 
-MovingWindow(x=3, y=3)                          # 3x3 average
-MovingWindow(x=3, y=3, kind="sum")              # 3x3 sum
-MovingWindow(x=5, y=3)                          # 5 wide, 3 tall
-MovingWindow(x=3, y=3, tof=3, dimension="3D")   # also averages 3 TOF bins
-MovingWindow(x=3, y=3, mode="nearest")          # a different edge policy
+MovingWindow(x=3, y=3)  # 3x3 average
+MovingWindow(x=3, y=3, kind="sum")  # 3x3 sum
+MovingWindow(x=5, y=3)  # 5 wide, 3 tall
+MovingWindow(x=3, y=3, tof=3, dimension="3D")  # also averages 3 TOF bins
+MovingWindow(x=3, y=3, mode="nearest")  # a different edge policy
 ```
 
 Sizes are named rather than positional because the detectors do not agree on axis order: the event

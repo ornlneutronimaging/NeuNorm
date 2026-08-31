@@ -63,7 +63,7 @@ from pathlib import Path
 from neunorm.pipelines.mars_ccd import run_mars_ccd_pipeline
 
 transmission = run_mars_ccd_pipeline(
-    sample_paths=sample_paths,   # [[run1_file1, run1_file2, ...], [run2_file1, ...], ...]
+    sample_paths=sample_paths,  # [[run1_file1, run1_file2, ...], [run2_file1, ...], ...]
     ob_paths=ob_paths,
     dark_paths=dark_paths,
     output_path=Path("normalized.h5"),
@@ -109,7 +109,7 @@ def report(event):
     bar = bars.get(event.stage)
     if bar is None:
         bar = bars[event.stage] = tqdm(total=event.total, desc=event.stage)
-    bar.update(event.completed - bar.n)   # completed is ABSOLUTE; update() takes a DELTA
+    bar.update(event.completed - bar.n)  # completed is ABSOLUTE; update() takes a DELTA
     if event.detail:
         bar.set_postfix_str(event.detail)
 
@@ -181,7 +181,7 @@ class RunCancelled(RuntimeError):
 
 
 def cancel_if_asked(event):
-    if user_pressed_stop():          # your own check
+    if user_pressed_stop():  # your own check
         raise RunCancelled(f"cancelled during {event.stage} at {event.completed}")
 
 
@@ -264,7 +264,7 @@ from tqdm.auto import tqdm
 
 from neunorm.pipelines.mars_ccd import run_mars_ccd_pipeline
 
-logger.remove()                                   # drop YOUR handlers; re-add them afterwards
+logger.remove()  # drop YOUR handlers; re-add them afterwards
 handler = logger.add(lambda message: tqdm.write(message, end="", file=sys.stderr))
 try:
     run_mars_ccd_pipeline(
@@ -275,7 +275,7 @@ try:
     )
 finally:
     logger.remove(handler)
-    logger.add(sys.stderr)                        # or restore your own configuration
+    logger.add(sys.stderr)  # or restore your own configuration
 ```
 
 Three details, all measured or easy to miss:
@@ -338,8 +338,8 @@ from neunorm.utils.progress import STAGE_LOAD_SAMPLE, resolve_progress
 def my_loader(paths, *, progress=False):
     with resolve_progress(progress, STAGE_LOAD_SAMPLE, total=len(paths)) as report:
         for path in paths:
-            ...                          # do the work
-            report(detail=path.name)     # then count it
+            ...  # do the work
+            report(detail=path.name)  # then count it
 ```
 
 `resolve_progress` turns `False` / `True` / a callable — or a reporter handed down by a caller — into
