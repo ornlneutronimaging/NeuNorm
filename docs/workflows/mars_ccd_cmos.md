@@ -128,9 +128,11 @@ from neunorm.data_models import MaskROI
 from neunorm.data_models.roi import ROI
 from neunorm.pipelines.mars_ccd import run_mars_ccd_pipeline
 
-region = MaskROI.from_file("background_mask.tif")   # nonzero pixels = in the region
+region = MaskROI.from_file("background_mask.tif")  # nonzero pixels = in the region
 transmission = run_mars_ccd_pipeline(
-    sample_paths=[...], ob_paths=[...], output_path=Path("out.h5"),
+    sample_paths=[...],
+    ob_paths=[...],
+    output_path=Path("out.h5"),
     background_roi=[region, ROI(x0=0, y0=0, width=64, height=64)],  # pooled together
 )
 ```

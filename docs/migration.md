@@ -42,10 +42,10 @@ from NeuNorm.normalization import Normalization
 o_norm = Normalization()
 o_norm.load(file="sample.tif", data_type="sample")
 o_norm.load(folder="/data/ob/", data_type="ob")
-o_norm.load(folder="/data/df/", data_type="df")   # dark / "df" frames
+o_norm.load(folder="/data/df/", data_type="df")  # dark / "df" frames
 o_norm.normalization()
 o_norm.export(folder="/data/normalized/", data_type="normalized")
-normalized = o_norm.get_normalized_data()           # list of NumPy arrays
+normalized = o_norm.get_normalized_data()  # list of NumPy arrays
 ```
 
 **2.0** (MARS CCD/CMOS — continuous source, the closest analogue to the 1.x CCD case)
@@ -60,8 +60,8 @@ transmission = run_mars_ccd_pipeline(
     ob_paths=[["ob_0001.tif", "ob_0002.tif"]],
     dark_paths=[["dark_0001.tif"]],
     output_path=Path("/data/normalized.hdf5"),
-    roi=(x0, y0, x1, y1),   # optional
-    gamma_filter=True,      # on by default
+    roi=(x0, y0, x1, y1),  # optional
+    gamma_filter=True,  # on by default
 )
 
 # `transmission` is a scipp.DataArray; the NumPy values are transmission.values
@@ -125,13 +125,15 @@ transmission = normalize_transmission(sample, ob)  # T = sample / ob, variances 
 ```python
 # 1.x
 from NeuNorm.roi import ROI
+
 roi = ROI(x0=10, y0=10, x1=110, y1=110)
 
 # 2.0 — named ROI (exclusive stops) or a bare tuple
 from neunorm.data_models.roi import ROI
-roi = ROI(x0=10, y0=10, x1=111, y1=111)         # explicit stops
+
+roi = ROI(x0=10, y0=10, x1=111, y1=111)  # explicit stops
 roi = ROI(x0=10, y0=10, width=101, height=101)  # or by size
-roi = (10, 10, 111, 111)                        # or a bare (x0, y0, x1, y1) tuple
+roi = (10, 10, 111, 111)  # or a bare (x0, y0, x1, y1) tuple
 ```
 
 ## Working with the result
@@ -139,10 +141,10 @@ roi = (10, 10, 111, 111)                        # or a bare (x0, y0, x1, y1) tup
 A 2.0 pipeline returns a `scipp.DataArray` instead of a NumPy array:
 
 ```python
-transmission.values        # NumPy array of transmission values
-transmission.variances     # propagated variances (None in 1.x — not tracked)
-transmission.coords        # axis coordinates (e.g. wavelength for TOF data)
-transmission.masks         # detector masks (e.g. dead pixels)
+transmission.values  # NumPy array of transmission values
+transmission.variances  # propagated variances (None in 1.x — not tracked)
+transmission.coords  # axis coordinates (e.g. wavelength for TOF data)
+transmission.masks  # detector masks (e.g. dead pixels)
 ```
 
 The normalized result is also written to `output_path` as HDF5 (and optionally
