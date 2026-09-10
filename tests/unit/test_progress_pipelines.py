@@ -231,9 +231,12 @@ def test_mars_ccd_pipeline_reports_every_stage_end_to_end(mars_ccd_inputs, tmp_p
         },
         "mars_ccd",
     )
-    # the load stage names each file, and the names are the ones handed in
+    # the load stage names each file, and the names are the ones handed in. Sorted, not in input
+    # order: the loader decodes frames concurrently and names each as its decode finishes. Comparing
+    # in input order passed most of the time on this 3-file-per-run fixture and failed whenever two
+    # decodes landed out of order.
     loaded = [e.detail for e in events if e.stage == STAGE_LOAD_SAMPLE and e.detail.endswith(".tiff")]
-    assert loaded == [p.name for group in mars_ccd_inputs["sample_paths"] for p in group]
+    assert sorted(loaded) == sorted(p.name for group in mars_ccd_inputs["sample_paths"] for p in group)
 
 
 def test_mars_ccd_load_count_is_flat_across_runs(mars_ccd_inputs, tmp_path):

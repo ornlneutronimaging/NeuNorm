@@ -57,14 +57,14 @@ def _collect():
 def test_loader_emits_one_event_per_file(loader, paths_fn):
     """One advancing event per file, counting up to the number of files, each naming its file.
 
-    The **count** is monotonic 1..n for both loaders. The **order the names arrive in** is not the
-    same contract for both: FITS reads serially so its details follow input order, while the TIFF
-    loader decodes concurrently and reports each frame as its decode finishes, so a name can arrive
-    before that of an earlier file. Every file is still named exactly once.
+    The **count** is monotonic 1..n. The **order the names arrive in** is not part of the contract:
+    both loaders decode concurrently and report each frame as its decode finishes, so a name can
+    arrive before that of an earlier file. Every file is still named exactly once.
 
-    Input order is asserted only for FITS. It is not asserted as *scrambled* for TIFF, because on a
-    3-file fixture the decodes usually do finish in order and such an assertion would be flaky;
-    what matters and is pinned is that the set of names is complete and the count never regresses.
+    Input order is therefore not asserted. Neither is the reverse — that the names arrive
+    *scrambled* — because on a 3-file fixture the decodes usually do finish in order and such an
+    assertion would be flaky. What matters and is pinned is that the set of names is complete and
+    the count never regresses.
     """
     paths = paths_fn()
     assert len(paths) == 3, "fixture changed; the assertions below assume 3 files"
@@ -78,8 +78,6 @@ def test_loader_emits_one_event_per_file(loader, paths_fn):
     assert {e.total for e in per_file} == {3}
     assert {e.stage for e in per_file} == {STAGE_LOAD_SAMPLE}
     assert sorted(e.detail for e in per_file) == sorted(p.name for p in paths)
-    if loader is load_fits_stack:
-        assert [e.detail for e in per_file] == [p.name for p in paths]
 
 
 @pytest.mark.parametrize(
@@ -88,20 +86,19 @@ def test_loader_emits_one_event_per_file(loader, paths_fn):
     ids=["tiff", "fits"],
 )
 def test_loader_announces_the_post_loop_allocations_without_advancing(loader, paths_fn):
-    """The whole-stack allocations are announced after the last file, as notes.
+    """The whole-stack allocation is announced after the last file, as a note.
 
-    They are announcements, not completions: each fires *before* its allocation so a bar that stops
-    there tells the user exactly where the run is stuck. They therefore must not advance the count —
+    It is an announcement, not a completion: it fires *before* the allocation so a bar that stops
+    there tells the user exactly where the run is stuck. It therefore must not advance the count —
     `completed` is documented as absolute and monotonic, and a fresh per-call stage reporter would
     restart at 1 on every load and leave a bar frozen at its first tick.
 
-    The two loaders differ in how many there are to announce, and that is not an oversight. FITS
-    still reads into a list and then stacks it, so it has both a stack build and a variances copy.
-    The TIFF loader decodes straight into a pre-allocated array, so there is no stack build left to
-    name and only the variances copy remains — announcing a phase that no longer runs would point a
-    stalled bar at the wrong place.
+    There is one note, not two. Both loaders used to build a list of frames and stack it, which was
+    announced as well; they now decode straight into a pre-allocated array, so only the variances
+    copy is left to name — announcing a phase that no longer runs would point a stalled bar at the
+    wrong place.
     """
-    expected = ["attaching variances"] if loader is load_tiff_stack else ["stacking", "attaching variances"]
+    expected = ["attaching variances"]
 
     events, sink = _collect()
 
@@ -232,6 +229,12 @@ def test_cancelling_is_not_reported_as_a_read_failure(loader, paths_fn, message)
     emitted inside that try, cancelling would tell the user their files failed to load. This pins
     the tick's placement, not merely its existence.
 
+    Cancelled at **two** points, because the loaders emit from two places and a single cancel point
+    only covers one of them: the first frame is decoded and reported before the pool starts, and
+    every later frame is reported from the `as_completed` loop, which has its own try. Cancelling
+    only at `completed == 1` left the loop's tick unpinned — verified by moving that tick inside the
+    loop's try, which this test passed through until the second cancel point was added.
+
     Captured through a loguru sink, NOT pytest's `caplog`: loguru does not route to stdlib logging,
     so `caplog.text` is always empty here and any `not in caplog.text` assertion would pass no
     matter where the tick sat. The first half of this test is a positive control proving the sink
@@ -245,18 +248,20 @@ def test_cancelling_is_not_reported_as_a_read_failure(loader, paths_fn, message)
             loader([Path("no-such-directory") / "missing.tif"], progress=False)
         assert message in captured.getvalue(), "the loguru sink is not capturing the loader's error"
 
-        captured.seek(0)
-        captured.truncate()
+        # The actual assertion: cancelling must not produce that same error line. `2` is the first
+        # tick that comes from the pool loop on the 3-file fixture.
+        for cancel_at in (1, 2):
+            captured.seek(0)
+            captured.truncate()
 
-        # The actual assertion: cancelling must not produce that same error line.
-        def cancel(event):
-            if event.completed == 1:
-                raise _CancelledError("stop")
+            def cancel(event, cancel_at=cancel_at):
+                if event.completed == cancel_at:
+                    raise _CancelledError("stop")
 
-        with pytest.raises(_CancelledError):
-            loader(paths_fn(), progress=cancel)
+            with pytest.raises(_CancelledError):
+                loader(paths_fn(), progress=cancel)
 
-        assert message not in captured.getvalue()
+            assert message not in captured.getvalue(), f"cancelling at completed={cancel_at} was logged as a failure"
     finally:
         logger.remove(sink_id)
 
@@ -412,21 +417,19 @@ def test_rendered_bar_reaches_100_percent_and_never_goes_backwards(paths_fn):
 
 @pytest.mark.parametrize("paths_fn", [_tiffs, _fits], ids=["tiff", "fits"])
 def test_rendered_bar_shows_the_allocation_notes(paths_fn):
-    """The notes exist to name the phase a stalled bar is stuck in, so they must be VISIBLE.
+    """The note exists to name the phase a stalled bar is stuck in, so it must be VISIBLE.
 
-    They were previously erased: each landed on a freshly-built bar that was closed immediately,
-    and `leave=False` clears a closed bar's line.
+    It was previously erased: it landed on a freshly-built bar that was closed immediately, and
+    `leave=False` clears a closed bar's line.
 
-    Only FITS still has a stack build to render; the TIFF loader decodes into a pre-allocated
-    array. See test_loader_announces_the_post_loop_allocations_without_advancing.
+    Neither loader has a stack build left to render — both decode into a pre-allocated array. See
+    test_loader_announces_the_post_loop_allocations_without_advancing.
     """
     paths = paths_fn()
     loader = load_tiff_stack if paths[0].suffix == ".tif" else load_fits_stack
 
     out = _render(loader, paths)
 
-    if loader is load_fits_stack:
-        assert "stacking" in out, f"the stack-build note never rendered:\n{out}"
     assert "attaching variances" in out, f"the variances note never rendered:\n{out}"
 
 

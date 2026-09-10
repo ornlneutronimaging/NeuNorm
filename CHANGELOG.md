@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Image stacks are loaded in parallel, and TIFF pixels no longer go through Pillow**
+  ([#225](https://github.com/ornlneutronimaging/NeuNorm/issues/225)). `load_tiff_stack` and
+  `load_fits_stack` decode frames on a thread pool into one pre-allocated array, each worker
+  writing its own input index, so frame order — which becomes the TOF axis — is preserved by
+  construction rather than by collecting results in order. A new keyword-only `max_workers` on both
+  loaders and on `load_stack` sets the pool size; it defaults to 8, and `max_workers=1` reads
+  serially. The pipelines take the default.
+
+  TIFF pixels are now decoded by `tifffile`, which releases the GIL while decompressing and is
+  already installed by way of `scitiff`. The TIFF tags are still read with Pillow, because
+  tifffile's are not interchangeable: it reports `SampleFormat` as an `IntEnum` that converts under
+  `float()` and would silently turn a scalar coordinate into a per-frame array, and it does not know
+  tag 1 at all, which Pillow publishes as `InteropIndex`.
+
+  Pre-allocating also removes two of the three full-size copies the loaders used to hold. Measured
+  on 100 uncompressed 1024x1024 frames, peak memory drops from 5.37x the stack to 4.45x for TIFF and
+  from 5.26x to 4.46x for FITS, and the whole call is 1.7x (TIFF) and 1.2x (FITS) faster. The decode
+  itself parallelises better than that — 2.0x on eight threads for compressed TIFF, 3.2x for FITS —
+  with the remainder being allocation and copying, which threads do not help. See `docs/progress.md`.
+
+  Two visible changes to progress reporting, both deliberate: the per-file `detail` now names each
+  file as its decode finishes rather than in input order (the count is unaffected and still runs
+  1..n), and the `stacking` note is gone, because the stack build it announced no longer happens.
+
 ## [2.4.0] - 2026-08-26
 
 ### Added

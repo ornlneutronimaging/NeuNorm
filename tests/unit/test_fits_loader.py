@@ -8,6 +8,7 @@ including variants with time-of-flight (TOF) binning.
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 def test_load_fits_stack():
@@ -103,3 +104,129 @@ def test_load_single_fit():
     assert da.values.max() == 5
     assert da.variances.shape == (1, 5, 5)
     assert da.variances.max() == 5
+
+
+def test_load_fits_stack_casts_integer_files_to_float32(tmp_path):
+    """An integer FITS still loads as float32.
+
+    The checked-in fixtures are float, so they cannot catch a lost cast. A CCD writes integer
+    counts, and FITS is big-endian on disk: the cast is what makes the result a native-order
+    float32 rather than a byte-swapped view of the file.
+    """
+    from astropy.io import fits
+
+    from neunorm.loaders.fits_loader import load_fits_stack
+
+    for i in range(2):
+        fits.PrimaryHDU(data=np.full((4, 6), 7 + i, dtype=">i2")).writeto(tmp_path / f"int{i:03d}.fits")
+
+    da = load_fits_stack(sorted(tmp_path.glob("*.fits")))
+
+    assert da.values.dtype == np.float32
+    assert da.variances.dtype == np.float32
+    np.testing.assert_allclose(da.values[0], 7.0)
+    np.testing.assert_allclose(da.values[1], 8.0)
+
+
+def _write_ramp(directory, n=17, ny=3, nx=4):
+    """n frames whose every pixel equals the frame's own input index."""
+    from astropy.io import fits
+
+    paths = []
+    for i in range(n):
+        p = directory / f"frame{i:03d}.fits"
+        fits.PrimaryHDU(data=np.full((ny, nx), float(i), dtype=np.float32)).writeto(p)
+        paths.append(p)
+    return paths
+
+
+def test_parallel_decode_preserves_frame_order(tmp_path):
+    """Frame i must land at index i, whatever order the decodes finish in.
+
+    The stack's first dimension becomes the TOF/N_image axis and the tof coordinate is matched to
+    it positionally, so a frame at the wrong index mislabels the time axis — the result still looks
+    like a plausible spectrum. Each frame is filled with its own index so a permutation is visible
+    rather than merely suspected.
+    """
+    from neunorm.loaders.fits_loader import load_fits_stack
+
+    paths = _write_ramp(tmp_path)
+
+    da = load_fits_stack(paths, max_workers=8)
+
+    np.testing.assert_allclose(da.values[:, 0, 0], np.arange(len(paths), dtype=np.float32))
+    for i in range(len(paths)):
+        np.testing.assert_allclose(da.values[i], float(i))
+
+
+def test_parallel_decode_keeps_each_header_with_its_own_frame(tmp_path):
+    """A per-frame header value must stay aligned with the pixels it came from.
+
+    The headers are collected off the same futures as the pixels, so a header stored by completion
+    order rather than by input index would attach the wrong exposure time to every frame — and the
+    values would still all be present, so a test that only checked the set would pass. Frame i
+    carries both pixel value i and ``FRAMEIDX`` i, which pins the two to each other.
+    """
+    from astropy.io import fits
+
+    from neunorm.loaders.fits_loader import load_fits_stack
+
+    paths = []
+    for i in range(17):
+        hdu = fits.PrimaryHDU(data=np.full((3, 4), float(i), dtype=np.float32))
+        hdu.header["FRAMEIDX"] = i
+        p = tmp_path / f"frame{i:03d}.fits"
+        hdu.writeto(p)
+        paths.append(p)
+
+    da = load_fits_stack(paths, max_workers=8)
+
+    np.testing.assert_allclose(da.coords["FRAMEIDX"].values, np.arange(len(paths)))
+    np.testing.assert_allclose(da.values[:, 0, 0], np.arange(len(paths), dtype=np.float32))
+
+
+def test_parallel_and_serial_decode_agree(tmp_path):
+    """max_workers=1 and a real pool must produce identical arrays, variances and coordinates.
+
+    This guards against divergence that appears only with a pool — a race, a dropped frame, a
+    worker-only code path. It does **not** establish that the order is right: both calls run the
+    same placement code, so a bug that misplaces every frame identically leaves the two agreeing.
+    The ordering guarantee lives in test_parallel_decode_preserves_frame_order.
+    """
+    from neunorm.loaders.fits_loader import load_fits_stack
+
+    paths = _write_ramp(tmp_path)
+
+    serial = load_fits_stack(paths, max_workers=1)
+    parallel = load_fits_stack(paths, max_workers=8)
+
+    assert serial.dims == parallel.dims
+    np.testing.assert_array_equal(serial.values, parallel.values)
+    np.testing.assert_array_equal(serial.variances, parallel.variances)
+    assert set(serial.coords) == set(parallel.coords)
+
+
+def test_parallel_decode_raises_on_shape_mismatch(tmp_path):
+    """An inconsistent frame still raises, and names the offending file."""
+    from astropy.io import fits
+
+    from neunorm.loaders.fits_loader import load_fits_stack
+
+    paths = _write_ramp(tmp_path, n=6)
+    odd = tmp_path / "frame003.fits"
+    odd.unlink()
+    fits.PrimaryHDU(data=np.zeros((5, 9), dtype=np.float32)).writeto(odd)
+
+    with pytest.raises(ValueError, match="Shape mismatch"):
+        load_fits_stack(paths, max_workers=4)
+
+
+def test_parallel_decode_propagates_a_failed_read(tmp_path):
+    """A missing file raises rather than hanging the pool or yielding a partial stack."""
+    from neunorm.loaders.fits_loader import load_fits_stack
+
+    paths = _write_ramp(tmp_path, n=6)
+    paths[4] = tmp_path / "does-not-exist.fits"
+
+    with pytest.raises(Exception):  # noqa: B017 - astropy's own error type is not part of the contract
+        load_fits_stack(paths, max_workers=4)
