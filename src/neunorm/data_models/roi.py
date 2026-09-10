@@ -196,11 +196,28 @@ class MaskROI(BaseModel):
         Matches the mask images users draw in e.g. ImageJ and save alongside their data. RGB(A)
         images select where any channel is nonzero; only the first frame of a multi-frame file is
         read. The file's row-major ``(y, x)`` layout is used as-is.
+
+        A mask carrying a TIFF ``Orientation`` tag is refused rather than loaded. Pillow applies
+        that tag when it decodes, and the image loaders deliberately do not — they return the
+        stored raster and publish the tag for a display step. On a square frame, which is every
+        real detector frame, an applied rotation and an unapplied one have the *same shape*, so a
+        rotated mask would line up with nothing and silently select the wrong pixels instead of
+        failing. Re-save the mask without the tag, in the same orientation as the data.
         """
         from PIL import Image
 
+        from neunorm.loaders.tiff_loader import _TAG_ORIENTATION, _as_scalar
+
         p = Path(path)
         with Image.open(p) as img:
+            orientation = _as_scalar(dict(getattr(img, "tag_v2", {})).get(_TAG_ORIENTATION))
+            if orientation not in (None, 1):
+                raise ValueError(
+                    f"Cannot use {p} as a mask: it carries an Orientation tag ({orientation}), "
+                    f"which is applied when the mask is decoded but deliberately not applied to "
+                    f"the image data, so the two would not correspond. Re-save the mask without "
+                    f"the Orientation tag, in the same orientation as the data."
+                )
             arr = np.asarray(img)
         if arr.ndim == 3:  # RGB / RGBA: any nonzero channel selects
             arr = arr.any(axis=-1)

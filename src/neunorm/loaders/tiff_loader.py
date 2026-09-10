@@ -23,13 +23,13 @@ _TAG_COMPRESSION = 259
 _TAG_PHOTOMETRIC = 262
 _TAG_ORIENTATION = 274
 
-#: Compression schemes tifffile hands to the optional ``imagecodecs`` package, which NeuNorm does
-#: not depend on: CCITT G3/G4, LZW, old-style JPEG and JPEG. Pillow decodes all of them natively,
-#: and LZW in particular is what ImageJ/Fiji, MATLAB and Pillow itself write, so a stack re-saved
-#: by any of those would otherwise stop loading. Measured in this project's environment: tifffile's
-#: built-in shim offers only bitorder, delta, float24, lzma, packbits, packints, zlib and zstd, so
-#: PackBits- and Deflate-compressed files still take the tifffile path.
-_CODECS_TIFFFILE_DELEGATES = frozenset({2, 3, 4, 5, 6, 7})
+#: Bit depths where Pillow's decode is measurably not the stored samples and tifffile cannot
+#: decode at all, so there is no way to load the frame correctly. Measured on hand-written files,
+#: since neither library can encode these here: a 4-bit ramp 0,1,2,3,4,5 loads from Pillow as
+#: 0,17,34,51,68,85 (scaled to full 8-bit range), and a 2-bit ramp 0,1,2,3,3,2,1,0 loads as all
+#: zeros. Multiplying counts by 17, or zeroing them, is worse than refusing the file. 1-bit is
+#: **not** in this set: both readers return the stored bits there, faithfully.
+_UNLOADABLE_BIT_DEPTHS = frozenset({2, 4})
 
 
 def _as_scalar(value):
@@ -40,45 +40,59 @@ def _as_scalar(value):
 
 
 def _needs_pillow_pixels(tags: dict) -> bool:
-    """Whether this frame must be decoded by Pillow to load as it did before this loader changed.
+    """Whether this frame must be decoded by Pillow even though tifffile *can* decode it.
 
-    Two cases, each measured by loading a file written for the purpose through both the previous
-    and the current reader rather than reasoned about from documentation:
+    This is only for cases where tifffile succeeds and returns **different values**; a file
+    tifffile cannot decode at all needs no prediction, because :func:`_read_tiff_frame` simply
+    falls back after the attempt fails. Enumerating what tifffile cannot do was tried first and
+    was the wrong shape: the first attempt listed compression codes, and review then found the
+    same hole for the floating-point predictor, for packed bit depths and for chroma subsampling.
+    Anything that raises is now handled by the fallback rather than by this list growing.
 
-    - **A codec tifffile does not carry.** ``asarray()`` raises ``ValueError: <COMPRESSION.LZW: 5>
-      requires the 'imagecodecs' package`` where the Pillow read returned the pixels. PackBits and
-      Deflate are unaffected and stay on the tifffile path.
+    The one case that does not raise:
+
     - **WhiteIsZero at 8 bits or fewer.** Pillow inverts the samples for photometric 0 at that
-      depth — a stored 0 loads as 255 — and tifffile returns them raw. Counts feed the Poisson
+      depth — a stored 10 loads as 245 — and tifffile returns them raw. Counts feed the Poisson
       variances, so the difference would silently change both the data and its stated uncertainty.
       At 16 bits neither library inverts, so the depth test is doing real work.
 
-    Delegating beats reimplementing in both: the goal is to load exactly what the previous
-    version loaded, and only Pillow's own decoder reproduces Pillow's own quirks. The handle is
-    open for the tags anyway, and Pillow releases the GIL in its decoder too, so these frames are
-    still decoded concurrently — they just do not get tifffile's faster path.
+    Two other measured differences are deliberately **not** routed here, because Pillow is the one
+    that is wrong and reproducing it would corrupt data:
 
-    An ``Orientation`` tag is deliberately **not** on this list, and that one is a behaviour change
-    rather than a preserved behaviour; :func:`_read_tiff_frame` says why.
-
-    Swept rather than guessed, over uncompressed uint8/uint16/uint32/int8/int16/float32, horizontal
-    differencing, tiled layout, one row per strip, BigTiff, contiguous RGB, a palette, an alpha
-    extra sample, 16-bit WhiteIsZero, PackBits and Deflate: all load identically through both
-    readers and stay on the tifffile path. Two more differences turned up in that sweep and neither
-    belongs here:
-
-    - **float16 and float64** fail in ``Image.open``, as they did before this change, since the tags
-      were always read with Pillow. tifffile could read them, so that is an unchanged limitation
-      rather than a regression.
-    - **Planar multi-sample** files are the one remaining shape difference — Pillow returns
-      ``(y, x, sample)`` and tifffile ``(sample, y, x)`` — but it is not observable: either way the
-      frame is 3-D, the stack is 4-D, and the caller's ``n_images, ny, nx`` unpack raises the same
-      ``ValueError`` with the same message. Routing them here was tried and reverted: mutation
-      testing showed removing the clause changed nothing, because there is nothing to change.
+    - **Signed samples at 8 bits.** Pillow maps ``SampleFormat`` 2 at that depth to unsigned, so a
+      stored -12 loaded as 244. tifffile returns -12, which the caller's non-negative-counts guard
+      then rejects. Refusing to attach Poisson variances to negative counts is the correct outcome
+      and the guard already existed; silently reinterpreting them as large positive counts is not.
+    - **An ``Orientation`` tag**; :func:`_read_tiff_frame` says why.
     """
-    if _as_scalar(tags.get(_TAG_COMPRESSION)) in _CODECS_TIFFFILE_DELEGATES:
-        return True
     return _as_scalar(tags.get(_TAG_PHOTOMETRIC)) == 0 and (_as_scalar(tags.get(_TAG_BITS_PER_SAMPLE)) or 0) <= 8
+
+
+def _pillow_pixels(img, tags: dict, path: str | Path) -> np.ndarray:
+    """Decode with Pillow, refusing the two cases where its own decode is not the stored samples.
+
+    Both refusals are load failures where the previous version returned an array, and both are
+    deliberate: the array it returned was wrong. See :data:`_UNLOADABLE_BIT_DEPTHS` and
+    :func:`_read_tiff_frame`.
+    """
+    bits = _as_scalar(tags.get(_TAG_BITS_PER_SAMPLE))
+    if bits in _UNLOADABLE_BIT_DEPTHS:
+        raise ValueError(
+            f"Cannot load {path}: {bits}-bit samples cannot be decoded without altering them. "
+            f"tifffile needs the 'imagecodecs' package to unpack them, and Pillow rescales "
+            f"{bits}-bit data to full range rather than returning the stored counts. Re-save the "
+            f"file at 8, 12, 16 or 32 bits per sample."
+        )
+
+    orientation = _as_scalar(tags.get(_TAG_ORIENTATION))
+    if orientation not in (None, 1):
+        raise ValueError(
+            f"Cannot load {path}: it can only be decoded by Pillow, which does not read a file "
+            f"carrying Orientation {orientation} at its stored width. Re-save it uncompressed, or "
+            f"without the Orientation tag."
+        )
+
+    return np.asanyarray(img, dtype=np.float32)
 
 
 def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
@@ -111,46 +125,54 @@ def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
     footprint of a large stack. ``copy=False`` makes the cast free for the float32 files the
     VENUS TPX1 auto-reduction writes, while still converting the integer files a CCD writes.
 
-    Two kinds of file are handed back to Pillow for the pixels as well, because tifffile would
-    otherwise load them differently; both were measured against the previous Pillow-only read.
-    See :func:`_needs_pillow_pixels`.
+    **Pillow decodes the pixels whenever tifffile cannot.** That is decided by trying tifffile and
+    falling back, not by predicting which files it will refuse: predicting was tried and the list
+    was wrong three times over — it missed the floating-point predictor, packed bit depths and
+    chroma subsampling after already covering LZW. Whatever tifffile raises on, Pillow gets, which
+    is exactly what the previous version did with it. Measured cases that reach the fallback and
+    load correctly through it: LZW, JPEG and CCITT compression, and 12-bit packed samples (a
+    stored 0, 137, 274, 411 comes back exactly). ``_needs_pillow_pixels`` covers the one case
+    where tifffile succeeds but disagrees.
 
-    **A file carrying an Orientation tag now loads differently, on purpose.** Pillow's handling of
-    it is not a rotation of the stored image — it is wrong. Measured on a 4x6 uint16 ramp with
-    Orientation 6: Pillow swaps width and height from the tag *before* decoding, so it reads the
-    strips at the wrong width and returns a 4x6 array, when any valid reorientation of a 4x6
-    raster is 6x4. The values come out interleaved from the mis-strided buffer rather than
-    reoriented. tifffile returns the true stored raster for every orientation value, which is what
-    this loader now yields, and the tag is published as an ``Orientation`` coordinate so a display
-    step can apply it once — matching this project's rule that orientation is applied near the end
-    for display and never implicitly inside the pipeline.
+    **A file carrying an Orientation tag now loads differently, on purpose, and this is the change
+    to look at hardest.** Pillow applies the tag when it loads pixels. Measured against
+    ``np.rot90``: for a **square** raster its result is a correct rotation at every orientation
+    value, and for a non-square one it is correct at orientation 3 but not at 6 or 8, where it
+    swaps width and height from the tag before decoding, reads the strips at the wrong width and
+    returns interleaved values in the original shape. So Pillow was right for square frames — which
+    is every real detector frame — and wrong for the shape-changing cases on non-square ones.
 
-    So a stack of orientation-tagged TIFFs loads with different pixels than before, and gains a
-    coordinate. That is a fix, not a regression, but it is a visible change: anything downstream
-    calibrated against the old scrambled geometry has to be re-checked. Orientation 1 and files
-    with no such tag — every fixture in this repository, and what the VENUS and MARS writers
-    produce — are unaffected either way.
+    This loader now returns the stored raster in every case, with the tag published as an
+    ``Orientation`` coordinate for a display step to apply once, matching this project's rule that
+    orientation is applied near the end for display and never implicitly inside the pipeline. The
+    consequence is not only un-scrambling: **a square orientation-tagged stack now loads un-rotated
+    relative to 2.4.0.** Anything calibrated against that rotation — an ROI, a mask, a dark or
+    open-beam image — has to be re-checked. Orientation 1 and files with no such tag, which is
+    every fixture here and everything the VENUS and MARS writers produce, are unaffected.
+
+    ``MaskROI.from_file`` still decodes with Pillow, so it *would* apply an orientation the data
+    no longer has — and on a square frame the shapes would match, making the misalignment silent.
+    It therefore refuses an orientation-tagged mask outright.
     """
     # `dict(img.tag_v2)` produced {tag_code: value}; reproduce that exactly so the metadata
     # block in the caller is untouched. Pillow's open is lazy — this reads the IFD, not pixels.
-    # Opened first because the tags decide whether tifffile can be trusted with the pixels.
+    # Opened first because the tags decide whether tifffile can be trusted with the pixels, and
+    # kept open so the fallback below does not have to reopen the file.
     with Image.open(path) as img:
         tags = dict(img.tag_v2)
         if _needs_pillow_pixels(tags):
-            orientation = _as_scalar(tags.get(_TAG_ORIENTATION))
-            if orientation not in (None, 1):
-                # Pillow is the only decoder available for this file and cannot be trusted with
-                # an orientation (see above), so there is no way to return the stored raster.
-                # Failing beats handing back a scrambled frame.
-                raise ValueError(
-                    f"Cannot load {path}: its compression or photometric interpretation requires "
-                    f"the Pillow decoder, which mis-strides a file carrying Orientation "
-                    f"{orientation}. Re-save it uncompressed, or without the Orientation tag."
-                )
-            return np.asanyarray(img, dtype=np.float32), tags
+            return _pillow_pixels(img, tags, path), tags
 
-    with tifffile.TiffFile(path) as handle:
-        values = handle.pages[0].asarray().astype(np.float32, copy=False)
+        try:
+            with tifffile.TiffFile(path) as handle:
+                values = handle.pages[0].asarray().astype(np.float32, copy=False)
+        except Exception:  # noqa: BLE001 - a capability probe: anything tifffile refuses, Pillow gets
+            # tifffile cannot decode this one. Pillow could, before this change, so let it — and if
+            # it cannot either, its error is the one the previous version raised. Deliberately not
+            # narrowed to the exception types seen so far: narrowing is what made the first two
+            # attempts at this miss the predictor, the packed depths and chroma subsampling.
+            return _pillow_pixels(img, tags, path), tags
+
     return values, tags
 
 

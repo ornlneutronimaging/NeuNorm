@@ -186,7 +186,35 @@ def test_load_stack_passes_progress_to_whichever_leaf_it_picks(paths_fn):
     load_stack(paths, progress=sink, stage=STAGE_LOAD_DARK)
 
     assert [e.completed for e in events if e.detail in names] == [1, 2, 3]
+    assert set(load_stack(set(paths)).sizes) == set(load_stack(paths).sizes), (
+        "the dispatcher must materialise a sized-but-unindexable collection, as the leaves do"
+    )
     assert {e.stage for e in events} == {STAGE_LOAD_DARK}
+
+
+@pytest.mark.parametrize(
+    ("loader", "paths_fn"),
+    [(load_tiff_stack, _tiffs), (load_fits_stack, _fits)],
+    ids=["tiff", "fits"],
+)
+def test_every_event_is_emitted_from_the_calling_thread(loader, paths_fn):
+    """The documented guarantee, asserted directly rather than inferred.
+
+    Both loaders' docstrings and the progress page promise callers that events stay on the calling
+    thread and that a callback therefore need not be thread-safe. That is a real promise people
+    write code against — a callback touching a GUI or a plain counter is only safe because of it —
+    and it was previously only implied by the cancellation test. Emitting from a worker would
+    satisfy every other test in this file.
+    """
+    import threading
+
+    calling_thread = threading.get_ident()
+    seen = []
+
+    loader(paths_fn(), progress=lambda _event: seen.append(threading.get_ident()))
+
+    assert seen, "no events were emitted"
+    assert set(seen) == {calling_thread}, "an event was emitted from a worker thread"
 
 
 # --------------------------------------------------------------------------------------

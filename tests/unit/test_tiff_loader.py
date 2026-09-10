@@ -311,7 +311,7 @@ def test_packbits_and_deflate_still_load(tmp_path):
         p = tmp_path / f"{name}.tif"
         Image.fromarray(np.full((4, 6), 42, dtype=np.uint16)).save(p, compression=compression)
         da = load_tiff_stack([p])
-        np.testing.assert_allclose(da.values[0], 42.0), name
+        np.testing.assert_allclose(da.values[0], 42.0, err_msg=name)
 
 
 def test_whiteiszero_8bit_keeps_its_inverted_values(tmp_path):
@@ -357,33 +357,45 @@ def test_whiteiszero_16bit_is_not_inverted(tmp_path):
     np.testing.assert_allclose(da.values[0], 10.0)
 
 
-def test_orientation_tagged_file_loads_the_stored_raster(tmp_path):
+@pytest.mark.parametrize(
+    "shape",
+    [(4, 6), (6, 6)],
+    ids=["non-square", "square"],
+)
+@pytest.mark.parametrize("orientation", [3, 6, 8])
+def test_orientation_tagged_file_loads_the_stored_raster(tmp_path, shape, orientation):
     """An Orientation tag no longer reorders pixels, and is published instead. Deliberate.
 
-    Pillow does not reorient such a file correctly — it swaps width and height from the tag before
-    decoding, so it reads the strips at the wrong width. On this 4x6 ramp with Orientation 6 it
-    returns a 4x6 array whose first row is [20, 16, 12, 8, 4, 0]; any valid reorientation of a 4x6
-    raster is 6x4, so that output is not a reorientation of anything, it is a mis-strided read.
-    This test asserts the stored raster comes back untouched, which is both correct and what this
-    project's orientation rule wants: nothing implicit inside the pipeline, applied once at the end
-    for display. The tag is published so that display step has it.
+    **The square case is the one that matters and it is not a bug fix.** Measured against
+    ``np.rot90``, Pillow's decode of an oriented file is a *correct* rotation whenever the raster
+    is square — which is every real detector frame — and also at orientation 3 for any shape. It
+    is a mis-strided read only at orientation 6 and 8 on a non-square raster, where it swaps width
+    and height from the tag before decoding. So for square frames this change removes a rotation
+    that was right, and for non-square 6/8 it un-scrambles one that was not.
 
-    Written to fail loudly if the mis-striding is ever reintroduced: it pins the exact stored
-    values, not merely the shape.
+    Both are wanted for the same reason: this project applies orientation once at the end for
+    display and never implicitly inside the pipeline, and the tag is published so that display step
+    still has it. But the square case means a stack can now load un-rotated relative to 2.4.0,
+    which is a visible change and not merely a repair.
+
+    Parametrised over both shapes and all three interesting orientation values so the guarantee is
+    "the stored raster, always" rather than an accident of one fixture — the original version of
+    this test used a 4x6 frame at orientation 6, the single combination that flattered the
+    mis-striding explanation.
     """
     import tifffile
 
     from neunorm.loaders.tiff_loader import load_tiff_stack
 
-    p = tmp_path / "orient.tif"
-    stored = np.arange(24, dtype=np.uint16).reshape(4, 6)
-    tifffile.imwrite(p, stored, photometric="minisblack", extratags=[(274, "H", 1, 6, True)])
+    p = tmp_path / f"orient{orientation}.tif"
+    stored = np.arange(shape[0] * shape[1], dtype=np.uint16).reshape(shape)
+    tifffile.imwrite(p, stored, photometric="minisblack", extratags=[(274, "H", 1, orientation, True)])
 
     da = load_tiff_stack([p])
 
-    assert da.data.shape == (1, 4, 6)
+    assert da.data.shape == (1, *shape)
     np.testing.assert_allclose(da.values[0], stored.astype(np.float32))
-    assert da.coords["Orientation"].values == 6
+    assert da.coords["Orientation"].values == orientation
 
 
 def test_an_oriented_file_needing_the_pillow_decoder_is_rejected(tmp_path):
@@ -401,6 +413,103 @@ def test_an_oriented_file_needing_the_pillow_decoder_is_rejected(tmp_path):
     Image.fromarray(np.arange(24, dtype=np.uint16).reshape(4, 6)).save(p, compression="tiff_lzw", tiffinfo={274: 6})
 
     with pytest.raises(ValueError, match="Orientation"):
+        load_tiff_stack([p])
+
+
+def _write_raw_tiff(path, width, height, bits, payload, *, photometric=1, sample_format=1, extras=()):
+    """A minimal little-endian single-strip TIFF, for depths no library here can encode.
+
+    tifffile refuses to write 2-, 4- and 12-bit samples without ``imagecodecs``, and Pillow will
+    not write them either, so a fixture for those depths has to be assembled by hand.
+    """
+    import struct
+
+    tags = sorted(
+        [
+            (256, 3, 1, width),
+            (257, 3, 1, height),
+            (258, 3, 1, bits),
+            (259, 3, 1, 1),
+            (262, 3, 1, photometric),
+            (273, 4, 1, 0),
+            (277, 3, 1, 1),
+            (278, 3, 1, height),
+            (279, 4, 1, len(payload)),
+            (339, 3, 1, sample_format),
+        ]
+        + list(extras)
+    )
+    header = b"II" + struct.pack("<HI", 42, 8)
+    data_offset = len(header) + 2 + 12 * len(tags) + 4
+    out = bytearray(header) + struct.pack("<H", len(tags))
+    for code, typ, count, value in tags:
+        if code == 273:
+            value = data_offset
+        out += struct.pack("<HHI", code, typ, count)
+        out += struct.pack("<I", value) if typ == 4 else struct.pack("<HH", value, 0)
+    out += struct.pack("<I", 0) + payload
+    Path(path).write_bytes(bytes(out))
+
+
+def test_twelve_bit_packed_samples_load_exactly(tmp_path):
+    """A 12-bit packed frame must load, with its stored counts, through the Pillow fallback.
+
+    12 bits is an ordinary CCD/CMOS depth. tifffile cannot unpack non-byte-aligned samples without
+    `imagecodecs` — it raises NotImplementedError, which is not even a ValueError — and Pillow
+    decodes them exactly. This is the case that made predicting tifffile's failures the wrong
+    design: it is not a compression code, so no list of codecs would have caught it.
+    """
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    values = [0, 137, 274, 411, 2000, 4095]
+    payload = bytearray()
+    for i in range(0, len(values), 2):
+        a, b = values[i], values[i + 1]
+        payload += bytes(((a >> 4) & 0xFF, ((a & 0xF) << 4) | ((b >> 8) & 0xF), b & 0xFF))
+
+    p = tmp_path / "b12.tif"
+    _write_raw_tiff(p, len(values), 1, 12, bytes(payload))
+
+    da = load_tiff_stack([p])
+
+    np.testing.assert_allclose(da.values[0, 0], np.array(values, dtype=np.float32))
+
+
+@pytest.mark.parametrize("bits", [2, 4])
+def test_two_and_four_bit_samples_are_refused(tmp_path, bits):
+    """2- and 4-bit frames are refused, because neither reader returns the stored counts.
+
+    Measured on hand-written files: tifffile cannot unpack them at all, and Pillow rescales to
+    full range — a 4-bit 0,1,2,3,4,5 comes back as 0,17,34,51,68,85, and a 2-bit ramp comes back
+    as all zeros. The previous loader returned those values silently. Multiplying counts by 17 or
+    zeroing them feeds straight into the Poisson variances, so refusing the file is the only
+    honest option.
+    """
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    per_byte = 8 // bits
+    payload = bytes((sum(v << (8 - bits * (i + 1)) for i, v in enumerate(range(per_byte))),))
+    p = tmp_path / f"b{bits}.tif"
+    _write_raw_tiff(p, per_byte, 1, bits, payload)
+
+    with pytest.raises(ValueError, match=f"{bits}-bit samples cannot be decoded"):
+        load_tiff_stack([p])
+
+
+def test_signed_eight_bit_negative_counts_are_rejected_not_reinterpreted(tmp_path):
+    """A signed 8-bit frame with negative samples must raise, not load as large positive counts.
+
+    Pillow maps SampleFormat 2 at 8 bits to unsigned, so a stored -12 loaded as 244 and sailed
+    past the non-negative-counts guard as a plausible count. tifffile reads -12, the guard fires,
+    and that is the correct outcome: silently reinterpreting corrupt or mis-declared data as valid
+    counts is exactly what that guard exists to prevent. Deliberately not routed to Pillow.
+    """
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    p = tmp_path / "i8.tif"
+    _write_raw_tiff(p, 6, 1, 8, np.array([-12, -1, 0, 1, 100, 127], dtype=np.int8).tobytes(), sample_format=2)
+
+    with pytest.raises(ValueError, match="negative counts"):
         load_tiff_stack([p])
 
 

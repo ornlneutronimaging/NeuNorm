@@ -191,6 +191,34 @@ class TestMaskROIFromFile:
         Image.fromarray(rgb).save(path)
         assert MaskROI.from_file(path) == MaskROI(selection=_block_selection())
 
+    def test_an_orientation_tagged_mask_is_refused(self, tmp_path):
+        """A rotated mask must fail, not silently select the wrong pixels.
+
+        Pillow applies a TIFF Orientation tag when it decodes, and the image loaders deliberately
+        do not — they return the stored raster and publish the tag for a display step. On a square
+        frame, which is every real detector frame, an applied rotation and an unapplied one have
+        the *same shape*, so nothing would raise and the ROI would simply cover the wrong region.
+        """
+        from PIL import Image
+
+        sel = np.zeros((8, 8), dtype=np.uint8)
+        sel[1:3, 5:7] = 255  # deliberately not symmetric under rotation
+        path = tmp_path / "mask_oriented.tiff"
+        Image.fromarray(sel).save(path, tiffinfo={274: 6})
+
+        with pytest.raises(ValueError, match="Orientation tag"):
+            MaskROI.from_file(path)
+
+    def test_an_orientation_tag_of_one_is_accepted(self, tmp_path):
+        """Orientation 1 means "as stored", so it is not a conflict and must not be refused."""
+        from PIL import Image
+
+        sel = _block_selection(dtype=np.uint8) * 255
+        path = tmp_path / "mask_orient1.tiff"
+        Image.fromarray(sel).save(path, tiffinfo={274: 1})
+
+        assert MaskROI.from_file(path) == MaskROI(selection=sel)
+
 
 class TestMaskROIFromDataArrayMask:
     def _da(self):

@@ -47,8 +47,9 @@ def load_stack(
     """
 
     # Materialise before indexing: this function subscripts `paths[0]` and iterates it twice, so a
-    # generator would raise TypeError. The leaf loaders accept one, so this does too.
-    if not hasattr(paths, "__len__"):
+    # generator would raise TypeError, and a set -- sized but unindexable -- would too. The leaf
+    # loaders accept both, so this does as well.
+    if not hasattr(paths, "__len__") or not hasattr(paths, "__getitem__"):
         paths = list(paths)
 
     if not paths:
