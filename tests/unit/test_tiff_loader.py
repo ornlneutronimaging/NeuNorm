@@ -4,6 +4,7 @@ Unit tests for the TIFF data loader.
 These tests verify loading TIFF image stacks, including variants with time-of-flight (TOF) binning.
 """
 
+import re
 from pathlib import Path
 
 import numpy as np
@@ -602,6 +603,66 @@ def test_signed_eight_bit_negative_counts_are_rejected_not_reinterpreted(tmp_pat
 
     with pytest.raises(ValueError, match="negative counts"):
         load_tiff_stack([p])
+
+
+def test_the_routing_covers_every_pillow_decode_that_transforms_values():
+    """The routing is complete against Pillow's own decision table, not just against a sweep.
+
+    Three review rounds each found another file kind where Pillow and tifffile disagree, because
+    each fix was aimed at the instance found rather than the class. This closes it from the other
+    end. Pillow decides how to decode a TIFF by looking
+    ``(byteorder, photometric, sampleformat, planarconfig, bitspersample, extrasamples)`` up in
+    ``TiffImagePlugin.OPEN_INFO`` and taking the *rawmode* it finds. A rawmode whose suffix carries
+    ``I`` inverts the samples; one naming a sub-byte width (``L;2``, ``L;4``) expands them to full
+    range. Those are the only two ways Pillow's decode differs in value from returning the stored
+    samples, so enumerating that table enumerates the whole risk.
+
+    Two properties are asserted, and between them they are what the loader relies on:
+
+    1. **No entry transforms above 8 bits per sample.** This is what licenses the
+       ``BitsPerSample <= 8`` half of the routing condition — and therefore what licenses sending
+       every 16- and 32-bit frame, which is all real detector data, down tifffile's faster path.
+    2. **Every inverting entry is routed to Pillow** by `_needs_pillow_pixels`, or refused outright
+       for a depth where Pillow rescales.
+
+    If a future Pillow adds an inverting mode at 16 bits, or an inverting combination the predicate
+    does not match, this fails instead of a stack quietly loading 65535-x.
+    """
+    from PIL import TiffImagePlugin
+
+    from neunorm.loaders.tiff_loader import _UNLOADABLE_BIT_DEPTHS, _needs_pillow_pixels
+
+    def transforms(rawmode: str) -> bool:
+        """Whether this rawmode's output differs in value from the stored samples.
+
+        A rawmode is ``mode`` optionally followed by ``;<width><flags>``. Only two flags change
+        values: ``I`` inverts, and a declared width of 2 or 4 expands sub-byte samples to full
+        range. ``F``/``B``/``N``/``R`` are float, byte order and fill order — how the samples are
+        stored, not a transform of them. The width must be parsed as a number, not searched for as
+        a substring: ``F;32F`` and ``I;12`` both contain a "2".
+        """
+        match = re.fullmatch(r"(?P<mode>[^;]+)(?:;(?P<bits>\d*)(?P<flags>[A-Z]*))?", rawmode)
+        assert match is not None, f"unparsed rawmode {rawmode!r}; the assertions below would be vacuous"
+        flags = match.group("flags") or ""
+        bits = match.group("bits") or ""
+        return "I" in flags or bits in ("2", "4")
+
+    transforming = {key: value for key, value in TiffImagePlugin.OPEN_INFO.items() if transforms(value[1])}
+    assert transforming, "OPEN_INFO yielded no transforming rawmodes; the parsing above is wrong"
+
+    above_eight = {k: v for k, v in transforming.items() if max(k[4]) > 8}
+    assert not above_eight, (
+        "Pillow now transforms values above 8 bits per sample, so the loader's depth guard no "
+        f"longer bounds the risk: {sorted(above_eight.items())[:3]}"
+    )
+
+    unrouted = []
+    for (_byteorder, photometric, sample_format, _planar, bits, _extra), (_mode, rawmode) in transforming.items():
+        tags = {262: photometric, 258: bits, 339: sample_format}
+        if _needs_pillow_pixels(tags) or bits[0] in _UNLOADABLE_BIT_DEPTHS:
+            continue
+        unrouted.append((photometric, sample_format, bits, rawmode))
+    assert not unrouted, f"Pillow transforms these but the loader sends them to tifffile: {sorted(set(unrouted))}"
 
 
 def test_a_planar_multisample_file_is_rejected(tmp_path):
