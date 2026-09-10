@@ -9,10 +9,50 @@ from typing import Optional, Sequence
 
 import numpy as np
 import scipp as sc
+import tifffile
 from loguru import logger
 from PIL import ExifTags, Image
 
 from neunorm.utils.progress import STAGE_LOAD_SAMPLE, ProgressLike, resolve_progress
+
+
+def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
+    """Decode one TIFF frame, returning ``(values, {tag_code: tag_value})``.
+
+    Split out of the read loop so it can be called per frame from a worker thread: it shares
+    no state and opens its own file handle.
+
+    **Pixels come from tifffile, tags from Pillow, and the split is deliberate.** tifffile
+    releases the GIL while decompressing, which is what lets a thread pool actually overlap
+    decodes, and it is already installed by way of scitiff. Its *tags*, however, are not
+    interchangeable with Pillow's, so reading them from tifffile would silently change the
+    coordinates this loader publishes. Measured on ``tests/data/tif/sample``:
+
+    - tag 1 is ``InteropIndex`` in ``PIL.ExifTags.TAGS`` and absent from ``tifffile.TIFF.TAGS``,
+      so the coordinate would be renamed to ``"1"`` by the fallback below;
+    - ``BitsPerSample`` is ``(32,)`` from Pillow and ``32`` from tifffile;
+    - ``SampleFormat`` is ``(3,)`` from Pillow and the ``IntEnum`` ``SAMPLEFORMAT.IEEEFP``
+      from tifffile. That one converts cleanly under ``float()``, so it would take the numeric
+      branch below and become a per-frame array where it is currently a scalar.
+
+    Reproducing Pillow's tag semantics on top of tifffile would mean reproducing its quirks for
+    no speed gain — the tags are a header-only IFD read, not the cost. Pillow is a required
+    dependency regardless, for ``MaskROI.from_file``.
+
+    Only page 0 is read, matching what ``PIL.Image.open`` yields for a multi-page file;
+    ``tifffile.imread`` would return every page stacked and turn a 2-D frame into 3-D.
+
+    float32 is sufficient for neutron imaging (16-bit detectors) and halves the in-memory
+    footprint of a large stack. ``copy=False`` makes the cast free for the float32 files the
+    VENUS TPX1 auto-reduction writes, while still converting the integer files a CCD writes.
+    """
+    with tifffile.TiffFile(path) as handle:
+        values = handle.pages[0].asarray().astype(np.float32, copy=False)
+    # `dict(img.tag_v2)` produced {tag_code: value}; reproduce that exactly so the metadata
+    # block in the caller is untouched. Pillow's open is lazy — this reads the IFD, not pixels.
+    with Image.open(path) as img:
+        tags = dict(img.tag_v2)
+    return values, tags
 
 
 def load_tiff_stack(  # noqa: C901
@@ -24,7 +64,8 @@ def load_tiff_stack(  # noqa: C901
 ) -> sc.DataArray:
     """Load TIFF stack as scipp DataArray with variance tracking.
 
-    Uses Pillow (PIL) to read TIFF images and constructs a scipp DataArray.
+    Pixels are decoded with :mod:`tifffile` and the TIFF tags read with Pillow; see
+    :func:`_read_tiff_frame` for why the two are split.
 
     Parameters
     ----------
@@ -80,14 +121,12 @@ def load_tiff_stack(  # noqa: C901
             # The try covers only the read: an exception raised by a progress callback (which is how a
             # caller cancels) must not be logged as a failed TIFF read, so the tick is emitted outside.
             try:
-                with Image.open(path) as img:
-                    # float32 is sufficient for neutron imaging (16-bit detectors) and
-                    # halves the in-memory footprint of large stacks.
-                    data_list.append(np.asanyarray(img, dtype=np.float32))
-                    metadata_list.append(img.tag_v2)
+                values, tags = _read_tiff_frame(path)
             except Exception as e:
                 logger.error("Error loading TIFF stack: {}", e)
                 raise
+            data_list.append(values)
+            metadata_list.append(tags)
             report(detail=Path(path).name)
 
         # Check shapes consistency
