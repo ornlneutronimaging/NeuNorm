@@ -31,9 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Pre-allocating also removes one of the three full-size copies the loaders used to hold. Measured
   on 100 uncompressed 1024x1024 frames, peak memory drops from 5.37x the stack to 4.45x for TIFF and
-  from 5.26x to 4.46x for FITS, and the whole call is 1.7x (TIFF) and 1.2x (FITS) faster. The decode
-  itself parallelises better than that — 2.0x on eight threads for compressed TIFF, 3.2x for FITS —
-  with the remainder being allocation and copying, which threads do not help. See `docs/progress.md`.
+  from 5.26x to 4.46x for FITS — figures that reproduce to within 0.03x between runs. The whole call
+  is roughly 1.7x (TIFF) and 1.2x (FITS) faster; those are ratios rather than precise measurements,
+  since wall clock moves by around 20% between runs on the same machine. The decode alone
+  parallelises better than the whole call does — about 2x on eight threads for compressed TIFF —
+  with the remainder being allocation and copying, which threads do not help. All of it is
+  local warm-cache measurement; the per-file latency of a mounted analysis filesystem, which is
+  where users actually hit this, is not measured. See `docs/progress.md`.
 
   Two visible changes to progress reporting, both deliberate: the per-file `detail` now names each
   file as its decode finishes rather than in input order (the count is unaffected and still runs

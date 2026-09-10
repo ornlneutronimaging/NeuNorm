@@ -362,10 +362,13 @@ grows with the file count; the lower peak moves that point out, and where it now
 re-measured.
 
 Parallel decode therefore buys less than a decode benchmark suggests. Stored compressed, those same
-100 frames decode 2.0× faster on eight threads, but the whole `load_tiff_stack` call is 1.7× faster
-and `load_fits_stack` 1.2× faster; the difference is allocation and copying, which threads do not
-help. Progress reporting makes that wait legible and shows you which allocation you are waiting on;
-reducing it further is separate work.
+100 frames decode about 2× faster on eight threads, but the whole `load_tiff_stack` call is only
+about 1.7× faster and `load_fits_stack` about 1.2×; the difference is allocation and copying, which
+threads do not help. Treat those three as ratios rather than measurements: the peak-memory multiples
+above reproduce to within 0.03× between runs, while the wall-clock numbers move by around 20% on the
+same machine, so the useful claim is "noticeably faster, but not by the factor the decode alone
+suggests". Progress reporting makes that wait legible and shows you which allocation you are waiting
+on; reducing it further is separate work.
 
 ## See also
 
