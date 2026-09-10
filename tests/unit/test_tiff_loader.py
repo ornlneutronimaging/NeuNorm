@@ -404,6 +404,31 @@ def test_an_oriented_file_needing_the_pillow_decoder_is_rejected(tmp_path):
         load_tiff_stack([p])
 
 
+def test_a_planar_multisample_file_is_rejected(tmp_path):
+    """A multi-sample TIFF is not a detector frame and must fail loudly, not load something.
+
+    This pins the rejection, not the routing. The two readers do disagree on such a file — Pillow
+    returns ``(y, x, sample)`` and tifffile ``(sample, y, x)`` — but the disagreement is invisible
+    from here: either way the frame is 3-D, the stack is 4-D, and the unpack raises the same error.
+    Verified by mutation: adding a routing clause for these files, then removing it again, leaves
+    this test passing both times, which is why the loader has no such clause.
+    """
+    import tifffile
+
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    p = tmp_path / "planar.tif"
+    tifffile.imwrite(
+        p,
+        np.arange(3 * 4 * 6, dtype=np.uint8).reshape(3, 4, 6),
+        planarconfig="separate",
+        photometric="rgb",
+    )
+
+    with pytest.raises(ValueError, match="too many values to unpack"):
+        load_tiff_stack([p])
+
+
 def test_max_workers_below_one_is_rejected(tmp_path):
     """0 and -1 are mistakes, not settings, and must not be silently reinterpreted.
 

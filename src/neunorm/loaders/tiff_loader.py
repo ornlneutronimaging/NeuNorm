@@ -42,7 +42,7 @@ def _as_scalar(value):
 def _needs_pillow_pixels(tags: dict) -> bool:
     """Whether this frame must be decoded by Pillow to load as it did before this loader changed.
 
-    Three cases, each measured by loading a file written for the purpose through both the previous
+    Two cases, each measured by loading a file written for the purpose through both the previous
     and the current reader rather than reasoned about from documentation:
 
     - **A codec tifffile does not carry.** ``asarray()`` raises ``ValueError: <COMPRESSION.LZW: 5>
@@ -52,13 +52,29 @@ def _needs_pillow_pixels(tags: dict) -> bool:
       depth — a stored 0 loads as 255 — and tifffile returns them raw. Counts feed the Poisson
       variances, so the difference would silently change both the data and its stated uncertainty.
       At 16 bits neither library inverts, so the depth test is doing real work.
-    Delegating beats reimplementing in both: the goal is to load exactly what the previous version
-    loaded, and only Pillow's own decoder reproduces Pillow's own quirks. The handle is open for
-    the tags anyway, and Pillow releases the GIL in its decoder too, so these frames are still
-    decoded concurrently — they just do not get tifffile's faster path.
+
+    Delegating beats reimplementing in both: the goal is to load exactly what the previous
+    version loaded, and only Pillow's own decoder reproduces Pillow's own quirks. The handle is
+    open for the tags anyway, and Pillow releases the GIL in its decoder too, so these frames are
+    still decoded concurrently — they just do not get tifffile's faster path.
 
     An ``Orientation`` tag is deliberately **not** on this list, and that one is a behaviour change
     rather than a preserved behaviour; :func:`_read_tiff_frame` says why.
+
+    Swept rather than guessed, over uncompressed uint8/uint16/uint32/int8/int16/float32, horizontal
+    differencing, tiled layout, one row per strip, BigTiff, contiguous RGB, a palette, an alpha
+    extra sample, 16-bit WhiteIsZero, PackBits and Deflate: all load identically through both
+    readers and stay on the tifffile path. Two more differences turned up in that sweep and neither
+    belongs here:
+
+    - **float16 and float64** fail in ``Image.open``, as they did before this change, since the tags
+      were always read with Pillow. tifffile could read them, so that is an unchanged limitation
+      rather than a regression.
+    - **Planar multi-sample** files are the one remaining shape difference — Pillow returns
+      ``(y, x, sample)`` and tifffile ``(sample, y, x)`` — but it is not observable: either way the
+      frame is 3-D, the stack is 4-D, and the caller's ``n_images, ny, nx`` unpack raises the same
+      ``ValueError`` with the same message. Routing them here was tried and reverted: mutation
+      testing showed removing the clause changed nothing, because there is nothing to change.
     """
     if _as_scalar(tags.get(_TAG_COMPRESSION)) in _CODECS_TIFFFILE_DELEGATES:
         return True
