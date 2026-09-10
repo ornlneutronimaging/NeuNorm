@@ -45,6 +45,14 @@ def _read_fits_frame(path: str | Path) -> tuple[np.ndarray, fits.Header]:
     return values, header
 
 
+class _ShapeMismatchError(ValueError):
+    """A frame whose shape differs from the first frame's.
+
+    A ``ValueError`` so the exception a caller sees is unchanged, but its own type so the pool
+    loop can tell it apart from a read failure that also happens to be a ``ValueError``.
+    """
+
+
 #: Threads used to decode a stack when the caller does not say. Deliberately modest: the
 #: right number depends on whether the files are local or on a mounted analysis filesystem,
 #: and that was not measured, so this trades some of the available speedup for not swamping
@@ -66,10 +74,12 @@ def _decode_stack(
     construction rather than by collecting results carefully. Nothing here depends on the order
     in which decodes finish.
 
-    Pre-allocating also removes two of the three full-size copies the serial version held. It
-    built a list of ``n`` frames, stacked it (copy two) and copied that for the variances
-    (copy three); this holds the output plus the variances copy, with only the in-flight
-    decode buffers on top.
+    Pre-allocating also removes one of the three full-size copies the serial version held. It
+    built a list of ``n`` frames, stacked that into a second copy, then copied the result for the
+    variances; decoding straight into ``out`` collapses the first two into one, leaving the output
+    and the variances copy, with only the in-flight decode buffers on top. One copy, not two: the
+    measured peak drops from 5.26x the stack to 4.46x, which is what removing one of roughly five
+    resident copies looks like once scipp's own copies are counted.
 
     Progress is emitted **from this thread**, never from a worker, which is what keeps the
     contract in :mod:`neunorm.utils.progress`: events stay synchronous and on the calling
@@ -103,13 +113,13 @@ def _decode_stack(
     def decode(index: int):
         values, header = _read_fits_frame(paths[index])
         if values.shape != first_values.shape:
-            raise ValueError(
+            raise _ShapeMismatchError(
                 f"Shape mismatch in file {paths[index]}: expected {first_values.shape}, got {values.shape}"
             )
         out[index] = values
         return index, header
 
-    workers = max(1, min(max_workers or _DEFAULT_MAX_WORKERS, n - 1))
+    workers = max(1, min(_DEFAULT_MAX_WORKERS if max_workers is None else max_workers, n - 1))
     pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="neunorm-fits")
     try:
         futures = [pool.submit(decode, i) for i in range(1, n)]
@@ -118,9 +128,12 @@ def _decode_stack(
             # file still surfaces as it did when the read was serial.
             try:
                 index, header = future.result()
-            except ValueError:
+            except _ShapeMismatchError:
                 # A shape mismatch is the caller's data being inconsistent, not a read failure,
-                # and carried no log line before.
+                # and carried no log line before. Keyed on this private type rather than on
+                # ValueError, which astropy raises for a malformed file — that would otherwise
+                # reach the caller with no log line, while the identical failure on frame 0 was
+                # logged.
                 raise
             except Exception as e:
                 logger.error("Failed to load FITS files: {}", e)
@@ -192,12 +205,16 @@ def load_fits_stack(  # noqa: C901
           along the stack dimension.
     """
 
-    # A non-sized iterable (Path.glob(), a generator) was accepted before this function reported
-    # progress and must still be: materialise once so the count has a denominator. Wrapped so an
-    # iterator that raises is logged like any other read failure. This runs BEFORE the emptiness
-    # check because a generator is always truthy — an empty glob would otherwise skip the check and
-    # die later on an out-of-range index.
-    if not hasattr(paths, "__len__"):
+    if max_workers is not None and max_workers < 1:
+        raise ValueError(f"max_workers must be at least 1, got {max_workers}")
+
+    # A generator, Path.glob() or a set was accepted before this function reported progress and
+    # must still be: materialise once so the count has a denominator, and because `_decode_stack`
+    # addresses frames by index — a set has `__len__` but no `__getitem__`, so testing only for
+    # length would let it through to a TypeError. Wrapped so an iterator that raises is logged
+    # like any other read failure. This runs BEFORE the emptiness check because a generator is
+    # always truthy — an empty glob would otherwise skip the check and die indexing `paths[0]`.
+    if not hasattr(paths, "__len__") or not hasattr(paths, "__getitem__"):
         try:
             paths = list(paths)
         except Exception as e:

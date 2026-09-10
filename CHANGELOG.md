@@ -21,9 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already installed by way of `scitiff`. The TIFF tags are still read with Pillow, because
   tifffile's are not interchangeable: it reports `SampleFormat` as an `IntEnum` that converts under
   `float()` and would silently turn a scalar coordinate into a per-frame array, and it does not know
-  tag 1 at all, which Pillow publishes as `InteropIndex`.
+  tag 1 at all, which Pillow publishes as `InteropIndex`. Two kinds of frame keep their Pillow
+  decode as well, because tifffile loads them differently: files using a codec tifffile hands to the
+  optional `imagecodecs` package (LZW, JPEG, CCITT — LZW being what ImageJ/Fiji and MATLAB write),
+  and WhiteIsZero files at 8 bits or fewer, where Pillow inverts the samples and tifffile does not.
 
-  Pre-allocating also removes two of the three full-size copies the loaders used to hold. Measured
+  Pre-allocating also removes one of the three full-size copies the loaders used to hold. Measured
   on 100 uncompressed 1024x1024 frames, peak memory drops from 5.37x the stack to 4.45x for TIFF and
   from 5.26x to 4.46x for FITS, and the whole call is 1.7x (TIFF) and 1.2x (FITS) faster. The decode
   itself parallelises better than that — 2.0x on eight threads for compressed TIFF, 3.2x for FITS —
@@ -32,6 +35,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Two visible changes to progress reporting, both deliberate: the per-file `detail` now names each
   file as its decode finishes rather than in input order (the count is unaffected and still runs
   1..n), and the `stacking` note is gone, because the stack build it announced no longer happens.
+
+### Fixed
+
+- **A TIFF carrying an `Orientation` tag now loads its stored raster, and publishes the tag.**
+  Pillow, which used to decode every frame, does not reorient such a file correctly — it swaps width
+  and height from the tag *before* decoding, so it reads the strips at the wrong width. Measured on a
+  4x6 ramp with `Orientation` 6, Pillow returned a 4x6 array whose values were interleaved from the
+  mis-strided buffer, when any valid reorientation of a 4x6 raster is 6x4. Frames now come back in
+  stored order, with `Orientation` available as a coordinate so a display step can apply it once,
+  which is what NeuNorm's rule about never reorienting implicitly inside the pipeline asks for.
+
+  **This changes the pixels such a stack loads with.** Anything calibrated against the old geometry —
+  an ROI, a mask, a dark or open-beam image — has to be re-checked against the corrected data. Files
+  with `Orientation` 1 or no such tag are unaffected, which covers everything the VENUS and MARS
+  writers produce and every fixture in this repository. The one combination with no good answer, a
+  file that both needs the Pillow decoder and carries an orientation, is now rejected with an
+  explanation rather than loaded scrambled.
 
 ## [2.4.0] - 2026-08-26
 

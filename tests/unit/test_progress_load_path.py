@@ -1,10 +1,10 @@
 """Progress reporting through the TIFF/FITS load path.
 
 The load loop is the unit a user counts — "1000 files" — and it is the only place where a slow or
-contended filesystem becomes visible per item. The two ticks after the loop matter for a different
-reason: the loop only appends to a list, so the memory peak (a measured ~5x multiple of the stack,
-from `np.stack` plus the variances copy) lands *after* the last file. Without them a bar reaches
-100% and then goes silent through the part that can exhaust RAM.
+contended filesystem becomes visible per item. The tick after the loop matters for a different
+reason: the memory peak is still a measured ~4.5x multiple of the stack and part of it lands *after*
+the last file, in the variances copy and scipp's own copies. Without that tick a bar reaches 100%
+and then goes silent through the part that can exhaust RAM.
 """
 
 import contextlib
@@ -262,6 +262,86 @@ def test_cancelling_is_not_reported_as_a_read_failure(loader, paths_fn, message)
                 loader(paths_fn(), progress=cancel)
 
             assert message not in captured.getvalue(), f"cancelling at completed={cancel_at} was logged as a failure"
+    finally:
+        logger.remove(sink_id)
+
+
+@pytest.mark.parametrize(
+    ("loader", "paths_fn", "message", "module", "reader"),
+    [
+        (load_tiff_stack, _tiffs, "Error loading TIFF stack", "tiff_loader", "_read_tiff_frame"),
+        (load_fits_stack, _fits, "Failed to load FITS files", "fits_loader", "_read_fits_frame"),
+    ],
+    ids=["tiff", "fits"],
+)
+def test_a_worker_side_read_failure_that_is_a_valueerror_is_still_logged(
+    loader, paths_fn, message, module, reader, monkeypatch
+):
+    """A read failure must be logged wherever in the stack it happens, even if it is a ValueError.
+
+    The pool loop lets the shape-mismatch check through unlogged, and that branch used to key on
+    `ValueError` itself. tifffile's `TiffFileError` is a `ValueError` subclass and astropy raises
+    `ValueError` for some malformed input, so such a failure at any position but frame 0 reached
+    the caller with no NeuNorm log line — while the identical failure at frame 0 was logged, and
+    the serial loaders logged every one. The branch now keys on a private `_ShapeMismatchError`.
+
+    The failure is injected at the frame reader rather than staged as a corrupt file on disk,
+    because which exception type a given malformed file produces is the reader's business and not
+    something this test should depend on. What is being pinned is the branch: a plain `ValueError`
+    out of a worker gets logged. Verified by mutation — restoring `except ValueError` fails this.
+    """
+    importlib = pytest.importorskip("importlib")
+    mod = importlib.import_module(f"neunorm.loaders.{module}")
+    real = getattr(mod, reader)
+    calls = {"n": 0}
+
+    def flaky(path):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise ValueError("simulated malformed file")
+        return real(path)
+
+    monkeypatch.setattr(mod, reader, flaky)
+
+    captured = io.StringIO()
+    sink_id = logger.add(captured, level="ERROR", format="{message}")
+    try:
+        with pytest.raises(ValueError, match="simulated malformed file"):
+            loader(paths_fn(), progress=False)
+        assert message in captured.getvalue(), "a worker-side ValueError was not logged"
+    finally:
+        logger.remove(sink_id)
+
+
+@pytest.mark.parametrize(
+    ("loader", "paths_fn"),
+    [(load_tiff_stack, _tiffs), (load_fits_stack, _fits)],
+    ids=["tiff", "fits"],
+)
+def test_a_shape_mismatch_is_still_not_logged_as_a_read_failure(loader, paths_fn, tmp_path):
+    """The control for the test above: inconsistent input is the caller's data, not an I/O error.
+
+    Without this, keying the pass-through branch on a broader exception type would look fine.
+    """
+    import numpy as np
+
+    paths = list(paths_fn())
+    odd = tmp_path / f"odd{paths[0].suffix}"
+    if paths[0].suffix == ".tif":
+        import tifffile
+
+        tifffile.imwrite(odd, np.zeros((9, 11), dtype=np.float32))
+    else:
+        from astropy.io import fits
+
+        fits.PrimaryHDU(data=np.zeros((9, 11), dtype=np.float32)).writeto(odd)
+
+    captured = io.StringIO()
+    sink_id = logger.add(captured, level="ERROR", format="{message}")
+    try:
+        with pytest.raises(ValueError, match="Shape mismatch"):
+            loader([paths[0], odd], progress=False)
+        assert captured.getvalue() == "", f"a shape mismatch was logged as a read failure: {captured.getvalue()}"
     finally:
         logger.remove(sink_id)
 

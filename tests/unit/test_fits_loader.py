@@ -197,13 +197,14 @@ def test_parallel_and_serial_decode_agree(tmp_path):
 
     paths = _write_ramp(tmp_path)
 
+    import scipp as sc
+
     serial = load_fits_stack(paths, max_workers=1)
     parallel = load_fits_stack(paths, max_workers=8)
 
-    assert serial.dims == parallel.dims
-    np.testing.assert_array_equal(serial.values, parallel.values)
-    np.testing.assert_array_equal(serial.variances, parallel.variances)
-    assert set(serial.coords) == set(parallel.coords)
+    # sc.identical rather than a coordinate-name comparison: names matching says nothing about
+    # coordinate values, dims or alignment, and those are published output too.
+    assert sc.identical(serial, parallel)
 
 
 def test_parallel_decode_raises_on_shape_mismatch(tmp_path):
@@ -230,3 +231,35 @@ def test_parallel_decode_propagates_a_failed_read(tmp_path):
 
     with pytest.raises(Exception):  # noqa: B017 - astropy's own error type is not part of the contract
         load_fits_stack(paths, max_workers=4)
+
+
+def test_max_workers_below_one_is_rejected(tmp_path):
+    """0 and -1 are mistakes, not settings, and must not be silently reinterpreted.
+
+    `max_workers or _DEFAULT` read 0 as "unset" and gave 8 threads; the `max(1, ...)` clamp turned
+    a negative into a serial read. Both accepted a wrong value without a word.
+    """
+    from neunorm.loaders.fits_loader import load_fits_stack
+
+    paths = _write_ramp(tmp_path, n=3)
+
+    for bad in (0, -1):
+        with pytest.raises(ValueError, match="max_workers must be at least 1"):
+            load_fits_stack(paths, max_workers=bad)
+
+
+def test_a_set_of_paths_still_loads(tmp_path):
+    """A sized-but-unindexable collection must still work: the decode addresses frames by index.
+
+    The pre-parallel loader only iterated `paths`, so a set worked. `_decode_stack` subscripts it,
+    and a guard testing only for `__len__` let a set through to a TypeError.
+    """
+    from neunorm.loaders.fits_loader import load_fits_stack
+
+    paths = _write_ramp(tmp_path, n=4)
+
+    da = load_fits_stack(set(paths), max_workers=2)
+
+    assert da.data.shape == (4, 3, 4)
+    # A set has no order, so only the multiset of frame values is defined here.
+    assert sorted(da.values[:, 0, 0]) == [0.0, 1.0, 2.0, 3.0]

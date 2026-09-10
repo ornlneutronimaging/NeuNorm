@@ -183,6 +183,39 @@ def test_parallel_decode_preserves_frame_order(tmp_path):
         np.testing.assert_allclose(da.values[i], float(i))
 
 
+def test_parallel_decode_keeps_each_tag_with_its_own_frame(tmp_path):
+    """A per-frame TIFF tag must stay aligned with the pixels it came from.
+
+    The tags are collected off the same futures as the pixels, so tags stored by completion order
+    rather than by input index would attach the wrong exposure time to every frame — and every
+    value would still be present, so a test comparing sets or names would pass. This is not
+    hypothetical: mutating ``tags[index]`` to ``tags[n - index]`` left all ten of this file's other
+    tests passing while ``InteropIndex`` came out permuted.
+
+    It matters downstream, not just here: ``run_mars_ccd_pipeline`` passes
+    ``metadata_keys_to_sum=("ExposureTime",)``, so a mis-paired tag is summed into the HDF5 product.
+
+    Frame i carries both pixel value i and ``ImageDescription`` "frame i", which pins the two to
+    each other.
+    """
+    import tifffile
+
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    paths = []
+    for i in range(17):
+        p = tmp_path / f"frame{i:03d}.tif"
+        # metadata=None or tifffile writes its own JSON blob into ImageDescription, which is
+        # identical across frames and so would land in the scalar branch, testing nothing.
+        tifffile.imwrite(p, np.full((3, 4), float(i), dtype=np.float32), description=f"frame {i}", metadata=None)
+        paths.append(p)
+
+    da = load_tiff_stack(paths, max_workers=8)
+
+    assert list(da.coords["ImageDescription"].values) == [f"frame {i}" for i in range(len(paths))]
+    np.testing.assert_allclose(da.values[:, 0, 0], np.arange(len(paths), dtype=np.float32))
+
+
 def test_parallel_and_serial_decode_agree(tmp_path):
     """max_workers=1 and a real pool must produce identical arrays, variances and coordinates.
 
@@ -196,13 +229,14 @@ def test_parallel_and_serial_decode_agree(tmp_path):
 
     paths = _write_ramp(tmp_path)
 
+    import scipp as sc
+
     serial = load_tiff_stack(paths, max_workers=1)
     parallel = load_tiff_stack(paths, max_workers=8)
 
-    assert serial.dims == parallel.dims
-    np.testing.assert_array_equal(serial.values, parallel.values)
-    np.testing.assert_array_equal(serial.variances, parallel.variances)
-    assert set(serial.coords) == set(parallel.coords)
+    # sc.identical rather than a coordinate-name comparison: names matching says nothing about
+    # coordinate values, dims or alignment, and those are published output too.
+    assert sc.identical(serial, parallel)
 
 
 def test_parallel_decode_raises_on_shape_mismatch(tmp_path):
@@ -228,3 +262,175 @@ def test_parallel_decode_propagates_a_failed_read(tmp_path):
 
     with pytest.raises(Exception):  # noqa: B017 - tifffile's own error type is not part of the contract
         load_tiff_stack(paths, max_workers=4)
+
+
+# --------------------------------------------------------------------------------------
+# what the decoder swap must NOT change
+#
+# tifffile replaced Pillow for the pixels, and these are the file kinds where the two disagree.
+# Each case is compared against a value written into the file, not against another run of this
+# loader: a test that runs the new implementation twice cannot see a change relative to the old
+# one, which is the whole risk of a decoder swap.
+# --------------------------------------------------------------------------------------
+
+
+def test_lzw_compressed_files_still_load(tmp_path):
+    """LZW is decoded by Pillow, because tifffile delegates it to a package NeuNorm does not have.
+
+    tifffile hands LZW, JPEG and CCITT to the optional ``imagecodecs``; without it, ``asarray()``
+    raises ``ValueError: <COMPRESSION.LZW: 5> requires the 'imagecodecs' package``. LZW is what
+    ImageJ/Fiji, MATLAB and Pillow write, so a re-saved stack would otherwise stop loading
+    outright. Written with Pillow because tifffile cannot even encode LZW here.
+    """
+    from PIL import Image
+
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    paths = []
+    for i in range(3):
+        p = tmp_path / f"lzw{i}.tif"
+        Image.fromarray(np.full((4, 6), 100 + i, dtype=np.uint16)).save(p, compression="tiff_lzw")
+        paths.append(p)
+
+    da = load_tiff_stack(paths, max_workers=4)
+
+    assert da.data.shape == (3, 4, 6)
+    np.testing.assert_allclose(da.values[:, 0, 0], [100.0, 101.0, 102.0])
+
+
+def test_packbits_and_deflate_still_load(tmp_path):
+    """The control for the LZW case: these two codecs tifffile does carry, so they take its path.
+
+    Without this, the LZW test alone would be consistent with compression being broken in general.
+    """
+    from PIL import Image
+
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    for name, compression in (("packbits", "packbits"), ("deflate", "tiff_adobe_deflate")):
+        p = tmp_path / f"{name}.tif"
+        Image.fromarray(np.full((4, 6), 42, dtype=np.uint16)).save(p, compression=compression)
+        da = load_tiff_stack([p])
+        np.testing.assert_allclose(da.values[0], 42.0), name
+
+
+def test_whiteiszero_8bit_keeps_its_inverted_values(tmp_path):
+    """An 8-bit WhiteIsZero file must load inverted, as Pillow loaded it.
+
+    Pillow inverts the samples for photometric 0 at 8 bits and below — a stored 0 loads as 255 —
+    and tifffile returns them raw. Counts become the Poisson variances, so taking tifffile's values
+    here would silently change both the data and its stated uncertainty. Asserted against the
+    stored value, so it fails if the frame is ever decoded raw.
+    """
+    import tifffile
+
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    p = tmp_path / "miniswhite8.tif"
+    tifffile.imwrite(p, np.full((4, 6), 10, dtype=np.uint8), photometric="miniswhite")
+
+    da = load_tiff_stack([p])
+
+    np.testing.assert_allclose(da.values[0], 245.0)
+
+
+def test_whiteiszero_16bit_is_not_inverted(tmp_path):
+    """At 16 bits neither library inverts, so neither may this loader.
+
+    This is what stops anyone "simplifying" the branch into an unconditional inversion on
+    photometric 0, which would corrupt every 16-bit WhiteIsZero frame.
+
+    It does **not** pin the `BitsPerSample <= 8` half of the routing condition. Verified by
+    mutation: dropping that condition sends 16-bit WhiteIsZero frames down the Pillow path too, and
+    Pillow returns the same values at that depth, so this test still passes. That mutant is
+    equivalent on values — it only costs tifffile's faster decode — which is why no test forbids it.
+    """
+    import tifffile
+
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    p = tmp_path / "miniswhite16.tif"
+    tifffile.imwrite(p, np.full((4, 6), 10, dtype=np.uint16), photometric="miniswhite")
+
+    da = load_tiff_stack([p])
+
+    np.testing.assert_allclose(da.values[0], 10.0)
+
+
+def test_orientation_tagged_file_loads_the_stored_raster(tmp_path):
+    """An Orientation tag no longer reorders pixels, and is published instead. Deliberate.
+
+    Pillow does not reorient such a file correctly — it swaps width and height from the tag before
+    decoding, so it reads the strips at the wrong width. On this 4x6 ramp with Orientation 6 it
+    returns a 4x6 array whose first row is [20, 16, 12, 8, 4, 0]; any valid reorientation of a 4x6
+    raster is 6x4, so that output is not a reorientation of anything, it is a mis-strided read.
+    This test asserts the stored raster comes back untouched, which is both correct and what this
+    project's orientation rule wants: nothing implicit inside the pipeline, applied once at the end
+    for display. The tag is published so that display step has it.
+
+    Written to fail loudly if the mis-striding is ever reintroduced: it pins the exact stored
+    values, not merely the shape.
+    """
+    import tifffile
+
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    p = tmp_path / "orient.tif"
+    stored = np.arange(24, dtype=np.uint16).reshape(4, 6)
+    tifffile.imwrite(p, stored, photometric="minisblack", extratags=[(274, "H", 1, 6, True)])
+
+    da = load_tiff_stack([p])
+
+    assert da.data.shape == (1, 4, 6)
+    np.testing.assert_allclose(da.values[0], stored.astype(np.float32))
+    assert da.coords["Orientation"].values == 6
+
+
+def test_an_oriented_file_needing_the_pillow_decoder_is_rejected(tmp_path):
+    """The one combination with no good answer fails loudly rather than returning scrambled data.
+
+    An LZW frame can only be decoded by Pillow here, and Pillow mis-strides an oriented file, so
+    there is no way to produce the stored raster. Silently returning Pillow's interleaved output
+    would be the worst outcome of the three.
+    """
+    from PIL import Image
+
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    p = tmp_path / "lzw_oriented.tif"
+    Image.fromarray(np.arange(24, dtype=np.uint16).reshape(4, 6)).save(p, compression="tiff_lzw", tiffinfo={274: 6})
+
+    with pytest.raises(ValueError, match="Orientation"):
+        load_tiff_stack([p])
+
+
+def test_max_workers_below_one_is_rejected(tmp_path):
+    """0 and -1 are mistakes, not settings, and must not be silently reinterpreted.
+
+    `max_workers or _DEFAULT` read 0 as "unset" and gave 8 threads; the `max(1, ...)` clamp turned
+    a negative into a serial read. Both accepted a wrong value without a word.
+    """
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    paths = _write_ramp(tmp_path, n=3)
+
+    for bad in (0, -1):
+        with pytest.raises(ValueError, match="max_workers must be at least 1"):
+            load_tiff_stack(paths, max_workers=bad)
+
+
+def test_a_set_of_paths_still_loads(tmp_path):
+    """A sized-but-unindexable collection must still work: the decode addresses frames by index.
+
+    The pre-parallel loaders only iterated `paths`, so a set worked. `_decode_stack` subscripts it,
+    and a guard testing only for `__len__` let a set through to a TypeError.
+    """
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    paths = _write_ramp(tmp_path, n=4)
+
+    da = load_tiff_stack(set(paths), max_workers=2)
+
+    assert da.data.shape == (4, 3, 4)
+    # A set has no order, so only the multiset of frame values is defined here.
+    assert sorted(da.values[:, 0, 0]) == [0.0, 1.0, 2.0, 3.0]

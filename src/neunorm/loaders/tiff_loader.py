@@ -16,6 +16,54 @@ from PIL import ExifTags, Image
 
 from neunorm.utils.progress import STAGE_LOAD_SAMPLE, ProgressLike, resolve_progress
 
+#: TIFF tag codes read directly. Spelled out because ``ExifTags.TAGS`` maps the other way, code
+#: to name.
+_TAG_BITS_PER_SAMPLE = 258
+_TAG_COMPRESSION = 259
+_TAG_PHOTOMETRIC = 262
+_TAG_ORIENTATION = 274
+
+#: Compression schemes tifffile hands to the optional ``imagecodecs`` package, which NeuNorm does
+#: not depend on: CCITT G3/G4, LZW, old-style JPEG and JPEG. Pillow decodes all of them natively,
+#: and LZW in particular is what ImageJ/Fiji, MATLAB and Pillow itself write, so a stack re-saved
+#: by any of those would otherwise stop loading. Measured in this project's environment: tifffile's
+#: built-in shim offers only bitorder, delta, float24, lzma, packbits, packints, zlib and zstd, so
+#: PackBits- and Deflate-compressed files still take the tifffile path.
+_CODECS_TIFFFILE_DELEGATES = frozenset({2, 3, 4, 5, 6, 7})
+
+
+def _as_scalar(value):
+    """First element of a TIFF tag value, which Pillow reports as a tuple for some tags."""
+    if isinstance(value, (tuple, list)):
+        return value[0] if value else None
+    return value
+
+
+def _needs_pillow_pixels(tags: dict) -> bool:
+    """Whether this frame must be decoded by Pillow to load as it did before this loader changed.
+
+    Three cases, each measured by loading a file written for the purpose through both the previous
+    and the current reader rather than reasoned about from documentation:
+
+    - **A codec tifffile does not carry.** ``asarray()`` raises ``ValueError: <COMPRESSION.LZW: 5>
+      requires the 'imagecodecs' package`` where the Pillow read returned the pixels. PackBits and
+      Deflate are unaffected and stay on the tifffile path.
+    - **WhiteIsZero at 8 bits or fewer.** Pillow inverts the samples for photometric 0 at that
+      depth — a stored 0 loads as 255 — and tifffile returns them raw. Counts feed the Poisson
+      variances, so the difference would silently change both the data and its stated uncertainty.
+      At 16 bits neither library inverts, so the depth test is doing real work.
+    Delegating beats reimplementing in both: the goal is to load exactly what the previous version
+    loaded, and only Pillow's own decoder reproduces Pillow's own quirks. The handle is open for
+    the tags anyway, and Pillow releases the GIL in its decoder too, so these frames are still
+    decoded concurrently — they just do not get tifffile's faster path.
+
+    An ``Orientation`` tag is deliberately **not** on this list, and that one is a behaviour change
+    rather than a preserved behaviour; :func:`_read_tiff_frame` says why.
+    """
+    if _as_scalar(tags.get(_TAG_COMPRESSION)) in _CODECS_TIFFFILE_DELEGATES:
+        return True
+    return _as_scalar(tags.get(_TAG_PHOTOMETRIC)) == 0 and (_as_scalar(tags.get(_TAG_BITS_PER_SAMPLE)) or 0) <= 8
+
 
 def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
     """Decode one TIFF frame, returning ``(values, {tag_code: tag_value})``.
@@ -23,9 +71,9 @@ def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
     Split out of the read loop so it can be called per frame from a worker thread: it shares
     no state and opens its own file handle.
 
-    **Pixels come from tifffile, tags from Pillow, and the split is deliberate.** tifffile
-    releases the GIL while decompressing, which is what lets a thread pool actually overlap
-    decodes, and it is already installed by way of scitiff. Its *tags*, however, are not
+    **Pixels normally come from tifffile, tags always from Pillow, and the split is deliberate.**
+    tifffile releases the GIL while decompressing, which is what lets a thread pool actually
+    overlap decodes, and it is already installed by way of scitiff. Its *tags*, however, are not
     interchangeable with Pillow's, so reading them from tifffile would silently change the
     coordinates this loader publishes. Measured on ``tests/data/tif/sample``:
 
@@ -46,14 +94,56 @@ def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
     float32 is sufficient for neutron imaging (16-bit detectors) and halves the in-memory
     footprint of a large stack. ``copy=False`` makes the cast free for the float32 files the
     VENUS TPX1 auto-reduction writes, while still converting the integer files a CCD writes.
+
+    Two kinds of file are handed back to Pillow for the pixels as well, because tifffile would
+    otherwise load them differently; both were measured against the previous Pillow-only read.
+    See :func:`_needs_pillow_pixels`.
+
+    **A file carrying an Orientation tag now loads differently, on purpose.** Pillow's handling of
+    it is not a rotation of the stored image — it is wrong. Measured on a 4x6 uint16 ramp with
+    Orientation 6: Pillow swaps width and height from the tag *before* decoding, so it reads the
+    strips at the wrong width and returns a 4x6 array, when any valid reorientation of a 4x6
+    raster is 6x4. The values come out interleaved from the mis-strided buffer rather than
+    reoriented. tifffile returns the true stored raster for every orientation value, which is what
+    this loader now yields, and the tag is published as an ``Orientation`` coordinate so a display
+    step can apply it once — matching this project's rule that orientation is applied near the end
+    for display and never implicitly inside the pipeline.
+
+    So a stack of orientation-tagged TIFFs loads with different pixels than before, and gains a
+    coordinate. That is a fix, not a regression, but it is a visible change: anything downstream
+    calibrated against the old scrambled geometry has to be re-checked. Orientation 1 and files
+    with no such tag — every fixture in this repository, and what the VENUS and MARS writers
+    produce — are unaffected either way.
     """
-    with tifffile.TiffFile(path) as handle:
-        values = handle.pages[0].asarray().astype(np.float32, copy=False)
     # `dict(img.tag_v2)` produced {tag_code: value}; reproduce that exactly so the metadata
     # block in the caller is untouched. Pillow's open is lazy — this reads the IFD, not pixels.
+    # Opened first because the tags decide whether tifffile can be trusted with the pixels.
     with Image.open(path) as img:
         tags = dict(img.tag_v2)
+        if _needs_pillow_pixels(tags):
+            orientation = _as_scalar(tags.get(_TAG_ORIENTATION))
+            if orientation not in (None, 1):
+                # Pillow is the only decoder available for this file and cannot be trusted with
+                # an orientation (see above), so there is no way to return the stored raster.
+                # Failing beats handing back a scrambled frame.
+                raise ValueError(
+                    f"Cannot load {path}: its compression or photometric interpretation requires "
+                    f"the Pillow decoder, which mis-strides a file carrying Orientation "
+                    f"{orientation}. Re-save it uncompressed, or without the Orientation tag."
+                )
+            return np.asanyarray(img, dtype=np.float32), tags
+
+    with tifffile.TiffFile(path) as handle:
+        values = handle.pages[0].asarray().astype(np.float32, copy=False)
     return values, tags
+
+
+class _ShapeMismatchError(ValueError):
+    """A frame whose shape differs from the first frame's.
+
+    A ``ValueError`` so the exception a caller sees is unchanged, but its own type so the pool
+    loop can tell it apart from a read failure that also happens to be a ``ValueError``.
+    """
 
 
 #: Threads used to decode a stack when the caller does not say. Deliberately modest: the
@@ -77,10 +167,12 @@ def _decode_stack(
     construction rather than by collecting results carefully. Nothing here depends on the order
     in which decodes finish.
 
-    Pre-allocating also removes two of the three full-size copies the serial version held. It
-    built a list of ``n`` frames, stacked it (copy two) and copied that for the variances
-    (copy three); this holds the output plus the variances copy, with only the in-flight
-    decode buffers on top.
+    Pre-allocating also removes one of the three full-size copies the serial version held. It
+    built a list of ``n`` frames, stacked that into a second copy, then copied the result for the
+    variances; decoding straight into ``out`` collapses the first two into one, leaving the output
+    and the variances copy, with only the in-flight decode buffers on top. One copy, not two: the
+    measured peak drops from 5.37x the stack to 4.45x, which is what removing one of roughly five
+    resident copies looks like once scipp's own copies are counted.
 
     Progress is emitted **from this thread**, never from a worker, which is what keeps the
     contract in :mod:`neunorm.utils.progress`: events stay synchronous and on the calling
@@ -114,13 +206,13 @@ def _decode_stack(
     def decode(index: int):
         values, frame_tags = _read_tiff_frame(paths[index])
         if values.shape != first_values.shape:
-            raise ValueError(
+            raise _ShapeMismatchError(
                 f"Shape mismatch in file {paths[index]}: expected {first_values.shape}, got {values.shape}"
             )
         out[index] = values
         return index, frame_tags
 
-    workers = max(1, min(max_workers or _DEFAULT_MAX_WORKERS, n - 1))
+    workers = max(1, min(_DEFAULT_MAX_WORKERS if max_workers is None else max_workers, n - 1))
     pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="neunorm-tiff")
     try:
         futures = [pool.submit(decode, i) for i in range(1, n)]
@@ -129,9 +221,12 @@ def _decode_stack(
             # file still surfaces as it did when the read was serial.
             try:
                 index, frame_tags = future.result()
-            except ValueError:
+            except _ShapeMismatchError:
                 # A shape mismatch is the caller's data being inconsistent, not a read failure,
-                # and carried no log line before.
+                # and carried no log line before. Keyed on this private type rather than on
+                # ValueError, which tifffile's own TiffFileError subclasses — a malformed file
+                # would otherwise reach the caller with no log line, while the identical failure
+                # on frame 0 was logged.
                 raise
             except Exception as e:
                 logger.error("Error loading TIFF stack: {}", e)
@@ -169,10 +264,10 @@ def load_tiff_stack(  # noqa: C901
         number of images in the loaded stack.
     progress : bool or callable, optional
         Progress reporting, off by default. ``True`` draws a :mod:`tqdm` bar; a callable receives a
-        :class:`~neunorm.utils.progress.ProgressEvent` per file read, then one for each of the two
-        whole-stack allocations that follow the read loop. A pipeline normally passes a pre-bound
-        reporter here instead, so its per-file count spans every run rather than restarting.
-        See :mod:`neunorm.utils.progress`.
+        :class:`~neunorm.utils.progress.ProgressEvent` per file read, plus a note before the
+        whole-stack variances copy that follows the read loop. A pipeline normally passes a
+        pre-bound reporter here instead, so its per-file count spans every run rather than
+        restarting. See :mod:`neunorm.utils.progress`.
     stage : str, optional
         Stage label the events carry. Defaults to ``STAGE_LOAD_SAMPLE``; pass ``STAGE_LOAD_OB`` or
         ``STAGE_LOAD_DARK`` when loading those, so a callback can tell the loads of a run apart.
@@ -199,12 +294,16 @@ def load_tiff_stack(  # noqa: C901
           float-convertible or differ across files).
     """
 
-    # A non-sized iterable (Path.glob(), a generator) was accepted before this function reported
-    # progress and must still be: materialise once so the count has a denominator, and because
-    # `_decode_stack` subscripts it. Wrapped so an iterator that raises is logged like any other
-    # read failure. This runs BEFORE the emptiness check because a generator is always truthy — an
-    # empty glob would otherwise skip the check and die later indexing `paths[0]`.
-    if not hasattr(paths, "__len__"):
+    if max_workers is not None and max_workers < 1:
+        raise ValueError(f"max_workers must be at least 1, got {max_workers}")
+
+    # A generator, Path.glob() or a set was accepted before this function reported progress and
+    # must still be: materialise once so the count has a denominator, and because `_decode_stack`
+    # addresses frames by index — a set has `__len__` but no `__getitem__`, so testing only for
+    # length would let it through to a TypeError. Wrapped so an iterator that raises is logged
+    # like any other read failure. This runs BEFORE the emptiness check because a generator is
+    # always truthy — an empty glob would otherwise skip the check and die indexing `paths[0]`.
+    if not hasattr(paths, "__len__") or not hasattr(paths, "__getitem__"):
         try:
             paths = list(paths)
         except Exception as e:
