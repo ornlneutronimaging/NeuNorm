@@ -146,7 +146,7 @@ prefer NeuNorm's behaviour.
 **`event.completed` is an absolute, cumulative count, not an increment.** `tqdm.update()` takes a
 delta, so the adapter is `bar.update(event.completed - bar.n)`. Passing `event.completed` straight to
 `update()` makes the bar race past its total: measured on the 120-file load above, a bar that should end
-at 120 ends at **7740**.
+at 120 ends at **7500**.
 
 Each event carries four fields:
 
@@ -164,7 +164,11 @@ def report(event):
 - `detail` — optional context: the file being read, or the named step running.
 
 Events are emitted synchronously from the calling thread, in order, so the callback does not need to be
-thread-safe.
+thread-safe. That holds even where NeuNorm reads in parallel: the TIFF loader decodes frames on a
+thread pool, but the workers only decode and every event is still emitted from the thread that called
+the loader. The one consequence of the parallelism is that `detail` names each TIFF as its decode
+finishes, so the *names* no longer follow input order — `completed` is unaffected and still counts up
+one per file.
 
 ## Example 3 — cancel a run
 
@@ -215,7 +219,7 @@ will exceed the totals here; use `event.completed` rather than counting calls.
 
 | Stage | What advances the count | Notes |
 |---|---|---|
-| `load_sample`, `load_ob`, `load_dark` | one event per file | across every input run, so the count does not restart per run. On the event path, four events per file instead — the loader's full-event-length allocations, so one huge NeXus file still shows movement |
+| `load_sample`, `load_ob`, `load_dark` | one event per file | across every input run, so the count does not restart per run. TIFF frames are decoded on a thread pool, so `detail` names them in completion rather than input order. On the event path, four events per file instead — the loader's full-event-length allocations, so one huge NeXus file still shows movement |
 | `histogram` | one event per event-chunk | `total` is `None`: the chunk count follows from each file's event count |
 | `combine_runs` | one event per combined family | sample, open beam, dark |
 | `gamma_filter` | four named steps | the third is the median filter, most of its cost |

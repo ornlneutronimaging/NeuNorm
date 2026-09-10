@@ -902,7 +902,11 @@ def test_a_generator_of_input_runs_is_not_consumed_by_counting_it(mars_ccd_input
     )
 
     loaded = [e.detail for e in events if e.stage == STAGE_LOAD_SAMPLE and e.detail.endswith(".tiff")]
-    assert loaded == [p.name for group in mars_ccd_inputs["sample_paths"] for p in group], (
+    # Compared as a set, not a sequence: what proves the generator survived is that every file was
+    # loaded. The TIFF loader decodes on a thread pool and names each frame as its decode finishes,
+    # so the order these arrive in is completion order and asserting it here would be asserting the
+    # pool's scheduling. See test_loader_emits_one_event_per_file.
+    assert sorted(loaded) == sorted(p.name for group in mars_ccd_inputs["sample_paths"] for p in group), (
         "the generator was consumed before the load"
     )
     assert {e.total for e in events if e.stage == STAGE_LOAD_SAMPLE} == {None}, (

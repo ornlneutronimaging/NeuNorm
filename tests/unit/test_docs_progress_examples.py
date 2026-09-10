@@ -286,8 +286,12 @@ def test_the_documented_log_remedy_removes_the_collisions_and_keeps_the_records(
 
 def test_the_naive_adapter_figure_on_the_page_is_the_measured_one(tmp_path):
     """The page warns that passing `event.completed` straight to `tqdm.update()` makes a 120-file bar
-    end at 7740. That number was wrong once — computed as the triangular number of the per-file events,
+    end at 7500. That number was wrong once — computed as the triangular number of the per-file events,
     which ignored the note events that carry the same absolute count — so it is measured here.
+
+    It was 7740 until the TIFF loader began decoding into a pre-allocated array: that removed the
+    "stacking" note, and with it one event per load carrying the running count. The three sample runs
+    noted at completed 40, 80 and 120, which is exactly the 240 the figure dropped by.
     """
     from neunorm.pipelines.mars_ccd import run_mars_ccd_pipeline
     from neunorm.utils.progress import STAGE_LOAD_SAMPLE
@@ -309,7 +313,7 @@ def test_the_naive_adapter_figure_on_the_page_is_the_measured_one(tmp_path):
     run_mars_ccd_pipeline(sample_paths=sample, ob_paths=ob, output_path=tmp_path / "naive.h5", progress=report)
 
     assert correct == 120, "the documented adapter must land exactly on the file count"
-    assert naive == 7740, f"the page says 7740; measured {naive}"
+    assert naive == 7500, f"the page says 7500; measured {naive}"
     assert str(naive) in DOC.read_text(), "the page no longer quotes the measured figure"
 
 

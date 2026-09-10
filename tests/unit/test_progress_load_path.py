@@ -55,7 +55,17 @@ def _collect():
     ids=["tiff", "fits"],
 )
 def test_loader_emits_one_event_per_file(loader, paths_fn):
-    """One advancing event per file, counting up to the number of files, each naming its file."""
+    """One advancing event per file, counting up to the number of files, each naming its file.
+
+    The **count** is monotonic 1..n for both loaders. The **order the names arrive in** is not the
+    same contract for both: FITS reads serially so its details follow input order, while the TIFF
+    loader decodes concurrently and reports each frame as its decode finishes, so a name can arrive
+    before that of an earlier file. Every file is still named exactly once.
+
+    Input order is asserted only for FITS. It is not asserted as *scrambled* for TIFF, because on a
+    3-file fixture the decodes usually do finish in order and such an assertion would be flaky;
+    what matters and is pinned is that the set of names is complete and the count never regresses.
+    """
     paths = paths_fn()
     assert len(paths) == 3, "fixture changed; the assertions below assume 3 files"
     events, sink = _collect()
@@ -67,7 +77,9 @@ def test_loader_emits_one_event_per_file(loader, paths_fn):
     assert [e.completed for e in per_file] == [1, 2, 3]
     assert {e.total for e in per_file} == {3}
     assert {e.stage for e in per_file} == {STAGE_LOAD_SAMPLE}
-    assert [e.detail for e in per_file] == [p.name for p in paths]
+    assert sorted(e.detail for e in per_file) == sorted(p.name for p in paths)
+    if loader is load_fits_stack:
+        assert [e.detail for e in per_file] == [p.name for p in paths]
 
 
 @pytest.mark.parametrize(
@@ -76,24 +88,30 @@ def test_loader_emits_one_event_per_file(loader, paths_fn):
     ids=["tiff", "fits"],
 )
 def test_loader_announces_the_post_loop_allocations_without_advancing(loader, paths_fn):
-    """The stack build and the variances copy are announced after the last file, as notes.
+    """The whole-stack allocations are announced after the last file, as notes.
 
     They are announcements, not completions: each fires *before* its allocation so a bar that stops
     there tells the user exactly where the run is stuck. They therefore must not advance the count —
     `completed` is documented as absolute and monotonic, and a fresh per-call stage reporter would
     restart at 1 on every load and leave a bar frozen at its first tick.
+
+    The two loaders differ in how many there are to announce, and that is not an oversight. FITS
+    still reads into a list and then stacks it, so it has both a stack build and a variances copy.
+    The TIFF loader decodes straight into a pre-allocated array, so there is no stack build left to
+    name and only the variances copy remains — announcing a phase that no longer runs would point a
+    stalled bar at the wrong place.
     """
+    expected = ["attaching variances"] if loader is load_tiff_stack else ["stacking", "attaching variances"]
+
     events, sink = _collect()
 
     loader(paths_fn(), progress=sink)
 
     notes = [e for e in events if e.detail.startswith(("stacking", "attaching variances"))]
-    assert len(notes) == 2
-    assert notes[0].detail.startswith("stacking")
-    assert notes[1].detail.startswith("attaching variances")
+    assert [e.detail.split()[0] for e in notes] == [p.split()[0] for p in expected]
     # after the last file, and not advancing past it
-    assert [e.completed for e in notes] == [3, 3]
-    assert events[-2:] == notes
+    assert [e.completed for e in notes] == [3] * len(expected)
+    assert events[-len(expected) :] == notes
     assert {e.stage for e in notes} == {STAGE_LOAD_SAMPLE}
 
 
@@ -398,13 +416,17 @@ def test_rendered_bar_shows_the_allocation_notes(paths_fn):
 
     They were previously erased: each landed on a freshly-built bar that was closed immediately,
     and `leave=False` clears a closed bar's line.
+
+    Only FITS still has a stack build to render; the TIFF loader decodes into a pre-allocated
+    array. See test_loader_announces_the_post_loop_allocations_without_advancing.
     """
     paths = paths_fn()
     loader = load_tiff_stack if paths[0].suffix == ".tif" else load_fits_stack
 
     out = _render(loader, paths)
 
-    assert "stacking" in out, f"the stack-build note never rendered:\n{out}"
+    if loader is load_fits_stack:
+        assert "stacking" in out, f"the stack-build note never rendered:\n{out}"
     assert "attaching variances" in out, f"the variances note never rendered:\n{out}"
 
 

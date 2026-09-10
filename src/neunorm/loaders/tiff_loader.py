@@ -4,6 +4,7 @@ TIFF loader for NeuNorm.
 Loads TIFF stacks as scipp DataArrays.
 """
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -55,12 +56,103 @@ def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
     return values, tags
 
 
+#: Threads used to decode a stack when the caller does not say. Deliberately modest: the
+#: right number depends on whether the files are local or on a mounted analysis filesystem,
+#: and that was not measured, so this trades some of the available speedup for not swamping
+#: a shared mount from every concurrent user. Raise it via ``max_workers`` once measured.
+_DEFAULT_MAX_WORKERS = 8
+
+
+def _decode_stack(
+    paths: Sequence[str | Path],
+    report,
+    max_workers: Optional[int],
+) -> tuple[np.ndarray, list[dict]]:
+    """Decode every frame into one pre-allocated array, in input order.
+
+    **Frame order is the spectral axis.** The stack's first dimension becomes ``TOF`` or
+    ``N_image``, and the ``tof`` coordinate is matched to it positionally, so a frame landing at
+    the wrong index mislabels the time axis and produces a plausible-looking wrong spectrum.
+    Workers therefore write ``out[i]`` for their own input index: order is preserved by
+    construction rather than by collecting results carefully. Nothing here depends on the order
+    in which decodes finish.
+
+    Pre-allocating also removes two of the three full-size copies the serial version held. It
+    built a list of ``n`` frames, stacked it (copy two) and copied that for the variances
+    (copy three); this holds the output plus the variances copy, with only the in-flight
+    decode buffers on top.
+
+    Progress is emitted **from this thread**, never from a worker, which is what keeps the
+    contract in :mod:`neunorm.utils.progress`: events stay synchronous and on the calling
+    thread, a caller's callback still need not be thread-safe, and raising from it still
+    cancels the run — the raise propagates out of the loop and the pool is shut down on the
+    way out. The one visible change is that ``detail`` names files in completion order, so it
+    no longer tracks input order; the count itself is unaffected.
+    """
+    n = len(paths)
+
+    # Frame 0 is decoded here, alone, because its shape is what the output array is allocated
+    # from and what every other frame is checked against.
+    #
+    # Every `report(...)` below sits OUTSIDE these try blocks, and that placement is load-bearing:
+    # raising from a progress callback is how a caller cancels, and a cancel must not be logged as
+    # "Error loading TIFF stack". tests/unit/test_progress_load_path.py pins it.
+    try:
+        first_values, first_tags = _read_tiff_frame(paths[0])
+    except Exception as e:
+        logger.error("Error loading TIFF stack: {}", e)
+        raise
+    out = np.empty((n, *first_values.shape), dtype=np.float32)
+    out[0] = first_values
+    tags: list[Optional[dict]] = [None] * n
+    tags[0] = first_tags
+    report(detail=Path(paths[0]).name)
+
+    if n == 1:
+        return out, tags
+
+    def decode(index: int):
+        values, frame_tags = _read_tiff_frame(paths[index])
+        if values.shape != first_values.shape:
+            raise ValueError(
+                f"Shape mismatch in file {paths[index]}: expected {first_values.shape}, got {values.shape}"
+            )
+        out[index] = values
+        return index, frame_tags
+
+    workers = max(1, min(max_workers or _DEFAULT_MAX_WORKERS, n - 1))
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="neunorm-tiff")
+    try:
+        futures = [pool.submit(decode, i) for i in range(1, n)]
+        for future in as_completed(futures):
+            # `.result()` re-raises a worker's exception here, in the calling thread, so a bad
+            # file still surfaces as it did when the read was serial.
+            try:
+                index, frame_tags = future.result()
+            except ValueError:
+                # A shape mismatch is the caller's data being inconsistent, not a read failure,
+                # and carried no log line before.
+                raise
+            except Exception as e:
+                logger.error("Error loading TIFF stack: {}", e)
+                raise
+            tags[index] = frame_tags
+            report(detail=Path(paths[index]).name)
+    finally:
+        # cancel_futures so a raised error — including a cancelling progress callback — does not
+        # wait for every queued file to be read first.
+        pool.shutdown(wait=True, cancel_futures=True)
+
+    return out, tags
+
+
 def load_tiff_stack(  # noqa: C901
     paths: Sequence[str | Path],
     tof_edges: Optional[np.ndarray] = None,
     *,
     progress: ProgressLike = False,
     stage: str = STAGE_LOAD_SAMPLE,
+    max_workers: Optional[int] = None,
 ) -> sc.DataArray:
     """Load TIFF stack as scipp DataArray with variance tracking.
 
@@ -84,6 +176,15 @@ def load_tiff_stack(  # noqa: C901
     stage : str, optional
         Stage label the events carry. Defaults to ``STAGE_LOAD_SAMPLE``; pass ``STAGE_LOAD_OB`` or
         ``STAGE_LOAD_DARK`` when loading those, so a callback can tell the loads of a run apart.
+    max_workers : int, optional
+        Threads used to decode the stack, 8 by default. Frames are decoded concurrently into a
+        pre-allocated array, each written at its own input index, so the result is identical to a
+        serial read whatever order the decodes finish in. ``max_workers=1`` reads serially.
+
+        The default is deliberately modest rather than tuned: the useful number depends on whether
+        the files sit on local disk or a mounted analysis filesystem, which has not been measured
+        here, and a large pool from every concurrent user is worse for a shared mount than a small
+        one. Raise it once there are numbers.
 
     Returns
     -------
@@ -98,14 +199,11 @@ def load_tiff_stack(  # noqa: C901
           float-convertible or differ across files).
     """
 
-    data_list = []
-    metadata_list = []
-
     # A non-sized iterable (Path.glob(), a generator) was accepted before this function reported
-    # progress and must still be: materialise once so the count has a denominator. Wrapped so an
-    # iterator that raises is logged like any other read failure. This runs BEFORE the emptiness
-    # check because a generator is always truthy — an empty glob would otherwise skip the check and
-    # die later with IndexError on `data_list[0]`.
+    # progress and must still be: materialise once so the count has a denominator, and because
+    # `_decode_stack` subscripts it. Wrapped so an iterator that raises is logged like any other
+    # read failure. This runs BEFORE the emptiness check because a generator is always truthy — an
+    # empty glob would otherwise skip the check and die later indexing `paths[0]`.
     if not hasattr(paths, "__len__"):
         try:
             paths = list(paths)
@@ -117,31 +215,10 @@ def load_tiff_stack(  # noqa: C901
         raise ValueError("No file paths provided")
 
     with resolve_progress(progress, stage, total=len(paths)) as report:
-        for path in paths:
-            # The try covers only the read: an exception raised by a progress callback (which is how a
-            # caller cancels) must not be logged as a failed TIFF read, so the tick is emitted outside.
-            try:
-                values, tags = _read_tiff_frame(path)
-            except Exception as e:
-                logger.error("Error loading TIFF stack: {}", e)
-                raise
-            data_list.append(values)
-            metadata_list.append(tags)
-            report(detail=Path(path).name)
-
-        # Check shapes consistency
-        first_shape = data_list[0].shape
-        # Verify other shapes match
-        for i, arr in enumerate(data_list[1:]):
-            if arr.shape != first_shape:
-                raise ValueError(f"Shape mismatch in file {paths[i + 1]}: expected {first_shape}, got {arr.shape}")
-
-        # The read loop only appended to a list; the memory peak is here and in the variances copy
-        # below, which together hold several full-size copies of the stack. Reporting them keeps a bar
-        # moving through the part of the load that can actually exhaust RAM and start swapping —
-        # otherwise it reaches 100% at the last file and then sits silent through the worst of it.
-        report.note(f"stacking {len(data_list)} frames")
-        full_data = np.stack(data_list, axis=0)
+        # `_decode_stack` owns the read logging, because only it can tell a failed decode from a
+        # cancelling progress callback; wrapping the whole call here would log a cancel as an I/O
+        # error, which is exactly what test_cancelling_is_not_reported_as_a_read_failure forbids.
+        full_data, metadata_list = _decode_stack(paths, report, max_workers)
 
         n_images, ny, nx = full_data.shape
 
