@@ -46,17 +46,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **A TIFF carrying an `Orientation` tag now loads its stored raster, and publishes the tag.**
-  Pillow, which used to decode every frame, applies that tag on load. Measured against `np.rot90`:
-  its result is a correct rotation whenever the raster is square — which is every real detector
-  frame — and also at `Orientation` 3 for any shape, but at 6 and 8 on a non-square raster it swaps
-  width and height from the tag *before* decoding, reads the strips at the wrong width and returns
-  interleaved values in the original shape. Frames now come back in stored order in every case, with
-  `Orientation` available as a coordinate so a display step can apply it once, which is what
-  NeuNorm's rule about never reorienting implicitly inside the pipeline asks for.
+  Pillow, which used to decode every frame, applies that tag on load, and how faithfully depends on
+  which of its decoders runs. Measured against `np.rot90`: its libtiff decoder (compressed files)
+  returns an exact rotation at every orientation value and shape, and its raw decoder (uncompressed)
+  is exact for a square raster at every value and for any raster at `Orientation` 3, but at 6 and 8
+  on a non-square raster it swaps width and height from the tag *before* decoding, reads the strips
+  at the wrong width and returns interleaved values in the original shape. Frames now come back in
+  stored order in every case, with `Orientation` available as a coordinate so a display step can
+  apply it once, which is what NeuNorm's rule about never reorienting implicitly inside the pipeline
+  asks for.
 
-  **This changes the pixels such a stack loads with, and for square frames it is a removed rotation
-  rather than a repair.** Anything calibrated against the old geometry — an ROI, a mask, a dark or
-  open-beam image — has to be re-checked. Files with `Orientation` 1 or no such tag are unaffected,
+  **This changes the pixels such a stack loads with, and for all but that one uncompressed
+  non-square case it is a removed rotation rather than a repair.** Anything calibrated against the
+  old geometry — an ROI, a mask, a dark or open-beam image — has to be re-checked. Files with `Orientation` 1 or no such tag are unaffected,
   which covers everything the VENUS and MARS writers produce and every fixture in this repository.
   `MaskROI.from_file` still decodes with Pillow and so would apply an orientation the data no longer
   has; because the shapes match on a square frame the mismatch would be silent, so an
@@ -68,11 +70,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-negative-counts check as a plausible count. Such a frame now reaches that check as -12 and is
   rejected, which is what the check is for.
 
-- **2- and 4-bit TIFFs are refused instead of silently altered.** Neither reader returns the stored
-  samples: tifffile cannot unpack non-byte-aligned data without `imagecodecs`, and Pillow rescales
-  to full range — a 4-bit `0,1,2,3,4,5` came back as `0,17,34,51,68,85` and a 2-bit ramp as all
-  zeros. Those values fed straight into the Poisson variances. 1-bit and 12-bit are faithful and
-  still load.
+- **2- and 4-bit TIFFs are refused instead of silently altered.** Pillow rescales them to full
+  range — a 4-bit `0,1,2,3,4,5` came back as `0,17,34,51,68,85` and a 2-bit ramp as all zeros — and
+  those values fed straight into the Poisson variances. Such a frame is now refused *unless*
+  tifffile can unpack it, which needs the optional `imagecodecs` package; with `imagecodecs`
+  installed it loads with its stored counts instead. 1-bit and 12-bit are faithful and still load.
+
+- **A TIFF with no `PhotometricInterpretation` tag loads inverted again, as it did before.** Pillow
+  defaults that tag to 0 (WhiteIsZero) and inverts at 8 bits and below, while tifffile treats an
+  absent tag as MinIsBlack. A stored `0,1,2,3` loaded as `255,254,253,252` before and briefly as
+  `0,1,2,3` on this branch. Pillow's own source attributes that default to real writers omitting a
+  required tag.
+
+- **A stack mixing frames that carry a tag with frames that do not no longer raises `KeyError`.**
+  The metadata block indexes every frame with the first frame's tag keys. That could not be reached
+  for `Orientation` while tags were read through Pillow's pixel load, which deletes tag 274 as a
+  side effect; reading them separately exposed it, and such a stack failed with a bare
+  `KeyError: 274` if the tagged frame came first and silently dropped the coordinate if it came
+  second. Only tags present in every frame become coordinates now, in either order, with a warning
+  naming what was dropped.
 
 ## [2.4.0] - 2026-08-26
 

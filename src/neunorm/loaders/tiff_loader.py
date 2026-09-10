@@ -23,12 +23,19 @@ _TAG_COMPRESSION = 259
 _TAG_PHOTOMETRIC = 262
 _TAG_ORIENTATION = 274
 
-#: Bit depths where Pillow's decode is measurably not the stored samples and tifffile cannot
-#: decode at all, so there is no way to load the frame correctly. Measured on hand-written files,
-#: since neither library can encode these here: a 4-bit ramp 0,1,2,3,4,5 loads from Pillow as
-#: 0,17,34,51,68,85 (scaled to full 8-bit range), and a 2-bit ramp 0,1,2,3,3,2,1,0 loads as all
-#: zeros. Multiplying counts by 17, or zeroing them, is worse than refusing the file. 1-bit is
+#: Bit depths Pillow decodes to something other than the stored samples, measured on hand-written
+#: files since neither library can encode these here: a 4-bit ramp 0,1,2,3,4,5 comes back from
+#: Pillow as 0,17,34,51,68,85 (rescaled to full 8-bit range) and a 2-bit ramp 0,1,2,3,3,2,1,0 as
+#: all zeros. Multiplying counts by 17, or zeroing them, is worse than refusing the file. 1-bit is
 #: **not** in this set: both readers return the stored bits there, faithfully.
+#:
+#: This is only reached when tifffile has already failed, so whether such a frame is refused or
+#: loaded depends on the environment: tifffile unpacks non-byte-aligned samples only with the
+#: optional ``imagecodecs`` package, which is not a NeuNorm dependency and is absent here. With it
+#: installed, tifffile returns the stored counts and this refusal never fires — which is the right
+#: outcome, not a hole. The refusal exists for the environment where nothing can read the file
+#: faithfully, and deliberately sits after the tifffile attempt rather than before it so that
+#: installing ``imagecodecs`` widens what loads instead of being overridden.
 _UNLOADABLE_BIT_DEPTHS = frozenset({2, 4})
 
 
@@ -56,6 +63,13 @@ def _needs_pillow_pixels(tags: dict) -> bool:
       variances, so the difference would silently change both the data and its stated uncertainty.
       At 16 bits neither library inverts, so the depth test is doing real work.
 
+      **An absent PhotometricInterpretation tag counts as 0 here**, because that is what Pillow
+      does with it (``tag_v2.get(PHOTOMETRIC_INTERPRETATION, 0)``, a default its own source
+      attributes to real writers omitting a required tag) while tifffile treats absent as
+      MinIsBlack. Measured on a hand-written 8-bit frame with tag 262 omitted: stored
+      0, 1, 2, 3, 10, 20, 200, 255 loaded from Pillow as 255, 254, 253, 252, 245, 235, 55, 0.
+      Comparing the raw tag against 0 missed it, since an absent tag reads as ``None``.
+
     Two other measured differences are deliberately **not** routed here, because Pillow is the one
     that is wrong and reproducing it would corrupt data:
 
@@ -65,7 +79,12 @@ def _needs_pillow_pixels(tags: dict) -> bool:
       and the guard already existed; silently reinterpreting them as large positive counts is not.
     - **An ``Orientation`` tag**; :func:`_read_tiff_frame` says why.
     """
-    return _as_scalar(tags.get(_TAG_PHOTOMETRIC)) == 0 and (_as_scalar(tags.get(_TAG_BITS_PER_SAMPLE)) or 0) <= 8
+    photometric = _as_scalar(tags.get(_TAG_PHOTOMETRIC))
+    if photometric is None:
+        # Pillow's own default for a missing tag, and the whole point of not writing
+        # `tags.get(_TAG_PHOTOMETRIC, 0)`: an empty tuple value also arrives here as None.
+        photometric = 0
+    return photometric == 0 and (_as_scalar(tags.get(_TAG_BITS_PER_SAMPLE)) or 0) <= 8
 
 
 def _pillow_pixels(img, tags: dict, path: str | Path) -> np.ndarray:
@@ -86,10 +105,18 @@ def _pillow_pixels(img, tags: dict, path: str | Path) -> np.ndarray:
 
     orientation = _as_scalar(tags.get(_TAG_ORIENTATION))
     if orientation not in (None, 1):
+        # Not because Pillow reads it badly — on this path it usually reads it well. Measured on
+        # LZW-compressed frames at orientations 3, 6 and 8, square and not: Pillow's libtiff
+        # decoder returns an exact `np.rot90` of the stored raster, shape changes included. The
+        # problem is that it cannot be asked for the *un*-rotated raster, which is what this loader
+        # returns for every other file, and inverting the rotation afterwards would mean knowing
+        # which of Pillow's decoders ran — its raw decoder mis-strides the same tag instead of
+        # rotating. Refusing is the one answer that is never quietly wrong.
         raise ValueError(
-            f"Cannot load {path}: it can only be decoded by Pillow, which does not read a file "
-            f"carrying Orientation {orientation} at its stored width. Re-save it uncompressed, or "
-            f"without the Orientation tag."
+            f"Cannot load {path}: it can only be decoded by Pillow, which applies the Orientation "
+            f"tag ({orientation}) as it decodes and cannot return the stored raster that this "
+            f"loader publishes for every other file. Re-save it uncompressed, or without the "
+            f"Orientation tag."
         )
 
     return np.asanyarray(img, dtype=np.float32)
@@ -135,20 +162,24 @@ def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
     where tifffile succeeds but disagrees.
 
     **A file carrying an Orientation tag now loads differently, on purpose, and this is the change
-    to look at hardest.** Pillow applies the tag when it loads pixels. Measured against
-    ``np.rot90``: for a **square** raster its result is a correct rotation at every orientation
-    value, and for a non-square one it is correct at orientation 3 but not at 6 or 8, where it
-    swaps width and height from the tag before decoding, reads the strips at the wrong width and
-    returns interleaved values in the original shape. So Pillow was right for square frames — which
-    is every real detector frame — and wrong for the shape-changing cases on non-square ones.
+    to look at hardest.** Pillow applies the tag when it loads pixels, and how well depends on
+    which of its decoders runs. Measured against ``np.rot90``: its **libtiff** decoder, which
+    handles the compressed files, returns an exact rotation at every orientation value and shape.
+    Its **raw** decoder, for uncompressed files, is exact for a square raster at every value and
+    for any raster at orientation 3, but at 6 or 8 on a non-square raster it swaps width and height
+    from the tag *before* decoding, reads the strips at the wrong width, and returns interleaved
+    values in the original shape. So Pillow was right for square frames — which is every real
+    detector frame — and wrong only for the shape-changing cases of uncompressed non-square ones.
 
     This loader now returns the stored raster in every case, with the tag published as an
     ``Orientation`` coordinate for a display step to apply once, matching this project's rule that
     orientation is applied near the end for display and never implicitly inside the pipeline. The
-    consequence is not only un-scrambling: **a square orientation-tagged stack now loads un-rotated
-    relative to 2.4.0.** Anything calibrated against that rotation — an ROI, a mask, a dark or
-    open-beam image — has to be re-checked. Orientation 1 and files with no such tag, which is
-    every fixture here and everything the VENUS and MARS writers produce, are unaffected.
+    consequence is therefore mostly **not** un-scrambling: for everything except uncompressed
+    non-square frames at orientation 6 or 8, Pillow's rotation was correct, so **an
+    orientation-tagged stack now loads un-rotated relative to 2.4.0.** Anything calibrated against
+    that rotation — an ROI, a mask, a dark or open-beam image — has to be re-checked. Orientation 1
+    and files with no such tag, which is every fixture here and everything the VENUS and MARS
+    writers produce, are unaffected.
 
     ``MaskROI.from_file`` still decodes with Pillow, so it *would* apply an orientation the data
     no longer has — and on a square frame the shapes would match, making the misalignment silent.
@@ -396,9 +427,26 @@ def load_tiff_stack(  # noqa: C901
                 )
 
         if metadata_list:
-            # Process metadata and add as coordinates
-            # Assuming all images have the same metadata keys.
-            for key in metadata_list[0]:
+            # Process metadata and add as coordinates.
+            #
+            # Only keys every frame carries become coordinates. The loop below indexes each frame
+            # with frame 0's keys, so a key frame 0 has and a later frame lacks used to escape as a
+            # bare `KeyError: <tag code>` from a public function. That was unreachable for the
+            # Orientation tag until this loader stopped reading tags through Pillow's pixel load,
+            # which deletes tag 274 as a side effect: a stack mixing one oriented frame with one
+            # plain frame failed outright if the oriented one came first, and silently dropped the
+            # coordinate if it came second. Intersecting first makes both orders behave the same,
+            # and says which tag went missing rather than printing a number.
+            shared_keys = [key for key in metadata_list[0] if all(key in tags for tags in metadata_list)]
+            for dropped in [key for key in metadata_list[0] if key not in shared_keys]:
+                logger.warning(
+                    "TIFF tag {} ({}) is present in {} but not in every file of the stack; "
+                    "it is not published as a coordinate.",
+                    dropped,
+                    ExifTags.TAGS.get(dropped, "unknown"),
+                    Path(paths[0]).name,
+                )
+            for key in shared_keys:
                 if (key_name := ExifTags.TAGS.get(key)) is not None:
                     values = [metadata_list[i][key] for i in range(n_images)]
                 else:
