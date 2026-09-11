@@ -663,13 +663,36 @@ def test_a_tag_missing_from_some_frames_is_dropped_not_raised(tmp_path):
     _write_raw_tiff(tagged, 6, 4, 16, stored, extras=[(254, 4, 1, 0)])
     _write_raw_tiff(plain, 6, 4, 16, stored, extras=[(255, 4, 1, 1)])
 
-    results = [load_tiff_stack(paths) for paths in ([tagged, plain], [plain, tagged])]
+    import io
 
-    for da in results:
-        assert da.data.shape == (2, 4, 6)
-    assert set(results[0].coords) == set(results[1].coords), "the published coordinates depended on file order"
+    from loguru import logger
+
+    warned = {}
+    results = {}
+    for label, paths in (("tagged first", [tagged, plain]), ("plain first", [plain, tagged])):
+        captured = io.StringIO()
+        sink_id = logger.add(captured, level="WARNING", format="{message}")
+        try:
+            results[label] = load_tiff_stack(paths)
+        finally:
+            logger.remove(sink_id)
+        warned[label] = captured.getvalue()
+
+    for label, da in results.items():
+        assert da.data.shape == (2, 4, 6), label
+    assert set(results["tagged first"].coords) == set(results["plain first"].coords), (
+        "the published coordinates depended on file order"
+    )
     for name in ("NewSubfileType", "SubfileType"):
-        assert name not in results[0].coords, f"{name} is in only one frame and must not be published"
+        assert name not in results["tagged first"].coords, f"{name} is in only one frame and must not be published"
+
+    # Both non-shared tags must be named whichever order the files arrive in. Warning from the
+    # first frame's keys alone mentioned only the tag that frame happened to carry, so which tags a
+    # user heard about depended on the order they passed their files -- and the tag carried solely
+    # by a later frame was dropped in silence.
+    for label, text in warned.items():
+        assert "254" in text, f"the tag only the first file carries went unmentioned ({label})"
+        assert "255" in text, f"the tag only the second file carries went unmentioned ({label})"
 
 
 def test_max_workers_below_one_is_rejected(tmp_path):

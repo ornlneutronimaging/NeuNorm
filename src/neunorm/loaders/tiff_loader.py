@@ -135,36 +135,25 @@ def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
     stored 0, 137, 274, 411 comes back exactly). ``_needs_pillow_pixels`` covers the one case
     where tifffile succeeds but disagrees.
 
-    **A file carrying an Orientation tag now loads differently, on purpose, and this is the change
-    to look at hardest.** Pillow applies the tag when it loads pixels, and how well depends on
-    which of its decoders runs. Measured against ``np.rot90`` over all eight orientation values,
-    square and non-square: its **libtiff** decoder, which handles the compressed files, returns an
-    exact transform every time. Its **raw** decoder, for uncompressed files, is exact for a square
-    raster at every value, and for any raster at the values that preserve the shape (2, 3 and 4);
-    it is wrong at 5, 6, 7 and 8 on a non-square raster, where it swaps width and height from the
-    tag *before* decoding, reads the strips at the wrong width, and returns interleaved values in
-    the original shape.
+    **An Orientation tag sends the frame to Pillow, so it loads exactly as it always has.**
+    Pillow applies the tag while decoding and deletes tag 274 from ``tag_v2`` as a side effect, so
+    the Pillow-only version this replaced returned reoriented pixels and never published an
+    ``Orientation`` coordinate. Both halves are reproduced: the pixels come from Pillow, and tag
+    274 is dropped from the published tags for every file, including the ones tifffile decodes.
 
-    So Pillow was right except for uncompressed non-square frames at the four shape-changing
-    orientations. Whether that exception is reachable depends on the detector geometry, which this
-    repository does not record, so this docstring does not guess: state the rule, not a claim about
-    which instruments are square.
+    How faithfully Pillow reorients depends on which of its decoders runs, and it is reproduced
+    either way. Measured against ``np.rot90`` over all eight values, square and non-square: its
+    **libtiff** decoder, which handles compressed files, returns an exact transform every time;
+    its **raw** decoder is exact for a square raster at every value and for any raster at the
+    shape-preserving values 2, 3 and 4, but at 5, 6, 7 and 8 on a non-square raster it swaps width
+    and height from the tag *before* decoding, reads the strips at the wrong width, and returns
+    interleaved values in the original shape.
 
-    This loader now returns the stored raster in every case, with the tag published as an
-    ``Orientation`` coordinate for a display step to apply once, matching this project's rule that
-    orientation is applied near the end for display and never implicitly inside the pipeline. The
-    consequence is therefore mostly **not** un-scrambling: wherever Pillow's transform was correct,
-    **an orientation-tagged stack now loads un-rotated relative to 2.4.0.** Anything calibrated
-    against that rotation — an ROI, a mask, a dark or open-beam image — has to be re-checked.
-
-    Files with Orientation 1 or no such tag load the same pixels as before, which covers every
-    fixture here and everything the VENUS and MARS writers produce. Orientation 1 does now appear
-    as a coordinate where it did not before, because Pillow's pixel load deleted tag 274 before
-    this loader could see it, so such a stack gains an ``Orientation`` entry in its metadata.
-
-    ``MaskROI.from_file`` still decodes with Pillow, so it *would* apply an orientation the data
-    no longer has — and on a square frame the shapes would match, making the misalignment silent.
-    It therefore refuses an orientation-tagged mask outright.
+    Returning the stored raster instead, and publishing the tag for a display step, is arguably
+    what this project's orientation rule wants — and it was tried here and reverted, because it
+    silently changed the pixels of every orientation-tagged stack and added a coordinate to the
+    HDF5 product. That is a deliberate behaviour change to make on its own terms, with a migration
+    note, rather than a side effect of a change whose purpose is decoding speed.
     """
     # This opens the file twice: Pillow for the IFD, tifffile for the pixels. Reading it once and
     # parsing the buffer twice was tried and reverted -- it removes the second open, but holds the
@@ -430,16 +419,25 @@ def load_tiff_stack(  # noqa: C901
             # Orientation tag until this loader stopped reading tags through Pillow's pixel load,
             # which deletes tag 274 as a side effect: a stack mixing one oriented frame with one
             # plain frame failed outright if the oriented one came first, and silently dropped the
-            # coordinate if it came second. Intersecting first makes both orders behave the same,
-            # and says which tag went missing rather than printing a number.
+            # coordinate if it came second.
+            #
+            # Published coordinates come from the INTERSECTION, but the warning is driven by the
+            # UNION: a tag only a later frame carries is dropped just as surely as one only frame 0
+            # carries, and warning from frame 0's keys alone would make which tags get mentioned
+            # depend on the order the files were passed in.
             shared_keys = [key for key in metadata_list[0] if all(key in tags for tags in metadata_list)]
-            for dropped in [key for key in metadata_list[0] if key not in shared_keys]:
+            shared = set(shared_keys)
+            dropped = {key for tags in metadata_list for key in tags} - shared
+            for key in sorted(dropped, key=str):
+                carriers = [Path(p).name for p, tags in zip(paths, metadata_list, strict=True) if key in tags]
                 logger.warning(
-                    "TIFF tag {} ({}) is present in {} but not in every file of the stack; "
-                    "it is not published as a coordinate.",
-                    dropped,
-                    ExifTags.TAGS.get(dropped, "unknown"),
-                    Path(paths[0]).name,
+                    "TIFF tag {} ({}) is present in {} of {} files of the stack (e.g. {}) but not "
+                    "all of them; it is not published as a coordinate.",
+                    key,
+                    ExifTags.TAGS.get(key, "unknown"),
+                    len(carriers),
+                    len(metadata_list),
+                    carriers[0],
                 )
             for key in shared_keys:
                 if (key_name := ExifTags.TAGS.get(key)) is not None:
