@@ -365,10 +365,18 @@ Parallel decode therefore buys less than a decode benchmark suggests. Stored com
 100 frames decode about 2× faster on eight threads, but the whole `load_tiff_stack` call is only
 about 1.7× faster and `load_fits_stack` about 1.2×; the difference is allocation and copying, which
 threads do not help. Treat those three as ratios rather than measurements: the peak-memory multiples
-above reproduce to within 0.03× between runs, while the wall-clock numbers move by around 20% on the
-same machine, so the useful claim is "noticeably faster, but not by the factor the decode alone
+above reproduce to about a tenth between runs, while the wall-clock numbers move by around 20% on
+the same machine, so the useful claim is "noticeably faster, but not by the factor the decode alone
 suggests". Progress reporting makes that wait legible and shows you which allocation you are waiting
 on; reducing it further is separate work.
+
+One caveat for a **mounted analysis filesystem**, which is the case none of the above measures.
+`load_tiff_stack` opens each file twice — Pillow for the tags, tifffile for the pixels — where the
+version before it opened once. Simulating a 10 ms round trip per open over 20 frames, the serial
+path costs 0.66 s against the old loader's 0.38 s, and only the thread pool turns that back into a
+win, at 0.15 s with eight workers. So on a high-latency mount the gain comes entirely from
+concurrency and the per-file cost went up; `load_fits_stack` still opens once. If loading there is
+still slow, that second open is the first thing to measure.
 
 ## See also
 

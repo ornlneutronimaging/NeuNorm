@@ -84,9 +84,19 @@ def _decode_stack(
     Progress is emitted **from this thread**, never from a worker, which is what keeps the
     contract in :mod:`neunorm.utils.progress`: events stay synchronous and on the calling
     thread, a caller's callback still need not be thread-safe, and raising from it still
-    cancels the run — the raise propagates out of the loop and the pool is shut down on the
-    way out. The one visible change is that ``detail`` names files in completion order, so it
-    no longer tracks input order; the count itself is unaffected.
+    cancels the run. Two consequences of the pool that are not the progress contract and are
+    worth knowing:
+
+    - ``detail`` names files in completion order, so it no longer tracks input order. The count
+      itself is unaffected.
+    - the per-file ``logger.debug`` line in :func:`_read_fits_frame` *is* emitted from the worker,
+      so debug-level log order no longer follows input order either. Only progress events are
+      promised to be ordered.
+
+    Cancelling is prompt but not instant: raising from the callback propagates out of this loop
+    and the ``finally`` cancels every queued file, but it waits for the decodes already in flight.
+    And when more than one frame is unreadable, which one is named in the error depends on which
+    decode finishes first, where the serial version always reported the first in input order.
     """
     n = len(paths)
 

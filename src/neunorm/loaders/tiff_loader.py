@@ -208,6 +208,20 @@ def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
     no longer has — and on a square frame the shapes would match, making the misalignment silent.
     It therefore refuses an orientation-tagged mask outright.
     """
+    # NOTE: this opens the file twice — Pillow for the IFD, tifffile for the pixels — where the
+    # Pillow-only version opened it once. On local disk that is free. On a high-latency mount it
+    # is not, and that is the environment this work exists for: measured with 10 ms added per
+    # open over 20 frames, the serial path costs 0.66 s against the old loader's 0.38 s, and only
+    # the thread pool turns that back into a win (0.15 s at eight workers).
+    #
+    # Reading the file once into a buffer and parsing it twice was tried and reverted. It does cut
+    # the open cost (0.04 s against 0.10 s per-frame under the same simulated latency, output
+    # byte-identical) but it holds the raw bytes plus a BytesIO copy per in-flight frame, and peak
+    # memory measured 4.98x the stack against 4.47x — giving back most of the reduction this change
+    # is otherwise measured to deliver. A certain memory regression for a speculative latency gain
+    # is the wrong trade until someone measures a real mount; the numbers above are what that
+    # decision should be revisited with.
+    #
     # `dict(img.tag_v2)` produced {tag_code: value}; reproduce that exactly so the metadata
     # block in the caller is untouched. Pillow's open is lazy — this reads the IFD, not pixels.
     # Opened first because the tags decide whether tifffile can be trusted with the pixels, and
@@ -269,9 +283,14 @@ def _decode_stack(
     Progress is emitted **from this thread**, never from a worker, which is what keeps the
     contract in :mod:`neunorm.utils.progress`: events stay synchronous and on the calling
     thread, a caller's callback still need not be thread-safe, and raising from it still
-    cancels the run — the raise propagates out of the loop and the pool is shut down on the
-    way out. The one visible change is that ``detail`` names files in completion order, so it
-    no longer tracks input order; the count itself is unaffected.
+    cancels the run. The visible change is that ``detail`` names files in completion order, so
+    it no longer tracks input order; the count itself is unaffected.
+
+    Cancelling is prompt but not instant: raising from the callback propagates out of this loop
+    and the ``finally`` cancels every queued file, but it waits for the decodes already in flight.
+    And when more than one frame is unreadable or mis-shaped, which one is named in the error
+    depends on which decode finishes first, where the serial version always reported the first in
+    input order.
     """
     n = len(paths)
 
