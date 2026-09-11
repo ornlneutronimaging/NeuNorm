@@ -45,40 +45,48 @@ Ask the user for the target version (e.g. `2.0.0`) if not provided, then:
   through a **PR**, not a direct push — only the CHANGELOG stamp itself is a
   direct commit (see step 3).
 
-## 2. Check out all three branches locally FIRST (mandatory)
+## 2. `next` is the only local branch (mandatory)
 
-**Before any push, `next`, `qa` and `main` must all exist as local branches and
-all be up to date with their remotes.** Do this even though only `next` is
-normally worked on.
+**Do not keep `qa` or `main` as local branches.** Delete them if they exist. Every
+promotion is pushed from the one branch that is actually current:
 
 ```bash
 git fetch origin --tags --prune
-for b in next qa main; do
-  git checkout "$b" && git pull --ff-only origin "$b"
-done
-git checkout next
+git switch next && git pull --ff-only origin next
+git branch -D qa main 2>/dev/null   # if they exist locally, they are a liability
+git branch -vv                      # expect `next` alone
 ```
 
-Then print the state and confirm it before pushing anything:
+Confirm the remotes before pushing anything, and confirm that promotion really is
+a fast-forward rather than assuming it:
 
 ```bash
-git log --oneline -1 next; git log --oneline -1 qa; git log --oneline -1 main
+git rev-parse origin/next origin/qa origin/main
+for b in qa main; do
+  git merge-base --is-ancestor origin/$b origin/next \
+    && echo "origin/$b: ancestor of next -> fast-forward OK" \
+    || echo "origin/$b: DIVERGED -- stop and reconcile"
+  echo "  unique commits on $b not in next (must be 0): $(git rev-list --count origin/next..origin/$b)"
+done
 ```
 
-Do **not** substitute a raw-SHA refspec (`git push origin <sha>:refs/heads/qa`)
-for a missing local branch. That form is valid git and does work, but it hides
-which commit is actually moving and it reads to the maintainer like an invented
-workaround. Create the local branch instead. The only acceptable reason to name
-a SHA is when the maintainer explicitly asks for it.
+**Why `next` must be the only local branch.** `git push origin <local>:<remote>`
+publishes **the local ref**, never the remote one, so any stale local branch
+silently promotes the wrong commit. Three releases in a row hit this. In 2.3.0 the
+maintainer's local `next` was behind (the release PR had been merged in the web UI,
+so the local ref never advanced) and `git push origin next:qa` faithfully pushed
+that stale ref; `qa` landed 3 commits behind `main`, the branches disagreed, and
+nobody noticed until after the tag. Keeping a local `qa` does not fix that — it
+adds a second ref that can go stale, and `qa:main` then promotes whatever the local
+`qa` happens to be.
 
-**Why this is mandatory.** During the 2.3.0 release the promotion pushed a stale
-`qa`: the maintainer's local `next` was still several commits behind (the release
-PR had been merged in the GitHub web UI, so the local ref never advanced), and
-`git push origin next:qa` faithfully pushed that stale local `next`. `qa` landed
-3 commits behind `main`, which had been pushed by explicit SHA and was therefore
-correct. The branches disagreed, and nobody noticed until after the tag. A
-`git push` of `<local-branch>:<remote-branch>` publishes **the local ref**, never
-the remote one — so a stale local branch silently promotes the wrong commit.
+Promoting from `next` for both hops removes the intermediate entirely: there is one
+local ref, it was just pulled, and both pushes name it. **Never use `qa:main`.**
+
+Do **not** substitute a raw-SHA refspec (`git push origin <sha>:refs/heads/qa`)
+either. That form is valid git and does work, but it hides which commit is moving
+and reads to the maintainer like an invented workaround. The only acceptable reason
+to name a SHA is when the maintainer explicitly asks for it.
 
 ## 3. Stamp the CHANGELOG on `next`
 
@@ -104,8 +112,12 @@ the remote one — so a stale local branch silently promotes the wrong commit.
 
 ```bash
 git push origin next:qa      # then WAIT for CI green on qa
-git push origin qa:main
+git push origin next:main    # NOT qa:main -- see step 2
 ```
+
+Both hops push `next`, the one local branch that was just pulled. `qa:main` would
+push a *local* `qa` that either does not exist or is a second ref able to go stale;
+it is how three releases promoted the wrong commit.
 
 - After **each** push, re-verify that the remote actually moved where intended,
   rather than assuming the command implied it:
@@ -114,6 +126,9 @@ git push origin qa:main
 git fetch origin
 git rev-parse origin/next origin/qa origin/main   # all three must match
 ```
+
+Run this after the `qa` push too, not just at the end — a promotion that silently
+went nowhere looks identical to one that worked until you compare the remotes.
 
 - If the push is rejected as non-fast-forward, STOP: something landed directly
   on `qa`/`main`. Reconcile it back into `next` first — never force-push or
