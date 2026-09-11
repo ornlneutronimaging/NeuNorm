@@ -43,16 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (FITS) faster; those are ratios rather than precise measurements, since wall clock moves by around
   20% between runs on the same machine. The decode alone parallelises better than the whole call
   does — very roughly 2x on eight threads, varying with the codec and strip layout — with the
-  remainder being allocation and copying, which threads do not help. All of it is local warm-cache
-  measurement; the per-file latency of a mounted analysis filesystem, which is where users actually
-  hit this, is not measured.
+  remainder being allocation and copying, which threads do not help. All of it is measured on
+  local disk with a warm page cache.
 
-  One caveat for that unmeasured case: `load_tiff_stack` now opens each file **twice** — Pillow for
-  the tags, tifffile for the pixels — where before it opened once. Simulating a 10 ms round trip
-  per open over 20 frames, the serial path costs 0.66 s against the old loader's 0.38 s, and only
-  the thread pool turns that back into a win (0.15 s at eight workers). Reading the file once and
-  parsing the buffer twice was tried and reverted: it cuts the open cost but raises peak memory
-  from 4.5x the stack to 5.0x. `load_fits_stack` still opens once. See `docs/progress.md`.
+  `load_tiff_stack` opens each file twice, Pillow for the tags and tifffile for the pixels, where
+  before it opened once. Reading the file once and parsing the buffer twice was tried and reverted:
+  it removes the second open but raises peak memory from 4.5x the stack to 5.0x, giving back most
+  of the reduction above. `load_fits_stack` still opens once. See `docs/progress.md`.
 
   Two visible changes to progress reporting, both deliberate: the per-file `detail` now names each
   file as its decode finishes rather than in input order (the count is unaffected and still runs

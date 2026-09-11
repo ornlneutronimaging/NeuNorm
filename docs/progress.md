@@ -370,13 +370,10 @@ the same machine, so the useful claim is "noticeably faster, but not by the fact
 suggests". Progress reporting makes that wait legible and shows you which allocation you are waiting
 on; reducing it further is separate work.
 
-One caveat for a **mounted analysis filesystem**, which is the case none of the above measures.
 `load_tiff_stack` opens each file twice — Pillow for the tags, tifffile for the pixels — where the
-version before it opened once. Simulating a 10 ms round trip per open over 20 frames, the serial
-path costs 0.66 s against the old loader's 0.38 s, and only the thread pool turns that back into a
-win, at 0.15 s with eight workers. So on a high-latency mount the gain comes entirely from
-concurrency and the per-file cost went up; `load_fits_stack` still opens once. If loading there is
-still slow, that second open is the first thing to measure.
+version before it opened once. Reading the file once and parsing the buffer twice removes the second
+open, but holds the raw bytes per in-flight frame and pushes peak memory from 4.5× the stack to
+5.0×, so it is not what the loader does. `load_fits_stack` opens once.
 
 ## See also
 

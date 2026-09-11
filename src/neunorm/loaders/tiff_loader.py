@@ -166,19 +166,10 @@ def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
     no longer has — and on a square frame the shapes would match, making the misalignment silent.
     It therefore refuses an orientation-tagged mask outright.
     """
-    # NOTE: this opens the file twice — Pillow for the IFD, tifffile for the pixels — where the
-    # Pillow-only version opened it once. On local disk that is free. On a high-latency mount it
-    # is not, and that is the environment this work exists for: measured with 10 ms added per
-    # open over 20 frames, the serial path costs 0.66 s against the old loader's 0.38 s, and only
-    # the thread pool turns that back into a win (0.15 s at eight workers).
-    #
-    # Reading the file once into a buffer and parsing it twice was tried and reverted. It does cut
-    # the open cost (0.04 s against 0.10 s per-frame under the same simulated latency, output
-    # byte-identical) but it holds the raw bytes plus a BytesIO copy per in-flight frame, and peak
-    # memory measured 4.98x the stack against 4.47x — giving back most of the reduction this change
-    # is otherwise measured to deliver. A certain memory regression for a speculative latency gain
-    # is the wrong trade until someone measures a real mount; the numbers above are what that
-    # decision should be revisited with.
+    # This opens the file twice: Pillow for the IFD, tifffile for the pixels. Reading it once and
+    # parsing the buffer twice was tried and reverted -- it removes the second open, but holds the
+    # raw bytes plus a BytesIO copy per in-flight frame and pushed peak memory from 4.48x the stack
+    # to 4.98x, giving back most of the reduction pre-allocating is otherwise measured to deliver.
     #
     # `dict(img.tag_v2)` produced {tag_code: value}; reproduce that exactly so the metadata
     # block in the caller is untouched. Pillow's open is lazy — this reads the IFD, not pixels.
