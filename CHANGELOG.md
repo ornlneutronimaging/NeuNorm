@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The GitHub Release is created automatically on a version tag**
+  ([#220](https://github.com/ornlneutronimaging/NeuNorm/pull/220)). A `github-release` job runs
+  after the unit tests, conda build and both publish jobs, generating notes with the existing
+  `.github/release.yml` filter and marking rc/alpha/beta tags as pre-releases. It landed after the
+  2.4.0 tag, so 2.5.0 is its first live run; it does not backfill earlier releases.
+
 ### Changed
 
 - **Image stacks are loaded in parallel**
@@ -24,18 +32,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directly and a hand-maintained conda run-dependency table is exactly where a transitive-only
   dependency goes missing unnoticed.
 
-  **Nothing about what a file loads as has changed.** Pillow and tifffile disagree about several
-  TIFF variants, and wherever they do, Pillow still decodes the pixels — WhiteIsZero at 8 bits or
-  fewer (including an absent `PhotometricInterpretation` tag, which Pillow defaults to 0), signed
-  samples at 8 bits or fewer, bit depths that are not a whole number of bytes, and any
+  **Nothing that loaded correctly before loads differently.** Pillow and tifffile disagree about
+  several TIFF variants, and wherever they do, Pillow still decodes the pixels — WhiteIsZero at 8
+  bits or fewer (including an absent `PhotometricInterpretation` tag, which Pillow defaults to 0),
+  signed samples at 8 bits or fewer, bit depths that are not a whole number of bytes, and any
   `Orientation` tag other than 1. Pillow also decodes anything tifffile raises on, decided by
   trying tifffile and falling back rather than by predicting: LZW, JPEG and CCITT compression, the
   floating-point predictor, chroma subsampling and 12-bit packed samples. In several of those cases
   what Pillow produces is arguably wrong — it rescales sub-byte depths, reads signed 8-bit as
   unsigned, and applies an orientation this project would rather apply once at display time — and
   it is reproduced anyway. Changing any of it is a separate decision, not one for a change whose
-  purpose is decoding speed. A compatibility harness covering 33 file variants, including all eight
-  orientation values square and non-square, reports zero differences against the previous loader.
+  purpose is decoding speed.
+
+  There is **one** class where the decode does change, and it is a correction rather than a
+  regression; it has its own entry under Fixed below. A compatibility harness covering 33 variants,
+  including all eight orientation values square and non-square, plus a 64-combination sweep over
+  dtype, byte order and compression, reports no case where a file that loaded correctly before
+  loads differently now.
 
   Pre-allocating also removes one of the roughly five full-size copies resident at peak. Measured
   on 100 uncompressed 1024x1024 frames, peak memory above baseline drops from about 5.4x the stack
@@ -58,6 +71,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with more than one unreadable frame the one named in the error is whichever decode failed first.
 
 ### Fixed
+
+- **Big-endian compressed TIFFs now load their stored samples instead of byte-swapped ones.**
+  Pillow routes every compressed file through its libtiff decoder, which ignores the file's byte
+  order for its `I` and `F` modes, so a big-endian int16, int32 or float32 frame compressed with
+  deflate, LZMA or Zstd came back byte-swapped — a stored `0, 3, 6, 10` read as `0, 768, 1536, 2560`
+  at int16, and float32 frames were mangled into denormals, which the non-negative-counts guard
+  sometimes rejected outright. tifffile honours the byte order, so these now load correctly.
+
+  Measured across 64 dtype/byte-order/compression combinations: 9 differ from 2.4.0, all of this
+  shape, none of them a regression. Uncompressed big-endian frames were always fine (the raw
+  decoder honours byte order), as was `uint16` at any compression (its rawmode carries the order).
+  ORNL detector output is little-endian, so this affects data that passed through a big-endian
+  writer with compression enabled — ImageJ/Fiji writes big-endian TIFFs and offers ZIP, which is
+  deflate.
 
 - **A stack whose frames do not all carry the same TIFF tags no longer raises `KeyError`.** The
   metadata block indexes every frame with the first frame's tag keys, so a tag present in one frame

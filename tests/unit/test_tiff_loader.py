@@ -583,6 +583,16 @@ def test_the_routing_covers_every_pillow_decode_that_transforms_values():
     16- and 32-bit frame, all real detector data, down tifffile's faster path -- and every
     transforming entry is routed to Pillow. If a future Pillow adds an inverting mode at 16 bits,
     this fails instead of a stack quietly loading 65535-x.
+
+    **This covers Pillow's raw decoder only, and saying otherwise is what hid a real difference.**
+    ``OPEN_INFO`` governs the uncompressed path. Every *compressed* file goes through Pillow's
+    libtiff decoder instead, which does not consult this table and which ignores the file's byte
+    order for modes ``I`` and ``F``. An earlier version of this docstring claimed enumerating the
+    table "enumerates the whole risk of the decoder swap" and dismissed the byte-order flag as
+    storage rather than a transform; both are true of the raw path and false of the libtiff one, so
+    the big-endian compressed case in
+    ``test_big_endian_compressed_frames_load_the_stored_samples`` went unnoticed until a
+    pre-release audit found it.
     """
     from PIL import TiffImagePlugin
 
@@ -618,6 +628,46 @@ def test_the_routing_covers_every_pillow_decode_that_transforms_values():
         if not _needs_pillow_pixels({262: photometric, 258: bits, 339: sample_format})
     ]
     assert not unrouted, f"Pillow transforms these but the loader sends them to tifffile: {sorted(set(unrouted))}"
+
+
+@pytest.mark.parametrize("dtype", ["int16", "int32", "float32"])
+@pytest.mark.parametrize("compression", ["deflate", "lzma", "zstd"])
+def test_big_endian_compressed_frames_load_the_stored_samples(tmp_path, dtype, compression):
+    """A big-endian compressed frame loads its stored values, which it did not before 2.5.0.
+
+    This is the one case where the decoder swap *did* change what a file loads as, and it changed
+    it in the right direction. Pillow routes every compressed file through its libtiff decoder,
+    which ignores the file's byte order for modes ``I`` and ``F``, so a big-endian int16, int32 or
+    float32 frame came back byte-swapped: a stored 0, 3, 6, 10 read as 0, 768, 1536, 2560 at int16.
+    tifffile honours the byte order, so the same file now loads correctly.
+
+    Only big-endian *compressed* frames are affected — uncompressed ones go through the raw
+    decoder, which does honour byte order, and uint16 carries its order in the rawmode (``I;16B``).
+    Measured across 64 dtype/byte-order/compression combinations: 9 differ, all of this shape, and
+    none is a regression.
+
+    The harness that checked compatibility for this release had no big-endian variant, which is why
+    this needed an audit to find; see the note in
+    ``test_the_routing_covers_every_pillow_decode_that_transforms_values`` for the reasoning error
+    behind that gap.
+    """
+    import tifffile
+
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    stored = np.array([[0, 3, 6, 10]], dtype=dtype)
+    p = tmp_path / f"be_{dtype}_{compression}.tif"
+    tifffile.imwrite(
+        p,
+        stored.astype(">" + np.dtype(dtype).str[1:]),
+        photometric="minisblack",
+        compression=compression,
+        byteorder=">",
+    )
+
+    da = load_tiff_stack([p])
+
+    np.testing.assert_allclose(da.values[0, 0], stored[0].astype(np.float32))
 
 
 def test_a_planar_multisample_file_is_rejected(tmp_path):
