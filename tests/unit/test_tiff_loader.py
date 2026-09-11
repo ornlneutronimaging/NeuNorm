@@ -268,20 +268,23 @@ def test_parallel_decode_propagates_a_failed_read(tmp_path):
 # --------------------------------------------------------------------------------------
 # what the decoder swap must NOT change
 #
-# tifffile replaced Pillow for the pixels, and these are the file kinds where the two disagree.
-# Each case is compared against a value written into the file, not against another run of this
-# loader: a test that runs the new implementation twice cannot see a change relative to the old
-# one, which is the whole risk of a decoder swap.
+# This loader replaced a Pillow-only read. Every file that loaded before must still load, with
+# the same values, dtype, shape and published coordinates. Where Pillow and tifffile disagree,
+# Pillow wins -- including where Pillow is, on its own merits, wrong: it rescales sub-byte depths,
+# inverts WhiteIsZero, reads signed 8-bit as unsigned, and applies an Orientation tag. Reproducing
+# those is the point. Whether any of them should change is a separate decision.
+#
+# Each expected value below was measured by loading the same file through the pre-change loader,
+# so these are an independent oracle rather than another run of the code under test.
 # --------------------------------------------------------------------------------------
 
 
 def test_lzw_compressed_files_still_load(tmp_path):
-    """LZW is decoded by Pillow, because tifffile delegates it to a package NeuNorm does not have.
+    """LZW must keep loading: tifffile cannot decode it here, so Pillow does.
 
-    tifffile hands LZW, JPEG and CCITT to the optional ``imagecodecs``; without it, ``asarray()``
-    raises ``ValueError: <COMPRESSION.LZW: 5> requires the 'imagecodecs' package``. LZW is what
-    ImageJ/Fiji, MATLAB and Pillow can all write, so a re-saved frame would otherwise stop loading
-    outright. Written with Pillow because tifffile cannot even encode LZW here.
+    tifffile hands LZW, JPEG and CCITT to the optional ``imagecodecs``; without it ``asarray()``
+    raises and the loader falls back. LZW is a compression ImageJ/Fiji, MATLAB and Pillow can all
+    write, so a re-saved stack would otherwise have stopped loading outright.
     """
     from PIL import Image
 
@@ -316,12 +319,11 @@ def test_packbits_and_deflate_still_load(tmp_path):
 
 
 def test_whiteiszero_8bit_keeps_its_inverted_values(tmp_path):
-    """An 8-bit WhiteIsZero file must load inverted, as Pillow loaded it.
+    """An 8-bit WhiteIsZero file loads inverted, as Pillow loaded it.
 
-    Pillow inverts the samples for photometric 0 at 8 bits and below — a stored 0 loads as 255 —
-    and tifffile returns them raw. Counts become the Poisson variances, so taking tifffile's values
-    here would silently change both the data and its stated uncertainty. Asserted against the
-    stored value, so it fails if the frame is ever decoded raw.
+    Pillow inverts the samples for photometric 0 at 8 bits and below -- a stored 10 becomes 245 --
+    and tifffile returns them raw. Those counts become the Poisson variances, so taking tifffile's
+    values here would change the data and its stated uncertainty together.
     """
     import tifffile
 
@@ -338,13 +340,8 @@ def test_whiteiszero_8bit_keeps_its_inverted_values(tmp_path):
 def test_whiteiszero_16bit_is_not_inverted(tmp_path):
     """At 16 bits neither library inverts, so neither may this loader.
 
-    This is what stops anyone "simplifying" the branch into an unconditional inversion on
-    photometric 0, which would corrupt every 16-bit WhiteIsZero frame.
-
-    It does **not** pin the `BitsPerSample <= 8` half of the routing condition. Verified by
-    mutation: dropping that condition sends 16-bit WhiteIsZero frames down the Pillow path too, and
-    Pillow returns the same values at that depth, so this test still passes. That mutant is
-    equivalent on values — it only costs tifffile's faster decode — which is why no test forbids it.
+    This forbids turning the routing into an unconditional inversion on photometric 0, which would
+    corrupt every 16-bit WhiteIsZero frame.
     """
     import tifffile
 
@@ -358,74 +355,12 @@ def test_whiteiszero_16bit_is_not_inverted(tmp_path):
     np.testing.assert_allclose(da.values[0], 10.0)
 
 
-@pytest.mark.parametrize(
-    "shape",
-    [(4, 6), (6, 6)],
-    ids=["non-square", "square"],
-)
-@pytest.mark.parametrize("orientation", [2, 3, 4, 5, 6, 7, 8])
-def test_orientation_tagged_file_loads_the_stored_raster(tmp_path, shape, orientation):
-    """An Orientation tag no longer reorders pixels, and is published instead. Deliberate.
-
-    **Mostly this removes a rotation that was correct, rather than repairing a broken one.**
-    Measured against ``np.rot90`` and its transposing equivalents over all eight values, square
-    and non-square: Pillow's raw decoder is exact for a square raster at every value, and for any
-    raster at the shape-preserving values 2, 3 and 4. It is a mis-strided read only at 5, 6, 7 and
-    8 on a non-square raster, where it swaps width and height from the tag before decoding.
-    Pillow's libtiff decoder, which handles compressed files, is exact in every combination.
-
-    Returning the stored raster is wanted regardless: this project applies orientation once at the
-    end for display and never implicitly inside the pipeline, and the tag is published so that
-    display step still has it. But because Pillow was right in most combinations, a stack can now
-    load un-rotated relative to 2.4.0 — a visible change, not merely a repair.
-
-    Parametrised over both shapes and every orientation value that does anything, because the
-    first version of this test used 4x6 at orientations 3, 6 and 8 and generalised from it to
-    "only 6 or 8" — which review showed was wrong, since 5 and 7 mis-stride too.
-    """
-    import tifffile
-
-    from neunorm.loaders.tiff_loader import load_tiff_stack
-
-    p = tmp_path / f"orient{orientation}.tif"
-    stored = np.arange(shape[0] * shape[1], dtype=np.uint16).reshape(shape)
-    tifffile.imwrite(p, stored, photometric="minisblack", extratags=[(274, "H", 1, orientation, True)])
-
-    da = load_tiff_stack([p])
-
-    assert da.data.shape == (1, *shape)
-    np.testing.assert_allclose(da.values[0], stored.astype(np.float32))
-    assert da.coords["Orientation"].values == orientation
-
-
-def test_an_oriented_file_needing_the_pillow_decoder_is_rejected(tmp_path):
-    """The one combination with no good answer fails loudly rather than guessing.
-
-    An LZW frame can only be decoded by Pillow here, and Pillow applies the Orientation tag as it
-    decodes. On this path it applies it *correctly* — measured, its libtiff decoder returns an exact
-    ``np.rot90`` at every orientation and shape — but it cannot be asked for the un-rotated raster,
-    which is what this loader publishes for every other file. Inverting the rotation afterwards
-    would mean knowing which of Pillow's decoders ran, since its raw decoder mis-strides the same
-    tag instead of rotating, and that guess is what refusing avoids.
-    """
-    from PIL import Image
-
-    from neunorm.loaders.tiff_loader import load_tiff_stack
-
-    p = tmp_path / "lzw_oriented.tif"
-    Image.fromarray(np.arange(24, dtype=np.uint16).reshape(4, 6)).save(p, compression="tiff_lzw", tiffinfo={274: 6})
-
-    with pytest.raises(ValueError, match="Orientation"):
-        load_tiff_stack([p])
-
-
 def _write_raw_tiff(path, width, height, bits, payload, *, photometric=1, sample_format=1, extras=(), omit=()):
-    """A minimal little-endian single-strip TIFF, for depths no library here can encode.
+    """A minimal little-endian single-strip TIFF, for variants no library here can encode.
 
-    tifffile refuses to write 2-, 4- and 12-bit samples without ``imagecodecs``, and Pillow will
-    not write them either, so a fixture for those depths has to be assembled by hand. ``omit``
-    leaves out tags by code, which is the only way to build a file *missing* a tag both libraries
-    always write.
+    tifffile refuses to write 2-, 4- and 12-bit samples without ``imagecodecs``, Pillow will not
+    write them or int8 at all, and both always write a photometric tag -- so fixtures for those
+    have to be assembled by hand. ``omit`` leaves out tags by code.
     """
     import struct
 
@@ -459,12 +394,11 @@ def _write_raw_tiff(path, width, height, bits, payload, *, photometric=1, sample
 
 
 def test_twelve_bit_packed_samples_load_exactly(tmp_path):
-    """A 12-bit packed frame must load, with its stored counts, through the Pillow fallback.
+    """A 12-bit packed frame keeps loading, with its stored counts.
 
     12 bits is an ordinary CCD/CMOS depth. tifffile cannot unpack non-byte-aligned samples without
-    `imagecodecs` — it raises NotImplementedError, which is not even a ValueError — and Pillow
-    decodes them exactly. This is the case that made predicting tifffile's failures the wrong
-    design: it is not a compression code, so no list of codecs would have caught it.
+    `imagecodecs` -- it raises NotImplementedError, which is not even a ValueError -- and Pillow
+    decodes them exactly.
     """
     from neunorm.loaders.tiff_loader import load_tiff_stack
 
@@ -482,24 +416,16 @@ def test_twelve_bit_packed_samples_load_exactly(tmp_path):
     np.testing.assert_allclose(da.values[0, 0], np.array(values, dtype=np.float32))
 
 
-@pytest.mark.parametrize("bits", [2, 4])
-def test_two_and_four_bit_samples_never_load_altered(tmp_path, bits):
-    """A 2- or 4-bit frame must either load its stored counts or be refused — never be rescaled.
+@pytest.mark.parametrize(("bits", "scale"), [(2, 85), (4, 17)])
+def test_sub_byte_depths_keep_pillow_rescaling(tmp_path, bits, scale):
+    """2- and 4-bit frames keep loading rescaled, exactly as before.
 
-    Measured on hand-written files: Pillow rescales these to the full 8-bit range, so a 4-bit
-    0,1,2,3,4,5 comes back as 0,17,34,51,68,85 (x17) and a 2-bit 0,1,2,3 as 0,85,170,255 (x85),
-    and the previous loader returned those silently, straight into the Poisson variances.
-
-    **Which of the two acceptable outcomes happens depends on the environment, and this test says
-    so rather than quietly assuming one.** tifffile unpacks non-byte-aligned samples only with the
-    optional ``imagecodecs`` package, which is not a NeuNorm dependency. Without it tifffile
-    raises, the Pillow fallback is reached, and the loader refuses. With it installed tifffile
-    returns the stored counts and the refusal never fires — the better outcome, not a hole.
-    Asserting only the refusal would have made this a statement about which packages happen to be
-    installed, which is what it was before.
+    Pillow expands sub-byte samples to the full 8-bit range, so 2-bit 0,1,2,3 loads as
+    0,85,170,255 and 4-bit is x17. Those counts feed the Poisson variances, so the rescaling is
+    arguably wrong -- but it is what these files have always loaded as, and a change whose purpose
+    is decoding speed does not get to alter it. Briefly, this branch refused such files instead;
+    that broke input that used to work, which is why the expected values here are Pillow's.
     """
-    import importlib.util
-
     from neunorm.loaders.tiff_loader import load_tiff_stack
 
     per_byte = 8 // bits
@@ -508,25 +434,60 @@ def test_two_and_four_bit_samples_never_load_altered(tmp_path, bits):
     p = tmp_path / f"b{bits}.tif"
     _write_raw_tiff(p, per_byte, 1, bits, payload)
 
-    if importlib.util.find_spec("imagecodecs") is None:
-        with pytest.raises(ValueError, match=f"{bits}-bit samples cannot be decoded"):
-            load_tiff_stack([p])
-    else:
-        da = load_tiff_stack([p])
-        np.testing.assert_allclose(da.values[0, 0], np.array(stored, dtype=np.float32))
+    da = load_tiff_stack([p])
+
+    np.testing.assert_allclose(da.values[0, 0], np.array(stored, dtype=np.float32) * scale)
+
+
+def test_one_bit_frames_are_not_rescaled(tmp_path):
+    """The control for the sub-byte case: 1-bit is faithful in both readers, so it must stay 0/1."""
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    p = tmp_path / "b1.tif"
+    _write_raw_tiff(p, 8, 1, 1, bytes((0b01101001,)))
+
+    da = load_tiff_stack([p])
+
+    np.testing.assert_allclose(da.values[0, 0], [0, 1, 1, 0, 1, 0, 0, 1])
+
+
+def test_signed_eight_bit_keeps_pillow_unsigned_reading(tmp_path):
+    """A signed 8-bit frame keeps loading as unsigned, exactly as before.
+
+    Pillow maps SampleFormat 2 at 8 bits to unsigned, so a stored -12 loads as 244. tifffile
+    returns -12, which the caller's non-negative-counts guard would reject -- turning a file that
+    used to load into an error. Routing it to Pillow keeps it loading. Whether 244 is a sensible
+    count is a real question, and a separate one.
+    """
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    p = tmp_path / "i8.tif"
+    _write_raw_tiff(p, 6, 1, 8, np.array([-12, -1, 0, 1, 100, 127], dtype=np.int8).tobytes(), sample_format=2)
+
+    da = load_tiff_stack([p])
+
+    np.testing.assert_allclose(da.values[0, 0], [244.0, 255.0, 0.0, 1.0, 100.0, 127.0])
+
+
+def test_signed_sixteen_bit_is_unaffected(tmp_path):
+    """The control for the depth test: at 16 bits both readers agree, so nothing is rerouted."""
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    p = tmp_path / "i16.tif"
+    _write_raw_tiff(p, 6, 1, 16, np.array([5, 10, 20, 30, 40, 50], dtype="<i2").tobytes(), sample_format=2)
+
+    da = load_tiff_stack([p])
+
+    np.testing.assert_allclose(da.values[0, 0], [5.0, 10.0, 20.0, 30.0, 40.0, 50.0])
 
 
 def test_an_absent_photometric_tag_is_treated_as_whiteiszero(tmp_path):
-    """A file with no PhotometricInterpretation tag must load inverted, as Pillow loaded it.
+    """A file with no PhotometricInterpretation tag keeps loading inverted, as Pillow loaded it.
 
-    Pillow defaults that tag to 0 — WhiteIsZero — and inverts at 8 bits and below; tifffile treats
-    absent as MinIsBlack and does not. The routing compared the raw tag against 0, which is False
-    for an absent tag, so such a frame took the tifffile path and came back un-inverted: a stored
-    0, 1, 2, 3 loaded as 255, 254, 253, 252 before and as 0, 1, 2, 3 after.
-
-    Pillow's own source attributes that default to real writers omitting a required tag, so this is
-    not a theoretical input. No existing fixture could reach it: `tifffile.imwrite` always writes
-    tag 262, which is why this one is hand-written with the tag omitted.
+    Pillow defaults that tag to 0 -- WhiteIsZero -- and inverts at 8 bits and below; tifffile
+    treats absent as MinIsBlack. Comparing the raw tag against 0 missed this, since an absent tag
+    reads as None. Pillow's own source attributes the default to real writers omitting a required
+    tag, so it is not a theoretical input, and no fixture written by tifffile can reach it.
     """
     from neunorm.loaders.tiff_loader import load_tiff_stack
 
@@ -540,17 +501,7 @@ def test_an_absent_photometric_tag_is_treated_as_whiteiszero(tmp_path):
 
 
 def test_an_absent_photometric_tag_is_not_inverted_at_sixteen_bits(tmp_path):
-    """The control: Pillow only inverts WhiteIsZero at 8 bits and below, so 16-bit must not flip.
-
-    This forbids turning the routing into an unconditional inversion on photometric 0, which would
-    corrupt every 16-bit frame whose photometric tag is absent or 0.
-
-    It does **not** pin the ``BitsPerSample <= 8`` half of the routing condition. Verified by
-    mutation: dropping that half sends these frames down the Pillow path as well, and Pillow
-    returns the same values at 16 bits, so this test still passes. Equivalent on values — it only
-    costs tifffile's faster decode — which is why no test forbids it. Same finding as
-    test_whiteiszero_16bit_is_not_inverted.
-    """
+    """The control: Pillow only inverts WhiteIsZero at 8 bits and below, so 16-bit must not flip."""
     from neunorm.loaders.tiff_loader import load_tiff_stack
 
     stored = np.array([0, 1, 2, 3, 1000, 40000], dtype=np.uint16)
@@ -562,110 +513,87 @@ def test_an_absent_photometric_tag_is_not_inverted_at_sixteen_bits(tmp_path):
     np.testing.assert_allclose(da.values[0, 0], stored.astype(np.float32))
 
 
-def test_a_tag_missing_from_some_frames_is_dropped_not_raised(tmp_path):
-    """A stack mixing frames with and without a tag must load, in either order.
+@pytest.mark.parametrize("shape", [(4, 6), (6, 6)], ids=["non-square", "square"])
+@pytest.mark.parametrize("orientation", [1, 2, 3, 4, 5, 6, 7, 8])
+def test_orientation_tagged_files_load_exactly_as_before(tmp_path, shape, orientation):
+    """An Orientation tag keeps being applied by Pillow, and keeps not becoming a coordinate.
 
-    The metadata block indexes every frame with frame 0's keys, so a tag frame 0 carries and a
-    later frame lacks escaped as a bare ``KeyError: 274`` from a public function. Orientation was
-    unreachable there until this loader stopped reading tags through Pillow's pixel load, which
-    deletes tag 274 as a side effect — so the failure is new, and it depended on file order:
-    oriented-first raised, plain-first silently dropped the coordinate. Both now drop it.
+    Pillow applies the tag while decoding and deletes it from ``tag_v2`` as a side effect, so the
+    previous loader returned reoriented pixels and never published ``Orientation``. Both halves are
+    reproduced: the pixels come from Pillow, and tag 274 is dropped from the published tags for
+    every file, including the ones tifffile decodes.
+
+    This branch briefly returned the stored raster instead and published the tag. That is arguably
+    the better behaviour -- this project applies orientation once at the end for display -- but it
+    silently changed the pixels of every orientation-tagged stack and added a coordinate to the
+    HDF5 product, which is not something a speed change gets to do. The expected array here is
+    whatever Pillow produces, exact rotation or mis-strided read alike.
     """
     import tifffile
+    from PIL import Image
+
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    stored = np.arange(shape[0] * shape[1], dtype=np.uint16).reshape(shape)
+    p = tmp_path / f"orient{orientation}.tif"
+    tifffile.imwrite(p, stored, photometric="minisblack", extratags=[(274, "H", 1, orientation, True)])
+
+    with Image.open(p) as img:
+        expected = np.asanyarray(img, dtype=np.float32)
+
+    da = load_tiff_stack([p])
+
+    np.testing.assert_allclose(da.values[0], expected)
+    assert "Orientation" not in da.coords, "the previous loader never published this tag"
+
+
+def test_an_oriented_lzw_file_still_loads(tmp_path):
+    """The combination that needs Pillow twice over -- for the codec and for the tag -- still loads.
+
+    An LZW frame can only be decoded by Pillow here, and it also carries an orientation. This
+    branch briefly refused it; it loaded before, so it loads now.
+    """
+    from PIL import Image
 
     from neunorm.loaders.tiff_loader import load_tiff_stack
 
     stored = np.arange(24, dtype=np.uint16).reshape(4, 6)
-    oriented = tmp_path / "a_oriented.tif"
-    plain = tmp_path / "b_plain.tif"
-    tifffile.imwrite(oriented, stored, photometric="minisblack", extratags=[(274, "H", 1, 1, True)])
-    tifffile.imwrite(plain, stored, photometric="minisblack")
+    p = tmp_path / "lzw_oriented.tif"
+    Image.fromarray(stored).save(p, compression="tiff_lzw", tiffinfo={274: 6})
 
-    for paths in ([oriented, plain], [plain, oriented]):
-        da = load_tiff_stack(paths)
-        assert da.data.shape == (2, 4, 6)
-        assert "Orientation" not in da.coords, "a tag missing from one frame must not be published"
+    with Image.open(p) as img:
+        expected = np.asanyarray(img, dtype=np.float32)
 
+    da = load_tiff_stack([p])
 
-def test_signed_eight_bit_is_rejected_on_the_pillow_path_too(tmp_path, monkeypatch):
-    """The signed-8-bit rejection must not depend on which decoder the file happens to need.
-
-    tifffile reads SampleFormat 2 correctly, so a stored -12 reaches the non-negative-counts guard
-    and is refused. But a file only Pillow can decode — LZW, say — never gets there, and Pillow
-    reads those samples as unsigned, so -12 would arrive as 244: a plausible count that passes
-    every downstream check. Review found that hole; this pins it shut.
-
-    The fallback is forced by making the tifffile decode raise, rather than by building an
-    LZW-compressed signed frame, because neither library here can write one — Pillow cannot encode
-    int8 at all. What is being tested is the branch, not the codec.
-    """
-    import tifffile as tifffile_module
-
-    from neunorm.loaders import tiff_loader
-    from neunorm.loaders.tiff_loader import load_tiff_stack
-
-    p = tmp_path / "i8.tif"
-    _write_raw_tiff(p, 6, 1, 8, np.array([-12, -1, 0, 1, 100, 127], dtype=np.int8).tobytes(), sample_format=2)
-
-    def refuse(*_args, **_kwargs):
-        raise tifffile_module.TiffFileError("simulated codec tifffile cannot handle")
-
-    monkeypatch.setattr(tiff_loader.tifffile, "TiffFile", refuse)
-
-    with pytest.raises(ValueError, match="signed 8-bit"):
-        load_tiff_stack([p])
-
-
-def test_signed_eight_bit_negative_counts_are_rejected_not_reinterpreted(tmp_path):
-    """A signed 8-bit frame with negative samples must raise, not load as large positive counts.
-
-    Pillow maps SampleFormat 2 at 8 bits to unsigned, so a stored -12 loaded as 244 and sailed
-    past the non-negative-counts guard as a plausible count. tifffile reads -12, the guard fires,
-    and that is the correct outcome: silently reinterpreting corrupt or mis-declared data as valid
-    counts is exactly what that guard exists to prevent. Deliberately not routed to Pillow.
-    """
-    from neunorm.loaders.tiff_loader import load_tiff_stack
-
-    p = tmp_path / "i8.tif"
-    _write_raw_tiff(p, 6, 1, 8, np.array([-12, -1, 0, 1, 100, 127], dtype=np.int8).tobytes(), sample_format=2)
-
-    with pytest.raises(ValueError, match="negative counts"):
-        load_tiff_stack([p])
+    np.testing.assert_allclose(da.values[0], expected)
 
 
 def test_the_routing_covers_every_pillow_decode_that_transforms_values():
     """The routing is complete against Pillow's own decision table, not just against a sweep.
 
-    Three review rounds each found another file kind where Pillow and tifffile disagree, because
-    each fix was aimed at the instance found rather than the class. This closes it from the other
-    end. Pillow decides how to decode a TIFF by looking
+    Pillow decides how to decode a TIFF by looking
     ``(byteorder, photometric, sampleformat, planarconfig, bitspersample, extrasamples)`` up in
     ``TiffImagePlugin.OPEN_INFO`` and taking the *rawmode* it finds. A rawmode whose suffix carries
-    ``I`` inverts the samples; one naming a sub-byte width (``L;2``, ``L;4``) expands them to full
-    range. Those are the only two ways Pillow's decode differs in value from returning the stored
-    samples, so enumerating that table enumerates the whole risk.
+    ``I`` inverts the samples; one naming a sub-byte width expands them to full range. Those are
+    the only two ways Pillow's decode differs in value from returning the stored samples, so
+    enumerating that table enumerates the whole risk of the decoder swap.
 
-    Two properties are asserted, and between them they are what the loader relies on:
-
-    1. **No entry transforms above 8 bits per sample.** This is what licenses the
-       ``BitsPerSample <= 8`` half of the routing condition — and therefore what licenses sending
-       every 16- and 32-bit frame, which is all real detector data, down tifffile's faster path.
-    2. **Every inverting entry is routed to Pillow** by `_needs_pillow_pixels`, or refused outright
-       for a depth where Pillow rescales.
-
-    If a future Pillow adds an inverting mode at 16 bits, or an inverting combination the predicate
-    does not match, this fails instead of a stack quietly loading 65535-x.
+    Asserted: no entry transforms above 8 bits per sample -- which is what licenses sending every
+    16- and 32-bit frame, all real detector data, down tifffile's faster path -- and every
+    transforming entry is routed to Pillow. If a future Pillow adds an inverting mode at 16 bits,
+    this fails instead of a stack quietly loading 65535-x.
     """
     from PIL import TiffImagePlugin
 
-    from neunorm.loaders.tiff_loader import _UNLOADABLE_BIT_DEPTHS, _needs_pillow_pixels
+    from neunorm.loaders.tiff_loader import _needs_pillow_pixels
 
     def transforms(rawmode: str) -> bool:
         """Whether this rawmode's output differs in value from the stored samples.
 
         A rawmode is ``mode`` optionally followed by ``;<width><flags>``. Only two flags change
         values: ``I`` inverts, and a declared width of 2 or 4 expands sub-byte samples to full
-        range. ``F``/``B``/``N``/``R`` are float, byte order and fill order — how the samples are
+        range. ``F``/``B``/``N``/``R`` are float, byte order and fill order -- how the samples are
         stored, not a transform of them. The width must be parsed as a number, not searched for as
         a substring: ``F;32F`` and ``I;12`` both contain a "2".
         """
@@ -684,23 +612,20 @@ def test_the_routing_covers_every_pillow_decode_that_transforms_values():
         f"longer bounds the risk: {sorted(above_eight.items())[:3]}"
     )
 
-    unrouted = []
-    for (_byteorder, photometric, sample_format, _planar, bits, _extra), (_mode, rawmode) in transforming.items():
-        tags = {262: photometric, 258: bits, 339: sample_format}
-        if _needs_pillow_pixels(tags) or bits[0] in _UNLOADABLE_BIT_DEPTHS:
-            continue
-        unrouted.append((photometric, sample_format, bits, rawmode))
+    unrouted = [
+        (photometric, sample_format, bits, rawmode)
+        for (_byteorder, photometric, sample_format, _planar, bits, _extra), (_mode, rawmode) in transforming.items()
+        if not _needs_pillow_pixels({262: photometric, 258: bits, 339: sample_format})
+    ]
     assert not unrouted, f"Pillow transforms these but the loader sends them to tifffile: {sorted(set(unrouted))}"
 
 
 def test_a_planar_multisample_file_is_rejected(tmp_path):
-    """A multi-sample TIFF is not a detector frame and must fail loudly, not load something.
+    """A multi-sample TIFF is not a detector frame and fails, as it did before.
 
-    This pins the rejection, not the routing. The two readers do disagree on such a file — Pillow
-    returns ``(y, x, sample)`` and tifffile ``(sample, y, x)`` — but the disagreement is invisible
-    from here: either way the frame is 3-D, the stack is 4-D, and the unpack raises the same error.
-    Verified by mutation: adding a routing clause for these files, then removing it again, leaves
-    this test passing both times, which is why the loader has no such clause.
+    The two readers disagree on axis order for ``PlanarConfiguration`` 2, but the disagreement is
+    invisible from here: either way the frame is 3-D, the stack is 4-D, and the unpack raises the
+    same error. This is not a new refusal -- the pre-change loader raised too.
     """
     import tifffile
 
@@ -716,6 +641,35 @@ def test_a_planar_multisample_file_is_rejected(tmp_path):
 
     with pytest.raises(ValueError, match="too many values to unpack"):
         load_tiff_stack([p])
+
+
+def test_a_tag_missing_from_some_frames_is_dropped_not_raised(tmp_path):
+    """A stack mixing frames with and without a tag loads, in either order.
+
+    The metadata block indexes every frame with frame 0's keys, so a tag frame 0 carries and a
+    later frame lacks escaped as a bare ``KeyError``. That is strictly more permissive than before
+    -- such a stack used to fail outright -- so it breaks nothing.
+    """
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    stored = np.arange(24, dtype=np.uint16).reshape(4, 6).tobytes()
+    tagged = tmp_path / "a_tagged.tif"
+    plain = tmp_path / "b_plain.tif"
+    # Hand-written, and each frame carries a tag the other lacks rather than one frame carrying an
+    # extra: that keeps the two IFDs the same size, so the strip offsets match. An IFD of a
+    # different size shifts StripOffsets between frames, which trips a separate pre-existing
+    # failure in the metadata block and would test the wrong thing. Having a tag missing in each
+    # direction also exercises both orders inside a single stack.
+    _write_raw_tiff(tagged, 6, 4, 16, stored, extras=[(254, 4, 1, 0)])
+    _write_raw_tiff(plain, 6, 4, 16, stored, extras=[(255, 4, 1, 1)])
+
+    results = [load_tiff_stack(paths) for paths in ([tagged, plain], [plain, tagged])]
+
+    for da in results:
+        assert da.data.shape == (2, 4, 6)
+    assert set(results[0].coords) == set(results[1].coords), "the published coordinates depended on file order"
+    for name in ("NewSubfileType", "SubfileType"):
+        assert name not in results[0].coords, f"{name} is in only one frame and must not be published"
 
 
 def test_max_workers_below_one_is_rejected(tmp_path):

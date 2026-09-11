@@ -9,101 +9,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Image stacks are loaded in parallel, and TIFF pixels no longer go through Pillow**
+- **Image stacks are loaded in parallel**
   ([#225](https://github.com/ornlneutronimaging/NeuNorm/issues/225)). `load_tiff_stack` and
   `load_fits_stack` decode frames on a thread pool into one pre-allocated array, each worker
   writing its own input index, so frame order — which becomes the TOF axis — is preserved by
   construction rather than by collecting results in order. A new keyword-only `max_workers` on both
-  loaders and on `load_stack` caps the pool size; it defaults to 8, and `max_workers=1` reads
-  serially. The actual pool is `min(max_workers, frames - 1)`, since frame 0 is decoded on the
-  calling thread. The four pipelines that load image stacks take the default; the two event
-  pipelines never decode one.
+  loaders and on `load_stack` caps the pool; it defaults to 8, and `max_workers=1` reads serially.
+  The actual pool is `min(max_workers, frames - 1)`, since frame 0 is decoded on the calling
+  thread. The four pipelines that load image stacks take the default; the two event pipelines never
+  decode one.
 
   TIFF pixels are now decoded by `tifffile`, which releases the GIL while decompressing and is
-  already installed by way of `scitiff`. The TIFF tags are still read with Pillow, because
-  tifffile's are not interchangeable: it reports `SampleFormat` as an `IntEnum` that converts under
-  `float()` and would silently turn a scalar coordinate into a per-frame array, and it reports
-  `BitsPerSample` as a scalar where Pillow gives a tuple. **Pillow also still decodes the pixels of
-  any frame tifffile cannot**, which is decided by trying tifffile and falling back rather than by
-  predicting: that covers the codecs tifffile hands to the optional `imagecodecs` package (LZW,
-  which ImageJ/Fiji, MATLAB and Pillow can all write, plus JPEG and CCITT), the floating-point predictor, chroma
-  subsampling, and 12-bit packed samples. One case where tifffile succeeds but disagrees is routed
-  explicitly: WhiteIsZero at 8 bits or fewer, where Pillow inverts the samples and tifffile does
-  not, which would change the counts and the Poisson variances derived from them together.
+  already installed by way of `scitiff` — now also declared explicitly, since it is imported
+  directly and a hand-maintained conda run-dependency table is exactly where a transitive-only
+  dependency goes missing unnoticed.
+
+  **Nothing about what a file loads as has changed.** Pillow and tifffile disagree about several
+  TIFF variants, and wherever they do, Pillow still decodes the pixels — WhiteIsZero at 8 bits or
+  fewer (including an absent `PhotometricInterpretation` tag, which Pillow defaults to 0), signed
+  samples at 8 bits or fewer, bit depths that are not a whole number of bytes, and any
+  `Orientation` tag other than 1. Pillow also decodes anything tifffile raises on, decided by
+  trying tifffile and falling back rather than by predicting: LZW, JPEG and CCITT compression, the
+  floating-point predictor, chroma subsampling and 12-bit packed samples. In several of those cases
+  what Pillow produces is arguably wrong — it rescales sub-byte depths, reads signed 8-bit as
+  unsigned, and applies an orientation this project would rather apply once at display time — and
+  it is reproduced anyway. Changing any of it is a separate decision, not one for a change whose
+  purpose is decoding speed. A compatibility harness covering 33 file variants, including all eight
+  orientation values square and non-square, reports zero differences against the previous loader.
 
   Pre-allocating also removes one of the roughly five full-size copies resident at peak. Measured
   on 100 uncompressed 1024x1024 frames, peak memory above baseline drops from about 5.4x the stack
-  to about 4.5x for TIFF and 5.3x to 4.5x for FITS. The whole call
-  is roughly 1.7x (TIFF) and 1.2x (FITS) faster; those are ratios rather than precise measurements,
-  since wall clock moves by around 20% between runs on the same machine. The decode alone
-  parallelises better than the whole call does — very roughly 2x on eight threads, varying with the
-  codec and strip layout —
-  with the remainder being allocation and copying, which threads do not help. All of it is
-  local warm-cache measurement; the per-file latency of a mounted analysis filesystem, which is
-  where users actually hit this, is not measured.
+  to about 4.5x for TIFF and 5.3x to 4.5x for FITS. The whole call is roughly 1.7x (TIFF) and 1.2x
+  (FITS) faster; those are ratios rather than precise measurements, since wall clock moves by around
+  20% between runs on the same machine. The decode alone parallelises better than the whole call
+  does — very roughly 2x on eight threads, varying with the codec and strip layout — with the
+  remainder being allocation and copying, which threads do not help. All of it is local warm-cache
+  measurement; the per-file latency of a mounted analysis filesystem, which is where users actually
+  hit this, is not measured.
 
   One caveat for that unmeasured case: `load_tiff_stack` now opens each file **twice** — Pillow for
   the tags, tifffile for the pixels — where before it opened once. Simulating a 10 ms round trip
   per open over 20 frames, the serial path costs 0.66 s against the old loader's 0.38 s, and only
   the thread pool turns that back into a win (0.15 s at eight workers). Reading the file once and
   parsing the buffer twice was tried and reverted: it cuts the open cost but raises peak memory
-  from 4.5x the stack to 5.0x, giving back most of the reduction above. `load_fits_stack` still
-  opens once. See `docs/progress.md`.
+  from 4.5x the stack to 5.0x. `load_fits_stack` still opens once. See `docs/progress.md`.
 
   Two visible changes to progress reporting, both deliberate: the per-file `detail` now names each
   file as its decode finishes rather than in input order (the count is unaffected and still runs
   1..n), and the `stacking` note is gone, because the stack build it announced no longer happens.
+  Cancelling from a progress callback now returns once the decodes already in flight finish, and
+  with more than one unreadable frame the one named in the error is whichever decode failed first.
 
 ### Fixed
 
-- **A TIFF carrying an `Orientation` tag now loads its stored raster, and publishes the tag.**
-  Pillow, which used to decode every frame, applies that tag on load, and how faithfully depends on
-  which of its decoders runs. Measured over all eight orientation values, square and non-square:
-  its libtiff decoder (compressed files) returns an exact transform every time, and its raw decoder
-  (uncompressed) is exact for a square raster at every value and for any raster at the
-  shape-preserving values 2, 3 and 4 — but at 5, 6, 7 and 8 on a non-square raster it swaps width
-  and height from the tag *before* decoding, reads the strips at the wrong width and returns
-  interleaved values in the original shape. Frames now come back in stored order in every case,
-  with `Orientation` available as a coordinate so a display step can apply it once, which is what
-  NeuNorm's rule about never reorienting implicitly inside the pipeline asks for.
-
-  **This changes the pixels such a stack loads with, and in most combinations it removes a rotation
-  that was correct rather than repairing a broken one.** Anything calibrated against the old
-  geometry — an ROI, a mask, a dark or open-beam image — has to be re-checked. Files with
-  `Orientation` 1 or no such tag load the same pixels as before, which covers everything the VENUS
-  and MARS writers produce and every fixture in this repository; `Orientation` 1 does now appear as
-  a coordinate where it did not before, because Pillow's pixel load deleted tag 274 before this
-  loader could see it. `MaskROI.from_file` still decodes with Pillow and so would apply an
-  orientation the data no longer has; because the shapes match on a square frame the mismatch would
-  be silent, so an orientation-tagged mask is now refused. A file that both needs the Pillow decoder
-  and carries an orientation is likewise rejected rather than loaded rotated.
-
-- **Signed 8-bit TIFFs no longer load negative counts as large positive ones.** Pillow maps
-  `SampleFormat` 2 at 8 bits to unsigned, so a stored -12 loaded as 244 and passed the
-  non-negative-counts check as a plausible count. Where tifffile decodes the frame it now reaches
-  that check as -12 and is rejected, which is what the check is for; where only Pillow can decode
-  it, the loader refuses it outright rather than letting the same 244 through by another route.
-
-- **2- and 4-bit TIFFs are refused instead of silently altered.** Pillow rescales them to the full
-  8-bit range — a 4-bit `0,1,2,3,4,5` came back as `0,17,34,51,68,85` and a 2-bit `0,1,2,3` as
-  `0,85,170,255` — and those values fed straight into the Poisson variances. Such a frame is now
-  refused *unless* tifffile can unpack it, which needs the optional `imagecodecs` package; with
-  `imagecodecs` installed it loads with its stored counts instead. 1-bit and 12-bit are faithful
-  and still load.
-
-- **A TIFF with no `PhotometricInterpretation` tag loads inverted again, as it did before.** Pillow
-  defaults that tag to 0 (WhiteIsZero) and inverts at 8 bits and below, while tifffile treats an
-  absent tag as MinIsBlack. A stored `0,1,2,3` loaded as `255,254,253,252` before and briefly as
-  `0,1,2,3` on this branch. Pillow's own source attributes that default to real writers omitting a
-  required tag.
-
-- **A stack mixing frames that carry a tag with frames that do not no longer raises `KeyError`.**
-  The metadata block indexes every frame with the first frame's tag keys. That could not be reached
-  for `Orientation` while tags were read through Pillow's pixel load, which deletes tag 274 as a
-  side effect; reading them separately exposed it, and such a stack failed with a bare
-  `KeyError: 274` if the tagged frame came first and silently dropped the coordinate if it came
-  second. Only tags present in every frame become coordinates now, in either order, with a warning
-  naming what was dropped.
+- **A stack whose frames do not all carry the same TIFF tags no longer raises `KeyError`.** The
+  metadata block indexes every frame with the first frame's tag keys, so a tag present in one frame
+  and absent from another escaped as a bare `KeyError: <tag code>`. Only tags present in every frame
+  become coordinates now, in either file order, with a warning naming what was dropped.
 
 ## [2.4.0] - 2026-08-26
 

@@ -191,13 +191,13 @@ class TestMaskROIFromFile:
         Image.fromarray(rgb).save(path)
         assert MaskROI.from_file(path) == MaskROI(selection=_block_selection())
 
-    def test_an_orientation_tagged_mask_is_refused(self, tmp_path):
-        """A rotated mask must fail, not silently select the wrong pixels.
+    def test_an_orientation_tagged_mask_matches_the_data_geometry(self, tmp_path):
+        """A rotated mask stays in the same geometry as the frames it selects from.
 
-        Pillow applies a TIFF Orientation tag when it decodes, and the image loaders deliberately
-        do not — they return the stored raster and publish the tag for a display step. On a square
-        frame, which is every real detector frame, an applied rotation and an unapplied one have
-        the *same shape*, so nothing would raise and the ROI would simply cover the wrong region.
+        Pillow applies a TIFF Orientation tag when it decodes, here and in the image loaders
+        alike, so both sides are reoriented the same way. This branch briefly refused such masks
+        while the loaders returned the stored raster instead; both changes are reverted, so a mask
+        that loaded before still loads and still corresponds to its data.
         """
         from PIL import Image
 
@@ -206,18 +206,10 @@ class TestMaskROIFromFile:
         path = tmp_path / "mask_oriented.tiff"
         Image.fromarray(sel).save(path, tiffinfo={274: 6})
 
-        with pytest.raises(ValueError, match="Orientation tag"):
-            MaskROI.from_file(path)
+        with Image.open(path) as img:
+            expected = np.asarray(img)
 
-    def test_an_orientation_tag_of_one_is_accepted(self, tmp_path):
-        """Orientation 1 means "as stored", so it is not a conflict and must not be refused."""
-        from PIL import Image
-
-        sel = _block_selection(dtype=np.uint8) * 255
-        path = tmp_path / "mask_orient1.tiff"
-        Image.fromarray(sel).save(path, tiffinfo={274: 1})
-
-        assert MaskROI.from_file(path) == MaskROI(selection=sel)
+        assert MaskROI.from_file(path) == MaskROI(selection=expected)
 
 
 class TestMaskROIFromDataArrayMask:
