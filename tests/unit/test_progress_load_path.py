@@ -186,9 +186,6 @@ def test_load_stack_passes_progress_to_whichever_leaf_it_picks(paths_fn):
     load_stack(paths, progress=sink, stage=STAGE_LOAD_DARK)
 
     assert [e.completed for e in events if e.detail in names] == [1, 2, 3]
-    assert set(load_stack(set(paths)).sizes) == set(load_stack(paths).sizes), (
-        "the dispatcher must materialise a sized-but-unindexable collection, as the leaves do"
-    )
     assert {e.stage for e in events} == {STAGE_LOAD_DARK}
 
 

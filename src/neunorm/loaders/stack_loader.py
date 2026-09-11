@@ -47,9 +47,15 @@ def load_stack(
     """
 
     # Materialise before indexing: this function subscripts `paths[0]` and iterates it twice, so a
-    # generator would raise TypeError, and a set -- sized but unindexable -- would too. The leaf
-    # loaders accept both, so this does as well.
-    if not hasattr(paths, "__len__") or not hasattr(paths, "__getitem__"):
+    # generator would raise TypeError. The leaf loaders accept one, so this does too.
+    #
+    # Deliberately NOT widened to cover a sized-but-unindexable collection such as a `set`. That
+    # was tried and reverted: it turns `TypeError: 'set' object is not subscriptable` into a
+    # successful load whose frame order comes from the hash seed, and frame order is the spectral
+    # axis -- measured, four processes produced four different stacks from the same set, each
+    # pairing 9 of 10 frames with the wrong TOF, none of them warning. A loud rejection is worth
+    # more than a plausible-looking wrong spectrum, and it is what this function already did.
+    if not hasattr(paths, "__len__"):
         paths = list(paths)
 
     if not paths:

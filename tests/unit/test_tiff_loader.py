@@ -724,11 +724,19 @@ def test_max_workers_rejects_values_that_are_not_a_worker_count(tmp_path):
     assert sc.identical(load_tiff_stack(paths, max_workers=np.int64(2)), load_tiff_stack(paths, max_workers=2))
 
 
-def test_a_set_of_paths_still_loads(tmp_path):
-    """A sized-but-unindexable collection must still work: the decode addresses frames by index.
+def test_a_set_of_paths_loads_but_in_no_defined_order(tmp_path):
+    """A set is accepted, as it was before, and its frame order is NOT meaningful.
 
-    The pre-parallel loaders only iterated `paths`, so a set worked. `_decode_stack` subscripts it,
-    and a guard testing only for `__len__` let a set through to a TypeError.
+    This pins compatibility, not a recommendation. The pre-change loader iterated ``paths`` without
+    subscripting, so a set was accepted and its frames came out in hash order; ``_decode_stack``
+    addresses frames by index, so the guard materialises one to keep that working. What neither
+    version does is *order* it: frame order is the spectral axis, and a set's iteration order varies
+    between processes, so the same set yields a different stack each run and pairs frames with the
+    wrong TOF.
+
+    The assertion is therefore on the multiset, which is all that is defined here. ``load_stack``
+    rejects a set outright and is deliberately left that way -- see the comment there. Callers
+    should pass a sorted sequence, as every fixture and pipeline in this repository does.
     """
     from neunorm.loaders.tiff_loader import load_tiff_stack
 
@@ -737,5 +745,4 @@ def test_a_set_of_paths_still_loads(tmp_path):
     da = load_tiff_stack(set(paths), max_workers=2)
 
     assert da.data.shape == (4, 3, 4)
-    # A set has no order, so only the multiset of frame values is defined here.
     assert sorted(da.values[:, 0, 0]) == [0.0, 1.0, 2.0, 3.0]
