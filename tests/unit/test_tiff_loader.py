@@ -280,7 +280,7 @@ def test_lzw_compressed_files_still_load(tmp_path):
 
     tifffile hands LZW, JPEG and CCITT to the optional ``imagecodecs``; without it, ``asarray()``
     raises ``ValueError: <COMPRESSION.LZW: 5> requires the 'imagecodecs' package``. LZW is what
-    ImageJ/Fiji, MATLAB and Pillow write, so a re-saved stack would otherwise stop loading
+    ImageJ/Fiji, MATLAB and Pillow can all write, so a re-saved frame would otherwise stop loading
     outright. Written with Pillow because tifffile cannot even encode LZW here.
     """
     from PIL import Image
@@ -363,26 +363,25 @@ def test_whiteiszero_16bit_is_not_inverted(tmp_path):
     [(4, 6), (6, 6)],
     ids=["non-square", "square"],
 )
-@pytest.mark.parametrize("orientation", [3, 6, 8])
+@pytest.mark.parametrize("orientation", [2, 3, 4, 5, 6, 7, 8])
 def test_orientation_tagged_file_loads_the_stored_raster(tmp_path, shape, orientation):
     """An Orientation tag no longer reorders pixels, and is published instead. Deliberate.
 
-    **The square case is the one that matters and it is not a bug fix.** Measured against
-    ``np.rot90``, Pillow's decode of an oriented file is a *correct* rotation whenever the raster
-    is square — which is every real detector frame — and also at orientation 3 for any shape. It
-    is a mis-strided read only at orientation 6 and 8 on a non-square raster, where it swaps width
-    and height from the tag before decoding. So for square frames this change removes a rotation
-    that was right, and for non-square 6/8 it un-scrambles one that was not.
+    **Mostly this removes a rotation that was correct, rather than repairing a broken one.**
+    Measured against ``np.rot90`` and its transposing equivalents over all eight values, square
+    and non-square: Pillow's raw decoder is exact for a square raster at every value, and for any
+    raster at the shape-preserving values 2, 3 and 4. It is a mis-strided read only at 5, 6, 7 and
+    8 on a non-square raster, where it swaps width and height from the tag before decoding.
+    Pillow's libtiff decoder, which handles compressed files, is exact in every combination.
 
-    Both are wanted for the same reason: this project applies orientation once at the end for
-    display and never implicitly inside the pipeline, and the tag is published so that display step
-    still has it. But the square case means a stack can now load un-rotated relative to 2.4.0,
-    which is a visible change and not merely a repair.
+    Returning the stored raster is wanted regardless: this project applies orientation once at the
+    end for display and never implicitly inside the pipeline, and the tag is published so that
+    display step still has it. But because Pillow was right in most combinations, a stack can now
+    load un-rotated relative to 2.4.0 — a visible change, not merely a repair.
 
-    Parametrised over both shapes and all three interesting orientation values so the guarantee is
-    "the stored raster, always" rather than an accident of one fixture — the original version of
-    this test used a 4x6 frame at orientation 6, the single combination that flattered the
-    mis-striding explanation.
+    Parametrised over both shapes and every orientation value that does anything, because the
+    first version of this test used 4x6 at orientations 3, 6 and 8 and generalised from it to
+    "only 6 or 8" — which review showed was wrong, since 5 and 7 mis-stride too.
     """
     import tifffile
 
@@ -487,9 +486,9 @@ def test_twelve_bit_packed_samples_load_exactly(tmp_path):
 def test_two_and_four_bit_samples_never_load_altered(tmp_path, bits):
     """A 2- or 4-bit frame must either load its stored counts or be refused — never be rescaled.
 
-    Measured on hand-written files: Pillow rescales these to full range, so a 4-bit 0,1,2,3,4,5
-    comes back as 0,17,34,51,68,85 and a 2-bit ramp as all zeros, and the previous loader returned
-    those silently, straight into the Poisson variances.
+    Measured on hand-written files: Pillow rescales these to the full 8-bit range, so a 4-bit
+    0,1,2,3,4,5 comes back as 0,17,34,51,68,85 (x17) and a 2-bit 0,1,2,3 as 0,85,170,255 (x85),
+    and the previous loader returned those silently, straight into the Poisson variances.
 
     **Which of the two acceptable outcomes happens depends on the environment, and this test says
     so rather than quietly assuming one.** tifffile unpacks non-byte-aligned samples only with the
@@ -586,6 +585,35 @@ def test_a_tag_missing_from_some_frames_is_dropped_not_raised(tmp_path):
         da = load_tiff_stack(paths)
         assert da.data.shape == (2, 4, 6)
         assert "Orientation" not in da.coords, "a tag missing from one frame must not be published"
+
+
+def test_signed_eight_bit_is_rejected_on_the_pillow_path_too(tmp_path, monkeypatch):
+    """The signed-8-bit rejection must not depend on which decoder the file happens to need.
+
+    tifffile reads SampleFormat 2 correctly, so a stored -12 reaches the non-negative-counts guard
+    and is refused. But a file only Pillow can decode — LZW, say — never gets there, and Pillow
+    reads those samples as unsigned, so -12 would arrive as 244: a plausible count that passes
+    every downstream check. Review found that hole; this pins it shut.
+
+    The fallback is forced by making the tifffile decode raise, rather than by building an
+    LZW-compressed signed frame, because neither library here can write one — Pillow cannot encode
+    int8 at all. What is being tested is the branch, not the codec.
+    """
+    import tifffile as tifffile_module
+
+    from neunorm.loaders import tiff_loader
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    p = tmp_path / "i8.tif"
+    _write_raw_tiff(p, 6, 1, 8, np.array([-12, -1, 0, 1, 100, 127], dtype=np.int8).tobytes(), sample_format=2)
+
+    def refuse(*_args, **_kwargs):
+        raise tifffile_module.TiffFileError("simulated codec tifffile cannot handle")
+
+    monkeypatch.setattr(tiff_loader.tifffile, "TiffFile", refuse)
+
+    with pytest.raises(ValueError, match="signed 8-bit"):
+        load_tiff_stack([p])
 
 
 def test_signed_eight_bit_negative_counts_are_rejected_not_reinterpreted(tmp_path):

@@ -74,7 +74,7 @@ def _decode_stack(
     construction rather than by collecting results carefully. Nothing here depends on the order
     in which decodes finish.
 
-    Pre-allocating also removes one of the three full-size copies the serial version held. It
+    Pre-allocating also removes one of the roughly five full-size copies resident at peak. It
     built a list of ``n`` frames, stacked that into a second copy, then copied the result for the
     variances; decoding straight into ``out`` collapses the first two into one, leaving the output
     and the variances copy, with only the in-flight decode buffers on top. One copy, not two: the

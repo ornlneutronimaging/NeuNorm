@@ -14,27 +14,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `load_fits_stack` decode frames on a thread pool into one pre-allocated array, each worker
   writing its own input index, so frame order — which becomes the TOF axis — is preserved by
   construction rather than by collecting results in order. A new keyword-only `max_workers` on both
-  loaders and on `load_stack` sets the pool size; it defaults to 8, and `max_workers=1` reads
-  serially. The pipelines take the default.
+  loaders and on `load_stack` caps the pool size; it defaults to 8, and `max_workers=1` reads
+  serially. The actual pool is `min(max_workers, frames - 1)`, since frame 0 is decoded on the
+  calling thread. The four pipelines that load image stacks take the default; the two event
+  pipelines never decode one.
 
   TIFF pixels are now decoded by `tifffile`, which releases the GIL while decompressing and is
   already installed by way of `scitiff`. The TIFF tags are still read with Pillow, because
   tifffile's are not interchangeable: it reports `SampleFormat` as an `IntEnum` that converts under
-  `float()` and would silently turn a scalar coordinate into a per-frame array, and it does not know
-  tag 1 at all, which Pillow publishes as `InteropIndex`. **Pillow also still decodes the pixels of
+  `float()` and would silently turn a scalar coordinate into a per-frame array, and it reports
+  `BitsPerSample` as a scalar where Pillow gives a tuple. **Pillow also still decodes the pixels of
   any frame tifffile cannot**, which is decided by trying tifffile and falling back rather than by
-  predicting: that covers the codecs tifffile hands to the optional `imagecodecs` package (LZW —
-  what ImageJ/Fiji and MATLAB write — plus JPEG and CCITT), the floating-point predictor, chroma
+  predicting: that covers the codecs tifffile hands to the optional `imagecodecs` package (LZW,
+  which ImageJ/Fiji, MATLAB and Pillow can all write, plus JPEG and CCITT), the floating-point predictor, chroma
   subsampling, and 12-bit packed samples. One case where tifffile succeeds but disagrees is routed
   explicitly: WhiteIsZero at 8 bits or fewer, where Pillow inverts the samples and tifffile does
   not, which would change the counts and the Poisson variances derived from them together.
 
-  Pre-allocating also removes one of the three full-size copies the loaders used to hold. Measured
-  on 100 uncompressed 1024x1024 frames, peak memory drops from 5.37x the stack to 4.45x for TIFF and
-  from 5.26x to 4.46x for FITS — figures that reproduce to within 0.03x between runs. The whole call
+  Pre-allocating also removes one of the roughly five full-size copies resident at peak. Measured
+  on 100 uncompressed 1024x1024 frames, peak memory above baseline drops from about 5.4x the stack
+  to about 4.5x for TIFF and 5.3x to 4.5x for FITS. The whole call
   is roughly 1.7x (TIFF) and 1.2x (FITS) faster; those are ratios rather than precise measurements,
   since wall clock moves by around 20% between runs on the same machine. The decode alone
-  parallelises better than the whole call does — about 2x on eight threads for compressed TIFF —
+  parallelises better than the whole call does — very roughly 2x on eight threads, varying with the
+  codec and strip layout —
   with the remainder being allocation and copying, which threads do not help. All of it is
   local warm-cache measurement; the per-file latency of a mounted analysis filesystem, which is
   where users actually hit this, is not measured. See `docs/progress.md`.
@@ -47,34 +50,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A TIFF carrying an `Orientation` tag now loads its stored raster, and publishes the tag.**
   Pillow, which used to decode every frame, applies that tag on load, and how faithfully depends on
-  which of its decoders runs. Measured against `np.rot90`: its libtiff decoder (compressed files)
-  returns an exact rotation at every orientation value and shape, and its raw decoder (uncompressed)
-  is exact for a square raster at every value and for any raster at `Orientation` 3, but at 6 and 8
-  on a non-square raster it swaps width and height from the tag *before* decoding, reads the strips
-  at the wrong width and returns interleaved values in the original shape. Frames now come back in
-  stored order in every case, with `Orientation` available as a coordinate so a display step can
-  apply it once, which is what NeuNorm's rule about never reorienting implicitly inside the pipeline
-  asks for.
+  which of its decoders runs. Measured over all eight orientation values, square and non-square:
+  its libtiff decoder (compressed files) returns an exact transform every time, and its raw decoder
+  (uncompressed) is exact for a square raster at every value and for any raster at the
+  shape-preserving values 2, 3 and 4 — but at 5, 6, 7 and 8 on a non-square raster it swaps width
+  and height from the tag *before* decoding, reads the strips at the wrong width and returns
+  interleaved values in the original shape. Frames now come back in stored order in every case,
+  with `Orientation` available as a coordinate so a display step can apply it once, which is what
+  NeuNorm's rule about never reorienting implicitly inside the pipeline asks for.
 
-  **This changes the pixels such a stack loads with, and for all but that one uncompressed
-  non-square case it is a removed rotation rather than a repair.** Anything calibrated against the
-  old geometry — an ROI, a mask, a dark or open-beam image — has to be re-checked. Files with `Orientation` 1 or no such tag are unaffected,
-  which covers everything the VENUS and MARS writers produce and every fixture in this repository.
-  `MaskROI.from_file` still decodes with Pillow and so would apply an orientation the data no longer
-  has; because the shapes match on a square frame the mismatch would be silent, so an
-  orientation-tagged mask is now refused. A file that both needs the Pillow decoder and carries an
-  orientation is likewise rejected with an explanation rather than loaded scrambled.
+  **This changes the pixels such a stack loads with, and in most combinations it removes a rotation
+  that was correct rather than repairing a broken one.** Anything calibrated against the old
+  geometry — an ROI, a mask, a dark or open-beam image — has to be re-checked. Files with
+  `Orientation` 1 or no such tag load the same pixels as before, which covers everything the VENUS
+  and MARS writers produce and every fixture in this repository; `Orientation` 1 does now appear as
+  a coordinate where it did not before, because Pillow's pixel load deleted tag 274 before this
+  loader could see it. `MaskROI.from_file` still decodes with Pillow and so would apply an
+  orientation the data no longer has; because the shapes match on a square frame the mismatch would
+  be silent, so an orientation-tagged mask is now refused. A file that both needs the Pillow decoder
+  and carries an orientation is likewise rejected rather than loaded rotated.
 
 - **Signed 8-bit TIFFs no longer load negative counts as large positive ones.** Pillow maps
   `SampleFormat` 2 at 8 bits to unsigned, so a stored -12 loaded as 244 and passed the
-  non-negative-counts check as a plausible count. Such a frame now reaches that check as -12 and is
-  rejected, which is what the check is for.
+  non-negative-counts check as a plausible count. Where tifffile decodes the frame it now reaches
+  that check as -12 and is rejected, which is what the check is for; where only Pillow can decode
+  it, the loader refuses it outright rather than letting the same 244 through by another route.
 
-- **2- and 4-bit TIFFs are refused instead of silently altered.** Pillow rescales them to full
-  range — a 4-bit `0,1,2,3,4,5` came back as `0,17,34,51,68,85` and a 2-bit ramp as all zeros — and
-  those values fed straight into the Poisson variances. Such a frame is now refused *unless*
-  tifffile can unpack it, which needs the optional `imagecodecs` package; with `imagecodecs`
-  installed it loads with its stored counts instead. 1-bit and 12-bit are faithful and still load.
+- **2- and 4-bit TIFFs are refused instead of silently altered.** Pillow rescales them to the full
+  8-bit range — a 4-bit `0,1,2,3,4,5` came back as `0,17,34,51,68,85` and a 2-bit `0,1,2,3` as
+  `0,85,170,255` — and those values fed straight into the Poisson variances. Such a frame is now
+  refused *unless* tifffile can unpack it, which needs the optional `imagecodecs` package; with
+  `imagecodecs` installed it loads with its stored counts instead. 1-bit and 12-bit are faithful
+  and still load.
 
 - **A TIFF with no `PhotometricInterpretation` tag loads inverted again, as it did before.** Pillow
   defaults that tag to 0 (WhiteIsZero) and inverts at 8 bits and below, while tifffile treats an
