@@ -233,11 +233,16 @@ def test_parallel_decode_propagates_a_failed_read(tmp_path):
         load_fits_stack(paths, max_workers=4)
 
 
-def test_max_workers_below_one_is_rejected(tmp_path):
-    """0 and -1 are mistakes, not settings, and must not be silently reinterpreted.
+def test_max_workers_rejects_values_that_are_not_a_worker_count(tmp_path):
+    """0, a negative, a float, a bool or a string are mistakes, not settings.
 
-    `max_workers or _DEFAULT` read 0 as "unset" and gave 8 threads; the `max(1, ...)` clamp turned
-    a negative into a serial read. Both accepted a wrong value without a word.
+    A float is the one that matters: ThreadPoolExecutor compares its live thread count against the
+    value rather than truncating it, so ``max_workers=1.5`` builds two threads and ``2.9`` three --
+    silently exceeding the cap, which is the only thing this parameter does. ``True`` is an int
+    subclass and would otherwise pass as 1.
+
+    numpy integers are accepted, because a caller sizing the pool from an array shape produces one.
+    Same rule and same error shapes as ``_check_advance`` in utils/progress.py.
     """
     from neunorm.loaders.fits_loader import load_fits_stack
 
@@ -246,6 +251,15 @@ def test_max_workers_below_one_is_rejected(tmp_path):
     for bad in (0, -1):
         with pytest.raises(ValueError, match="max_workers must be at least 1"):
             load_fits_stack(paths, max_workers=bad)
+
+    for bad in (1.5, 2.9, 1.0, True, "4"):
+        with pytest.raises(TypeError, match="max_workers must be an int"):
+            load_fits_stack(paths, max_workers=bad)
+
+    # accepted, and equivalent to the plain int
+    import scipp as sc
+
+    assert sc.identical(load_fits_stack(paths, max_workers=np.int64(2)), load_fits_stack(paths, max_workers=2))
 
 
 def test_a_set_of_paths_still_loads(tmp_path):

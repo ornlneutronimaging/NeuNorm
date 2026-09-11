@@ -347,8 +347,19 @@ def load_tiff_stack(  # noqa: C901
           float-convertible or differ across files).
     """
 
-    if max_workers is not None and max_workers < 1:
-        raise ValueError(f"max_workers must be at least 1, got {max_workers}")
+    if max_workers is not None:
+        # Same shape as `_check_advance` in utils/progress.py: bool is rejected explicitly because
+        # it is an int subclass and `True` would otherwise pass as 1, and numpy integers are
+        # accepted because a caller deriving a worker count from an array shape produces one.
+        #
+        # The type check is not tidiness. ThreadPoolExecutor compares its live thread count against
+        # this value rather than truncating it, so max_workers=1.5 creates two threads and 2.9
+        # creates three -- silently exceeding the cap the caller asked for, which is the one thing
+        # this parameter exists to set.
+        if isinstance(max_workers, bool) or not isinstance(max_workers, (int, np.integer)):
+            raise TypeError(f"max_workers must be an int, got {type(max_workers).__name__}")
+        if max_workers < 1:
+            raise ValueError(f"max_workers must be at least 1, got {max_workers}")
 
     # A generator, Path.glob() or a set was accepted before this function reported progress and
     # must still be: materialise once so the count has a denominator, and because `_decode_stack`
