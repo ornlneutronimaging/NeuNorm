@@ -146,7 +146,7 @@ prefer NeuNorm's behaviour.
 **`event.completed` is an absolute, cumulative count, not an increment.** `tqdm.update()` takes a
 delta, so the adapter is `bar.update(event.completed - bar.n)`. Passing `event.completed` straight to
 `update()` makes the bar race past its total: measured on the 120-file load above, a bar that should end
-at 120 ends at **7740**.
+at 120 ends at **7500**.
 
 Each event carries four fields:
 
@@ -164,7 +164,11 @@ def report(event):
 - `detail` — optional context: the file being read, or the named step running.
 
 Events are emitted synchronously from the calling thread, in order, so the callback does not need to be
-thread-safe.
+thread-safe. That holds even where NeuNorm reads in parallel: the TIFF and FITS loaders decode frames
+on a thread pool, but the workers only decode and every event is still emitted from the thread that
+called the loader. The one consequence of the parallelism is that `detail` names each file as its
+decode finishes, so the *names* no longer follow input order — `completed` is unaffected and still
+counts up one per file.
 
 ## Example 3 — cancel a run
 
@@ -215,7 +219,7 @@ will exceed the totals here; use `event.completed` rather than counting calls.
 
 | Stage | What advances the count | Notes |
 |---|---|---|
-| `load_sample`, `load_ob`, `load_dark` | one event per file | across every input run, so the count does not restart per run. On the event path, four events per file instead — the loader's full-event-length allocations, so one huge NeXus file still shows movement |
+| `load_sample`, `load_ob`, `load_dark` | one event per file | across every input run, so the count does not restart per run. TIFF and FITS frames are decoded on a thread pool, so `detail` names them in completion rather than input order. On the event path, four events per file instead — the loader's full-event-length allocations, so one huge NeXus file still shows movement |
 | `histogram` | one event per event-chunk | `total` is `None`: the chunk count follows from each file's event count |
 | `combine_runs` | one event per combined family | sample, open beam, dark |
 | `gamma_filter` | four named steps | the third is the median filter, most of its cost |
@@ -349,10 +353,27 @@ work that has no item of its own.
 
 ## A note on where the time actually goes
 
-For large stacks the wall clock is dominated by **peak memory, not I/O**: `load_tiff_stack` holds a
-measured 5.18× multiple of the stack while building it, and above roughly 1200×1200 frames the process
-starts swapping, at which point per-file cost grows with the file count. Progress reporting makes that
-wait legible and shows you which allocation you are waiting on; reducing it is separate work.
+For large stacks the wall clock is dominated by **peak memory, not I/O**. On 100 uncompressed
+1024×1024 frames — a 400 MiB stack — the peak is a measured 4.45× the stack for `load_tiff_stack` and
+4.46× for `load_fits_stack`, down from 5.37× and 5.26× measured the same way before the loaders
+decoded into a pre-allocated array. What is left is the output array, the variances copy, and scipp's
+own copy of each. Large enough frames still push the process into swap, at which point per-file cost
+grows with the file count; the lower peak moves that point out, and where it now sits has not been
+re-measured.
+
+Parallel decode therefore buys less than a decode benchmark suggests. Stored compressed, those same
+100 frames decode about 2× faster on eight threads, but the whole `load_tiff_stack` call is only
+about 1.7× faster and `load_fits_stack` about 1.2×; the difference is allocation and copying, which
+threads do not help. Treat those three as ratios rather than measurements: the peak-memory multiples
+above reproduce to about a tenth between runs, while the wall-clock numbers move by around 20% on
+the same machine, so the useful claim is "noticeably faster, but not by the factor the decode alone
+suggests". Progress reporting makes that wait legible and shows you which allocation you are waiting
+on; reducing it further is separate work.
+
+`load_tiff_stack` opens each file twice — Pillow for the tags, tifffile for the pixels — where the
+version before it opened once. Reading the file once and parsing the buffer twice removes the second
+open, but holds the raw bytes per in-flight frame and pushes peak memory from 4.5× the stack to
+5.0×, so it is not what the loader does. `load_fits_stack` opens once.
 
 ## See also
 

@@ -191,6 +191,26 @@ class TestMaskROIFromFile:
         Image.fromarray(rgb).save(path)
         assert MaskROI.from_file(path) == MaskROI(selection=_block_selection())
 
+    def test_an_orientation_tagged_mask_matches_the_data_geometry(self, tmp_path):
+        """A rotated mask stays in the same geometry as the frames it selects from.
+
+        Pillow applies a TIFF Orientation tag when it decodes, here and in the image loaders
+        alike, so both sides are reoriented the same way. This branch briefly refused such masks
+        while the loaders returned the stored raster instead; both changes are reverted, so a mask
+        that loaded before still loads and still corresponds to its data.
+        """
+        from PIL import Image
+
+        sel = np.zeros((8, 8), dtype=np.uint8)
+        sel[1:3, 5:7] = 255  # deliberately not symmetric under rotation
+        path = tmp_path / "mask_oriented.tiff"
+        Image.fromarray(sel).save(path, tiffinfo={274: 6})
+
+        with Image.open(path) as img:
+            expected = np.asarray(img)
+
+        assert MaskROI.from_file(path) == MaskROI(selection=expected)
+
 
 class TestMaskROIFromDataArrayMask:
     def _da(self):

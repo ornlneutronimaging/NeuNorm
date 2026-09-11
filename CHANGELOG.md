@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Image stacks are loaded in parallel**
+  ([#225](https://github.com/ornlneutronimaging/NeuNorm/issues/225)). `load_tiff_stack` and
+  `load_fits_stack` decode frames on a thread pool into one pre-allocated array, each worker
+  writing its own input index, so frame order — which becomes the TOF axis — is preserved by
+  construction rather than by collecting results in order. A new keyword-only `max_workers` on both
+  loaders and on `load_stack` caps the pool; it defaults to 8, and `max_workers=1` reads serially.
+  The actual pool is `min(max_workers, frames - 1)`, since frame 0 is decoded on the calling
+  thread. The four pipelines that load image stacks take the default; the two event pipelines never
+  decode one.
+
+  TIFF pixels are now decoded by `tifffile`, which releases the GIL while decompressing and is
+  already installed by way of `scitiff` — now also declared explicitly, since it is imported
+  directly and a hand-maintained conda run-dependency table is exactly where a transitive-only
+  dependency goes missing unnoticed.
+
+  **Nothing about what a file loads as has changed.** Pillow and tifffile disagree about several
+  TIFF variants, and wherever they do, Pillow still decodes the pixels — WhiteIsZero at 8 bits or
+  fewer (including an absent `PhotometricInterpretation` tag, which Pillow defaults to 0), signed
+  samples at 8 bits or fewer, bit depths that are not a whole number of bytes, and any
+  `Orientation` tag other than 1. Pillow also decodes anything tifffile raises on, decided by
+  trying tifffile and falling back rather than by predicting: LZW, JPEG and CCITT compression, the
+  floating-point predictor, chroma subsampling and 12-bit packed samples. In several of those cases
+  what Pillow produces is arguably wrong — it rescales sub-byte depths, reads signed 8-bit as
+  unsigned, and applies an orientation this project would rather apply once at display time — and
+  it is reproduced anyway. Changing any of it is a separate decision, not one for a change whose
+  purpose is decoding speed. A compatibility harness covering 33 file variants, including all eight
+  orientation values square and non-square, reports zero differences against the previous loader.
+
+  Pre-allocating also removes one of the roughly five full-size copies resident at peak. Measured
+  on 100 uncompressed 1024x1024 frames, peak memory above baseline drops from about 5.4x the stack
+  to about 4.5x for TIFF and 5.3x to 4.5x for FITS. The whole call is roughly 1.7x (TIFF) and 1.2x
+  (FITS) faster; those are ratios rather than precise measurements, since wall clock moves by around
+  20% between runs on the same machine. The decode alone parallelises better than the whole call
+  does — very roughly 2x on eight threads, varying with the codec and strip layout — with the
+  remainder being allocation and copying, which threads do not help. All of it is measured on
+  local disk with a warm page cache.
+
+  `load_tiff_stack` opens each file twice, Pillow for the tags and tifffile for the pixels, where
+  before it opened once. Reading the file once and parsing the buffer twice was tried and reverted:
+  it removes the second open but raises peak memory from 4.5x the stack to 5.0x, giving back most
+  of the reduction above. `load_fits_stack` still opens once. See `docs/progress.md`.
+
+  Two visible changes to progress reporting, both deliberate: the per-file `detail` now names each
+  file as its decode finishes rather than in input order (the count is unaffected and still runs
+  1..n), and the `stacking` note is gone, because the stack build it announced no longer happens.
+  Cancelling from a progress callback now returns once the decodes already in flight finish, and
+  with more than one unreadable frame the one named in the error is whichever decode failed first.
+
+### Fixed
+
+- **A stack whose frames do not all carry the same TIFF tags no longer raises `KeyError`.** The
+  metadata block indexes every frame with the first frame's tag keys, so a tag present in one frame
+  and absent from another escaped as a bare `KeyError: <tag code>`. Only tags present in every frame
+  become coordinates now, in either file order, with a warning naming what was dropped.
+
 ## [2.4.0] - 2026-08-26
 
 ### Added

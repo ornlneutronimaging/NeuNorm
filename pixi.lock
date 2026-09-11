@@ -1,7 +1,16 @@
 version: 7
 platforms:
 - name: linux-64
+  virtual-packages:
+  - __unix=0=0
+  - __linux=4.18
+  - __glibc=2.28
+  - __archspec=0=x86_64
 - name: osx-arm64
+  virtual-packages:
+  - __unix=0=0
+  - __osx=13.0
+  - __archspec=0=m1
 environments:
   default:
     channels:
@@ -368,6 +377,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/sphinxcontrib-qthelp-2.0.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/sphinxcontrib-serializinghtml-2.0.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/stack_data-0.6.3-pyhd8ed1ab_1.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/tifffile-2026.9.9-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tinycss2-1.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tomli-2.4.1-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tomli-w-1.2.0-pyhd8ed1ab_0.conda
@@ -392,10 +402,9 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/wheel-0.48.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/widgetsnbextension-4.0.16-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-4.1.0-pyhcf101f3_0.conda
-      - pypi: .
+      - pypi: ./
       - pypi: https://files.pythonhosted.org/packages/14/2f/967ba146e6d58cf6a652da73885f52fc68001525b4197effc174321d70b4/jmespath-1.1.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/4b/8b/9cc6d4123033f7cb82df6cd8ce19eb0fc18a964afe060a03c9b26757c9f3/regex-2026.9.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
-      - pypi: https://files.pythonhosted.org/packages/82/38/05347ae8b1b268c068b3ca38822558038f38c6494604837d7ca3cbcceb9c/tifffile-2026.8.23-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a9/73/a68bf4bab3749cf50c324e4cbeb2030c0c8bd09700c4c077a1bfc9b1ef2f/scitiff-26.7.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d2/b8/f0b9b880c03a3db8eaff63d76ca751ac7d8e45483fb7a0bb9f8e5c6ce433/toml_cli-0.8.2-py3-none-any.whl
       osx-arm64:
@@ -592,6 +601,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/sphinxcontrib-qthelp-2.0.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/sphinxcontrib-serializinghtml-2.0.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/stack_data-0.6.3-pyhd8ed1ab_1.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/tifffile-2026.9.9-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tinycss2-1.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tomli-2.4.1-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tomli-w-1.2.0-pyhd8ed1ab_0.conda
@@ -792,9 +802,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-ng-2.3.3-h31dac16_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstandard-0.25.0-py314hd98292b_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
-      - pypi: .
+      - pypi: ./
       - pypi: https://files.pythonhosted.org/packages/27/8f/64b8bbd0316baaede047dbdbf2bcc96f10a4eeddec2e9cbf289e855e636f/regex-2026.9.3-cp314-cp314-macosx_11_0_arm64.whl
-      - pypi: https://files.pythonhosted.org/packages/82/38/05347ae8b1b268c068b3ca38822558038f38c6494604837d7ca3cbcceb9c/tifffile-2026.8.23-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/a9/73/a68bf4bab3749cf50c324e4cbeb2030c0c8bd09700c4c077a1bfc9b1ef2f/scitiff-26.7.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/d2/b8/f0b9b880c03a3db8eaff63d76ca751ac7d8e45483fb7a0bb9f8e5c6ce433/toml_cli-0.8.2-py3-none-any.whl
   docs:
@@ -1068,6 +1077,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/sphinxcontrib-qthelp-2.0.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/sphinxcontrib-serializinghtml-2.0.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/stack_data-0.6.3-pyhd8ed1ab_1.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/tifffile-2026.9.9-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tinycss2-1.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tomli-2.4.1-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tqdm-4.70.0-pyh8f84b5b_0.conda
@@ -1083,8 +1093,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/webencodings-0.5.1-pyhd8ed1ab_3.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/widgetsnbextension-4.0.16-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-4.1.0-pyhcf101f3_0.conda
-      - pypi: .
-      - pypi: https://files.pythonhosted.org/packages/82/38/05347ae8b1b268c068b3ca38822558038f38c6494604837d7ca3cbcceb9c/tifffile-2026.8.23-py3-none-any.whl
+      - pypi: ./
       - pypi: https://files.pythonhosted.org/packages/a9/73/a68bf4bab3749cf50c324e4cbeb2030c0c8bd09700c4c077a1bfc9b1ef2f/scitiff-26.7.0-py3-none-any.whl
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_3.conda
@@ -1222,6 +1231,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/sphinxcontrib-qthelp-2.0.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/sphinxcontrib-serializinghtml-2.0.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/stack_data-0.6.3-pyhd8ed1ab_1.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/tifffile-2026.9.9-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tinycss2-1.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tomli-2.4.1-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/toolz-1.1.0-pyhd8ed1ab_1.conda
@@ -1401,8 +1411,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-1.3.2-h8088a28_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-ng-2.3.3-h31dac16_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
-      - pypi: .
-      - pypi: https://files.pythonhosted.org/packages/82/38/05347ae8b1b268c068b3ca38822558038f38c6494604837d7ca3cbcceb9c/tifffile-2026.8.23-py3-none-any.whl
+      - pypi: ./
       - pypi: https://files.pythonhosted.org/packages/a9/73/a68bf4bab3749cf50c324e4cbeb2030c0c8bd09700c4c077a1bfc9b1ef2f/scitiff-26.7.0-py3-none-any.whl
   jupyter:
     channels:
@@ -1722,6 +1731,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/soupsieve-2.9.2-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/stack_data-0.6.3-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/terminado-0.18.1-pyhc90fa1f_1.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/tifffile-2026.9.9-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tinycss2-1.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tomli-2.4.1-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tqdm-4.70.0-pyh8f84b5b_0.conda
@@ -1743,8 +1753,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/wheel-0.48.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/widgetsnbextension-4.0.16-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-4.1.0-pyhcf101f3_0.conda
-      - pypi: .
-      - pypi: https://files.pythonhosted.org/packages/82/38/05347ae8b1b268c068b3ca38822558038f38c6494604837d7ca3cbcceb9c/tifffile-2026.8.23-py3-none-any.whl
+      - pypi: ./
       - pypi: https://files.pythonhosted.org/packages/a9/73/a68bf4bab3749cf50c324e4cbeb2030c0c8bd09700c4c077a1bfc9b1ef2f/scitiff-26.7.0-py3-none-any.whl
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_3.conda
@@ -1902,6 +1911,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/soupsieve-2.9.2-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/stack_data-0.6.3-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/terminado-0.18.1-pyhc90fa1f_1.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/tifffile-2026.9.9-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tinycss2-1.4.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/tomli-2.4.1-pyhcf101f3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/toolz-1.1.0-pyhd8ed1ab_1.conda
@@ -2093,8 +2103,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-1.3.2-h8088a28_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zlib-ng-2.3.3-h31dac16_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-hf451053_7.conda
-      - pypi: .
-      - pypi: https://files.pythonhosted.org/packages/82/38/05347ae8b1b268c068b3ca38822558038f38c6494604837d7ca3cbcceb9c/tifffile-2026.8.23-py3-none-any.whl
+      - pypi: ./
       - pypi: https://files.pythonhosted.org/packages/a9/73/a68bf4bab3749cf50c324e4cbeb2030c0c8bd09700c4c077a1bfc9b1ef2f/scitiff-26.7.0-py3-none-any.whl
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
@@ -5763,7 +5772,7 @@ packages:
   - python >=3.10
   license: BSD-3-Clause
   purls:
-  - pkg:pypi/astropy-iers-data?source=compressed-mapping
+  - pkg:pypi/astropy-iers-data?source=hash-mapping
   run_exports: {}
   size: 1237714
   timestamp: 1788148784845
@@ -6840,7 +6849,7 @@ packages:
   - python
   license: BSD-3-Clause
   purls:
-  - pkg:pypi/ipython?source=compressed-mapping
+  - pkg:pypi/ipython?source=hash-mapping
   run_exports: {}
   size: 730292
   timestamp: 1787921913409
@@ -8764,6 +8773,22 @@ packages:
   run_exports: {}
   size: 24749
   timestamp: 1766513766867
+- conda: https://conda.anaconda.org/conda-forge/noarch/tifffile-2026.9.9-pyhc364b38_0.conda
+  sha256: ad13311ea85d64981db22ff23e82f7999381ad8b43ab8c5f1524aa3c26bca929
+  md5: 9b0cb9d7d877856faf457a007484f08e
+  depends:
+  - python >=3.12
+  - numpy >=2.1
+  - python
+  constrains:
+  - matplotlib-base >=3.3
+  license: BSD-3-Clause
+  license_family: BSD
+  purls:
+  - pkg:pypi/tifffile?source=compressed-mapping
+  run_exports: {}
+  size: 231554
+  timestamp: 1788948751881
 - conda: https://conda.anaconda.org/conda-forge/noarch/tinycss2-1.4.0-pyhd8ed1ab_0.conda
   sha256: cad582d6f978276522f84bd209a5ddac824742fe2d452af6acf900f8650a73a2
   md5: f1acf5fdefa8300de697982bcb1761c9
@@ -9607,7 +9632,7 @@ packages:
   license: MIT
   license_family: MIT
   purls:
-  - pkg:pypi/brotli?source=compressed-mapping
+  - pkg:pypi/brotli?source=hash-mapping
   run_exports: {}
   size: 365272
   timestamp: 1786623009364
@@ -9986,7 +10011,7 @@ packages:
   license: BSD-3-Clause
   license_family: BSD
   purls:
-  - pkg:pypi/h5py?source=compressed-mapping
+  - pkg:pypi/h5py?source=hash-mapping
   run_exports: {}
   size: 1149474
   timestamp: 1787108762046
@@ -11689,7 +11714,7 @@ packages:
   license: MIT
   license_family: MIT
   purls:
-  - pkg:pypi/pyobjc-framework-cocoa?source=compressed-mapping
+  - pkg:pypi/pyobjc-framework-cocoa?source=hash-mapping
   run_exports: {}
   size: 382991
   timestamp: 1786682078806
@@ -11825,7 +11850,7 @@ packages:
   - __osx >=11.0
   license: MIT
   purls:
-  - pkg:pypi/ruff?source=compressed-mapping
+  - pkg:pypi/ruff?source=hash-mapping
   run_exports: {}
   size: 8177581
   timestamp: 1787865392183
@@ -12093,7 +12118,7 @@ packages:
   - python_abi 3.14.* *_cp314
   license: BSD-3-Clause
   purls:
-  - pkg:pypi/zstandard?source=compressed-mapping
+  - pkg:pypi/zstandard?source=hash-mapping
   run_exports: {}
   size: 383104
   timestamp: 1787896531255
@@ -12111,7 +12136,7 @@ packages:
     - zstd >=1.5.7,<1.6.0a0
   size: 433687
   timestamp: 1786599629846
-- pypi: .
+- pypi: ./
   name: neunorm
   requires_dist:
   - astropy
@@ -12123,6 +12148,7 @@ packages:
   - scipp>=25.8.0
   - scipy>=1.11
   - scitiff>=26.1
+  - tifffile
   - tqdm
   - myst-parser ; extra == 'docs'
   - nbsphinx ; extra == 'docs'
@@ -12148,42 +12174,6 @@ packages:
   version: 2026.9.3
   sha256: 665207e41bacd435db001099eeab44103197c2c1a729d73ade74688a905ed4ce
   requires_python: '>=3.10'
-- pypi: https://files.pythonhosted.org/packages/82/38/05347ae8b1b268c068b3ca38822558038f38c6494604837d7ca3cbcceb9c/tifffile-2026.8.23-py3-none-any.whl
-  name: tifffile
-  version: 2026.8.23
-  sha256: a03045afce67d97cb4ef56a1cd47eae6ab8115c7e84cfedeb5cadbfbb6d14fbe
-  requires_dist:
-  - numpy>=2.1
-  - imagecodecs>=2026.8.16 ; extra == 'codecs'
-  - lxml ; extra == 'xml'
-  - zarr>=3.3.0 ; extra == 'zarr'
-  - fsspec ; extra == 'zarr'
-  - kerchunk ; extra == 'zarr'
-  - matplotlib ; extra == 'plot'
-  - imagecodecs>=2026.8.16 ; extra == 'all'
-  - matplotlib ; extra == 'all'
-  - lxml ; extra == 'all'
-  - zarr>=3.3.0 ; extra == 'all'
-  - xarray ; extra == 'all'
-  - fsspec ; extra == 'all'
-  - kerchunk ; extra == 'all'
-  - cmapfile ; extra == 'test'
-  - czifile ; extra == 'test'
-  - dask ; extra == 'test'
-  - fsspec ; extra == 'test'
-  - imagecodecs ; extra == 'test'
-  - kerchunk ; extra == 'test'
-  - lfdfiles ; extra == 'test'
-  - lxml ; extra == 'test'
-  - ndtiff ; extra == 'test'
-  - oiffile ; extra == 'test'
-  - psdtags ; extra == 'test'
-  - pytest ; extra == 'test'
-  - requests ; extra == 'test'
-  - roifile ; extra == 'test'
-  - xarray ; extra == 'test'
-  - zarr ; extra == 'test'
-  requires_python: '>=3.12'
 - pypi: https://files.pythonhosted.org/packages/a9/73/a68bf4bab3749cf50c324e4cbeb2030c0c8bd09700c4c077a1bfc9b1ef2f/scitiff-26.7.0-py3-none-any.whl
   name: scitiff
   version: 26.7.0

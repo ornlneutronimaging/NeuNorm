@@ -3,7 +3,7 @@ Utility module for loading stacks of images in various formats.
 """
 
 from pathlib import Path
-from typing import Sequence
+from typing import Optional, Sequence
 
 import scipp as sc
 
@@ -17,6 +17,7 @@ def load_stack(
     *,
     progress: ProgressLike = False,
     stage: str = STAGE_LOAD_SAMPLE,
+    max_workers: Optional[int] = None,
 ) -> sc.DataArray:
     """
     Load a stack of images from the given file paths, supporting both TIFF and FITS formats.
@@ -38,10 +39,22 @@ def load_stack(
         Stage label the events carry, also forwarded. Defaults to ``STAGE_LOAD_SAMPLE``; pass
         ``STAGE_LOAD_OB`` or ``STAGE_LOAD_DARK`` when loading those, so a caller's callback can
         tell the three loads of a run apart.
+    max_workers : int, optional
+        Threads the chosen leaf loader decodes with, also forwarded. Both default to 8 and both
+        read serially at ``max_workers=1``. Forwarded rather than left to the leaf default so a
+        caller on a shared analysis filesystem can turn the concurrency down without reaching past
+        this dispatcher; the pipelines take the default and do not expose it.
     """
 
     # Materialise before indexing: this function subscripts `paths[0]` and iterates it twice, so a
     # generator would raise TypeError. The leaf loaders accept one, so this does too.
+    #
+    # Deliberately NOT widened to cover a sized-but-unindexable collection such as a `set`. That
+    # was tried and reverted: it turns `TypeError: 'set' object is not subscriptable` into a
+    # successful load whose frame order comes from the hash seed, and frame order is the spectral
+    # axis -- measured, four processes produced four different stacks from the same set, each
+    # pairing 9 of 10 frames with the wrong TOF, none of them warning. A loud rejection is worth
+    # more than a plausible-looking wrong spectrum, and it is what this function already did.
     if not hasattr(paths, "__len__"):
         paths = list(paths)
 
@@ -53,12 +66,12 @@ def load_stack(
         for path in paths:
             if Path(path).suffix.lower() != first_ext:
                 raise ValueError(f"All files must have the same extension. Found mixed extensions: {paths}")
-        return load_tiff_stack(paths, progress=progress, stage=stage)
+        return load_tiff_stack(paths, progress=progress, stage=stage, max_workers=max_workers)
     elif first_ext in (".fits", ".fit", ".fts"):
         for path in paths:
             if Path(path).suffix.lower() != first_ext:
                 raise ValueError(f"All files must have the same extension. Found mixed extensions: {paths}")
-        return load_fits_stack(paths, progress=progress, stage=stage)
+        return load_fits_stack(paths, progress=progress, stage=stage, max_workers=max_workers)
     else:
         raise ValueError(
             f"Unsupported file format: {first_ext}. Supported are TIFF (.tiff, .tif) and FITS (.fits, .fit, .fts)."

@@ -196,6 +196,9 @@ class MaskROI(BaseModel):
         Matches the mask images users draw in e.g. ImageJ and save alongside their data. RGB(A)
         images select where any channel is nonzero; only the first frame of a multi-frame file is
         read. The file's row-major ``(y, x)`` layout is used as-is.
+
+        A TIFF ``Orientation`` tag is applied here, by Pillow, exactly as the image loaders apply
+        it to the data — so a mask and the frames it selects from stay in the same geometry.
         """
         from PIL import Image
 

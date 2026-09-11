@@ -231,9 +231,12 @@ def test_mars_ccd_pipeline_reports_every_stage_end_to_end(mars_ccd_inputs, tmp_p
         },
         "mars_ccd",
     )
-    # the load stage names each file, and the names are the ones handed in
+    # the load stage names each file, and the names are the ones handed in. Sorted, not in input
+    # order: the loader decodes frames concurrently and names each as its decode finishes. Comparing
+    # in input order passed most of the time on this 3-file-per-run fixture and failed whenever two
+    # decodes landed out of order.
     loaded = [e.detail for e in events if e.stage == STAGE_LOAD_SAMPLE and e.detail.endswith(".tiff")]
-    assert loaded == [p.name for group in mars_ccd_inputs["sample_paths"] for p in group]
+    assert sorted(loaded) == sorted(p.name for group in mars_ccd_inputs["sample_paths"] for p in group)
 
 
 def test_mars_ccd_load_count_is_flat_across_runs(mars_ccd_inputs, tmp_path):
@@ -902,7 +905,11 @@ def test_a_generator_of_input_runs_is_not_consumed_by_counting_it(mars_ccd_input
     )
 
     loaded = [e.detail for e in events if e.stage == STAGE_LOAD_SAMPLE and e.detail.endswith(".tiff")]
-    assert loaded == [p.name for group in mars_ccd_inputs["sample_paths"] for p in group], (
+    # Compared as a set, not a sequence: what proves the generator survived is that every file was
+    # loaded. The TIFF loader decodes on a thread pool and names each frame as its decode finishes,
+    # so the order these arrive in is completion order and asserting it here would be asserting the
+    # pool's scheduling. See test_loader_emits_one_event_per_file.
+    assert sorted(loaded) == sorted(p.name for group in mars_ccd_inputs["sample_paths"] for p in group), (
         "the generator was consumed before the load"
     )
     assert {e.total for e in events if e.stage == STAGE_LOAD_SAMPLE} == {None}, (
