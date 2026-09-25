@@ -250,6 +250,9 @@ ipywidgets = "*"
 # Documentation
 build-docs = { cmd = 'sphinx-build -b html -W --keep-going docs docs/_build', description = "Build documentation (warnings are errors)" }
 test-docs = { cmd = "sphinx-build -M doctest docs docs/_build", description = "Test building the documentation" }
+# Refresh the intersphinx inventories docs/conf.py falls back to when a site is down.
+# The script reads the projects and URLs from intersphinx_mapping in docs/conf.py.
+update-inventories = { cmd = "python docs/_inventory/update.py", description = "Re-download the committed intersphinx inventories in docs/_inventory/" }
 # Testing
 test = { description = "Run the test suite", cmd = "pytest" }
 # Packaging
