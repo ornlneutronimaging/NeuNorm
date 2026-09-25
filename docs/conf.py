@@ -61,10 +61,14 @@ napoleon_google_docstring = False
 myst_enable_extensions = ["colon_fence", "deflist"]
 
 # -- intersphinx -------------------------------------------------------------
-# Each project is tried live first (None = <url>/objects.inv), then falls back to a
-# copy committed under docs/_inventory/ (paths are relative to this source dir). When
-# a later location works, Sphinx logs the failed fetch at INFO rather than as a
-# warning, so an outage of one of these sites no longer fails the -W build.
+# On a clean build (CI, Read the Docs) each project is tried live first
+# (None = <url>/objects.inv), then falls back to a copy committed under
+# docs/_inventory/ (paths are relative to this source dir). When a later location
+# works, Sphinx logs the failed fetch at INFO rather than as a warning, so an outage
+# of one of these sites no longer fails the -W build. An incremental local rebuild
+# with a fresh intersphinx cache skips the live site and reads the committed copy,
+# since Sphinx always reads local inventories; run `pixi run clean-docs` first to
+# re-fetch live.
 # Refresh the committed copies with `pixi run update-inventories`; keep its URLs in
 # step with the ones here.
 intersphinx_mapping = {
