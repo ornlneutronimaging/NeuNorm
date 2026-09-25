@@ -34,6 +34,6 @@ projects stops resolving, with:
 pixi run update-inventories
 ```
 
-Then commit the updated `docs/_inventory/*.inv` files. If you add or change an
-intersphinx mapping in `docs/conf.py`, update the `update-inventories` task in
-`pyproject.toml` to match.
+Then commit the updated `docs/_inventory/*.inv` files. The task reads the projects
+and URLs from `intersphinx_mapping` in `docs/conf.py`, so a new mapping only needs a
+`(None, "_inventory/<name>.inv")` fallback there and one run of the task.

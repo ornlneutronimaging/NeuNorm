@@ -69,8 +69,8 @@ myst_enable_extensions = ["colon_fence", "deflist"]
 # with a fresh intersphinx cache skips the live site and reads the committed copy,
 # since Sphinx always reads local inventories; run `pixi run clean-docs` first to
 # re-fetch live.
-# Refresh the committed copies with `pixi run update-inventories`; keep its URLs in
-# step with the ones here.
+# Refresh the committed copies with `pixi run update-inventories`, which reads its
+# URLs from this mapping.
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", (None, "_inventory/python.inv")),
     "numpy": ("https://numpy.org/doc/stable", (None, "_inventory/numpy.inv")),
