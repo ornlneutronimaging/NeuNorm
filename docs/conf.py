@@ -61,12 +61,20 @@ napoleon_google_docstring = False
 myst_enable_extensions = ["colon_fence", "deflist"]
 
 # -- intersphinx -------------------------------------------------------------
+# Each project is tried live first (None = <url>/objects.inv), then falls back to a
+# copy committed under docs/_inventory/ (paths are relative to this source dir). When
+# a later location works, Sphinx logs the failed fetch at INFO rather than as a
+# warning, so an outage of one of these sites no longer fails the -W build.
+# Refresh the committed copies with `pixi run update-inventories`; keep its URLs in
+# step with the ones here.
 intersphinx_mapping = {
-    "python": ("https://docs.python.org/3", None),
-    "numpy": ("https://numpy.org/doc/stable", None),
-    "scipy": ("https://docs.scipy.org/doc/scipy", None),
-    "scipp": ("https://scipp.github.io", None),
+    "python": ("https://docs.python.org/3", (None, "_inventory/python.inv")),
+    "numpy": ("https://numpy.org/doc/stable", (None, "_inventory/numpy.inv")),
+    "scipy": ("https://docs.scipy.org/doc/scipy", (None, "_inventory/scipy.inv")),
+    "scipp": ("https://scipp.github.io", (None, "_inventory/scipp.inv")),
 }
+# Give up on a slow or hanging site quickly and use the committed copy instead.
+intersphinx_timeout = 10
 
 # -- HTML output -------------------------------------------------------------
 html_theme = "sphinx_rtd_theme"
