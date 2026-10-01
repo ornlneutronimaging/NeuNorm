@@ -309,6 +309,37 @@ def as_roi_bounds(roi: ROILike) -> tuple[int, int, int, int]:
     return bounds
 
 
+def _checked_crop_bounds(roi: ROILike, caller: str) -> tuple[int, int, int, int]:
+    """Validate a rectangular crop region and return it as built-in ``int`` bounds.
+
+    These are the checks that need no data: the region is a rectangle (``caller`` names what
+    rejects a :class:`MaskROI`), has four integer bounds, and satisfies ``0 <= x0 < x1`` and
+    ``0 <= y0 < y1``. Whether it fits the data is checked against the data, see
+    :func:`_crop_fit_message`.
+    """
+    if isinstance(roi, MaskROI):
+        raise TypeError(
+            f"{caller} crops to a rectangle and does not accept a MaskROI. Use a MaskROI only with "
+            "the region-statistics APIs (background_roi= / air_roi= / apply_air_region_correction / "
+            "normalize_transmission), which average over the selected pixels without cropping."
+        )
+    bounds = as_roi_bounds(roi)
+    if not all(isinstance(i, int) for i in bounds):
+        raise ValueError("ROI must be a tuple of 4 integers (x0, y0, x1, y1)")
+    x0, y0, x1, y1 = bounds
+    if x0 < 0 or y0 < 0 or x1 <= x0 or y1 <= y0:
+        raise ValueError("Invalid ROI: (x0, y0, x1, y1) must satisfy 0 <= x0 < x1 and 0 <= y0 < y1")
+    return int(x0), int(y0), int(x1), int(y1)
+
+
+def _crop_fit_message(bounds: tuple[int, int, int, int], *, ny: int, nx: int) -> Optional[str]:
+    """The error message for crop ``bounds`` that extend past data of size ``(ny, nx)``, else ``None``."""
+    _, _, x1, y1 = bounds
+    if x1 > nx or y1 > ny:
+        return f"ROI (x1={x1}, y1={y1}) exceeds data size (x={nx}, y={ny})"
+    return None
+
+
 def _plain_int_bounds(bounds: tuple) -> tuple[int, int, int, int]:
     """Coerce NumPy integer bounds to built-in ``int`` (JSON provenance stays numeric)."""
     return tuple(int(v) if isinstance(v, np.integer) else v for v in bounds)

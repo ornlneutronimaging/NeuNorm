@@ -4,7 +4,6 @@ TIFF loader for NeuNorm.
 Loads TIFF stacks as scipp DataArrays.
 """
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -14,6 +13,8 @@ import tifffile
 from loguru import logger
 from PIL import ExifTags, Image
 
+from neunorm.data_models.roi import ROILike, _checked_crop_bounds
+from neunorm.loaders._frame_stack import decode_frames, variances_note, with_poisson_variances
 from neunorm.utils.progress import STAGE_LOAD_SAMPLE, ProgressLike, resolve_progress
 
 #: TIFF tag codes read directly. Spelled out because ``ExifTags.TAGS`` maps the other way, code
@@ -122,9 +123,10 @@ def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
     Only page 0 is read, matching what ``PIL.Image.open`` yields for a multi-page file;
     ``tifffile.imread`` would return every page stacked and turn a 2-D frame into 3-D.
 
-    float32 is sufficient for neutron imaging (16-bit detectors) and halves the in-memory
-    footprint of a large stack. ``copy=False`` makes the cast free for the float32 files the
-    VENUS TPX1 auto-reduction writes, while still converting the integer files a CCD writes.
+    tifffile pixels are returned in the file's own dtype and cast to float32 as each frame is copied
+    into the stack, which is the same conversion an up-front ``astype(np.float32)`` makes. A 16-bit
+    frame's decode buffer is then half the size of a float32 one, and that buffer, held once per
+    worker, is what bounds the memory of a cropped load. Pillow-decoded frames are float32 already.
 
     **Pillow decodes the pixels whenever tifffile cannot.** That is decided by trying tifffile and
     falling back, not by predicting which files it will refuse: predicting was tried and the list
@@ -155,10 +157,9 @@ def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
     HDF5 product. That is a deliberate behaviour change to make on its own terms, with a migration
     note, rather than a side effect of a change whose purpose is decoding speed.
     """
-    # This opens the file twice: Pillow for the IFD, tifffile for the pixels. Reading it once and
-    # parsing the buffer twice was tried and reverted -- it removes the second open, but holds the
-    # raw bytes plus a BytesIO copy per in-flight frame and pushed peak memory from 4.48x the stack
-    # to 4.98x, giving back most of the reduction pre-allocating is otherwise measured to deliver.
+    # This opens the file twice: Pillow for the IFD, tifffile for the pixels. Reading the bytes once
+    # and parsing them twice would remove the second open, but would hold the raw bytes plus a
+    # BytesIO copy per in-flight frame, which costs more memory than the open saves time.
     #
     # `dict(img.tag_v2)` produced {tag_code: value}; reproduce that exactly so the metadata
     # block in the caller is untouched. Pillow's open is lazy — this reads the IFD, not pixels.
@@ -175,7 +176,7 @@ def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
 
         try:
             with tifffile.TiffFile(path) as handle:
-                values = handle.pages[0].asarray().astype(np.float32, copy=False)
+                values = handle.pages[0].asarray()
         except Exception:  # noqa: BLE001 - a capability probe: anything tifffile refuses, Pillow gets
             # tifffile cannot decode this one. Pillow could, before this change, so let it — and if
             # it cannot either, its error is the one the previous version raised. Deliberately not
@@ -186,121 +187,14 @@ def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
     return values, tags
 
 
-class _ShapeMismatchError(ValueError):
-    """A frame whose shape differs from the first frame's.
-
-    A ``ValueError`` so the exception a caller sees is unchanged, but its own type so the pool
-    loop can tell it apart from a read failure that also happens to be a ``ValueError``.
-    """
-
-
-#: Threads used to decode a stack when the caller does not say. Deliberately modest: the
-#: right number depends on whether the files are local or on a mounted analysis filesystem,
-#: and that was not measured, so this trades some of the available speedup for not swamping
-#: a shared mount from every concurrent user. Raise it via ``max_workers`` once measured.
-_DEFAULT_MAX_WORKERS = 8
-
-
-def _decode_stack(
-    paths: Sequence[str | Path],
-    report,
-    max_workers: Optional[int],
-) -> tuple[np.ndarray, list[dict]]:
-    """Decode every frame into one pre-allocated array, in input order.
-
-    **Frame order is the spectral axis.** The stack's first dimension becomes ``TOF`` or
-    ``N_image``, and the ``tof`` coordinate is matched to it positionally, so a frame landing at
-    the wrong index mislabels the time axis and produces a plausible-looking wrong spectrum.
-    Workers therefore write ``out[i]`` for their own input index: order is preserved by
-    construction rather than by collecting results carefully. Nothing here depends on the order
-    in which decodes finish.
-
-    Pre-allocating also removes one of the roughly five full-size copies resident at peak. It
-    built a list of ``n`` frames, stacked that into a second copy, then copied the result for the
-    variances; decoding straight into ``out`` collapses the first two into one, leaving the output
-    and the variances copy, with only the in-flight decode buffers on top. One copy, not two: the
-    measured peak drops from 5.37x the stack to 4.45x, which is what removing one of roughly five
-    resident copies looks like once scipp's own copies are counted.
-
-    Progress is emitted **from this thread**, never from a worker, which is what keeps the
-    contract in :mod:`neunorm.utils.progress`: events stay synchronous and on the calling
-    thread, a caller's callback still need not be thread-safe, and raising from it still
-    cancels the run. The visible change is that ``detail`` names files in completion order, so
-    it no longer tracks input order; the count itself is unaffected.
-
-    Cancelling is prompt but not instant: raising from the callback propagates out of this loop
-    and the ``finally`` cancels every queued file, but it waits for the decodes already in flight.
-    And when more than one frame is unreadable or mis-shaped, which one is named in the error
-    depends on which decode finishes first, where the serial version always reported the first in
-    input order.
-    """
-    n = len(paths)
-
-    # Frame 0 is decoded here, alone, because its shape is what the output array is allocated
-    # from and what every other frame is checked against.
-    #
-    # Every `report(...)` below sits OUTSIDE these try blocks, and that placement is load-bearing:
-    # raising from a progress callback is how a caller cancels, and a cancel must not be logged as
-    # "Error loading TIFF stack". tests/unit/test_progress_load_path.py pins it.
-    try:
-        first_values, first_tags = _read_tiff_frame(paths[0])
-    except Exception as e:
-        logger.error("Error loading TIFF stack: {}", e)
-        raise
-    out = np.empty((n, *first_values.shape), dtype=np.float32)
-    out[0] = first_values
-    tags: list[Optional[dict]] = [None] * n
-    tags[0] = first_tags
-    report(detail=Path(paths[0]).name)
-
-    if n == 1:
-        return out, tags
-
-    def decode(index: int):
-        values, frame_tags = _read_tiff_frame(paths[index])
-        if values.shape != first_values.shape:
-            raise _ShapeMismatchError(
-                f"Shape mismatch in file {paths[index]}: expected {first_values.shape}, got {values.shape}"
-            )
-        out[index] = values
-        return index, frame_tags
-
-    workers = max(1, min(_DEFAULT_MAX_WORKERS if max_workers is None else max_workers, n - 1))
-    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="neunorm-tiff")
-    try:
-        futures = [pool.submit(decode, i) for i in range(1, n)]
-        for future in as_completed(futures):
-            # `.result()` re-raises a worker's exception here, in the calling thread, so a bad
-            # file still surfaces as it did when the read was serial.
-            try:
-                index, frame_tags = future.result()
-            except _ShapeMismatchError:
-                # A shape mismatch is the caller's data being inconsistent, not a read failure,
-                # and carried no log line before. Keyed on this private type rather than on
-                # ValueError, which tifffile's own TiffFileError subclasses — a malformed file
-                # would otherwise reach the caller with no log line, while the identical failure
-                # on frame 0 was logged.
-                raise
-            except Exception as e:
-                logger.error("Error loading TIFF stack: {}", e)
-                raise
-            tags[index] = frame_tags
-            report(detail=Path(paths[index]).name)
-    finally:
-        # cancel_futures so a raised error — including a cancelling progress callback — does not
-        # wait for every queued file to be read first.
-        pool.shutdown(wait=True, cancel_futures=True)
-
-    return out, tags
-
-
-def load_tiff_stack(  # noqa: C901
+def load_tiff_stack(
     paths: Sequence[str | Path],
     tof_edges: Optional[np.ndarray] = None,
     *,
     progress: ProgressLike = False,
     stage: str = STAGE_LOAD_SAMPLE,
     max_workers: Optional[int] = None,
+    roi: Optional[ROILike] = None,
 ) -> sc.DataArray:
     """Load TIFF stack as scipp DataArray with variance tracking.
 
@@ -317,8 +211,9 @@ def load_tiff_stack(  # noqa: C901
         number of images in the loaded stack.
     progress : bool or callable, optional
         Progress reporting, off by default. ``True`` draws a :mod:`tqdm` bar; a callable receives a
-        :class:`~neunorm.utils.progress.ProgressEvent` per file read, plus a note before the
-        whole-stack variances copy that follows the read loop. A pipeline normally passes a
+        :class:`~neunorm.utils.progress.ProgressEvent` per file read, plus a note naming the
+        stack's frame count, frame size and memory before its variances are filled. A pipeline
+        normally passes a
         pre-bound reporter here instead, so its per-file count spans every run rather than
         restarting. See :mod:`neunorm.utils.progress`.
     stage : str, optional
@@ -333,6 +228,17 @@ def load_tiff_stack(  # noqa: C901
         the files sit on local disk or a mounted analysis filesystem, which has not been measured
         here, and a large pool from every concurrent user is worse for a shared mount than a small
         one. Raise it once there are numbers.
+    roi : ROI or tuple[int, int, int, int], optional
+        Keep only this rectangle of each frame: an :class:`~neunorm.data_models.roi.ROI` or a bare
+        ``(x0, y0, x1, y1)`` tuple with exclusive stop indices. The result is identical to
+        :func:`~neunorm.processing.roi_clipper.apply_roi` applied to the full load, including the
+        ``x`` and ``y`` coordinates, which hold detector pixel indices starting at ``x0`` and
+        ``y0``. Each frame is still decoded whole, and the shape check and the non-negative-counts
+        check still cover the whole frame, but only the region is stored: the stack's memory scales
+        with the region, plus up to ``max_workers`` whole frames being decoded at once.
+
+        A malformed ROI, or a :class:`~neunorm.data_models.roi.MaskROI`, raises before any file is
+        read; an ROI that extends past the frames raises once the first frame is decoded.
 
     Returns
     -------
@@ -340,13 +246,26 @@ def load_tiff_stack(  # noqa: C901
         DataArray with dimensions (TOF/image, y, x)
 
         - dims: ['TOF', 'y', 'x'] if tof_edges provided, else ['N_image', 'y', 'x']
-        - coords: y, x pixel indices, and optionally TOF.
+        - coords: y, x detector pixel indices (offset by the ROI origin when ``roi`` is given),
+          and optionally TOF.
           Additionally, TIFF metadata is added as coordinates. Each metadata
           coordinate may be scalar (when its value is constant across the stack
           and not float-convertible) or stack-dimensioned (when values are
           float-convertible or differ across files).
     """
+    return _load_tiff_stack(paths, tof_edges, progress=progress, stage=stage, max_workers=max_workers, roi=roi)[0]
 
+
+def _load_tiff_stack(  # noqa: C901
+    paths: Sequence[str | Path],
+    tof_edges: Optional[np.ndarray] = None,
+    *,
+    progress: ProgressLike = False,
+    stage: str = STAGE_LOAD_SAMPLE,
+    max_workers: Optional[int] = None,
+    roi: Optional[ROILike] = None,
+) -> tuple[sc.DataArray, tuple[int, ...]]:
+    """:func:`load_tiff_stack`, also returning the uncropped stack shape ``(n_frames, ny, nx)``."""
     if max_workers is not None:
         # Same shape as `_check_advance` in utils/progress.py: bool is rejected explicitly because
         # it is an int subclass and `True` would otherwise pass as 1, and numpy integers are
@@ -361,8 +280,11 @@ def load_tiff_stack(  # noqa: C901
         if max_workers < 1:
             raise ValueError(f"max_workers must be at least 1, got {max_workers}")
 
+    # Validated before any file is read, so a malformed ROI fails at once.
+    bounds = None if roi is None else _checked_crop_bounds(roi, caller="The roi argument")
+
     # A generator, Path.glob() or a set was accepted before this function reported progress and
-    # must still be: materialise once so the count has a denominator, and because `_decode_stack`
+    # must still be: materialise once so the count has a denominator, and because `decode_frames`
     # addresses frames by index — a set has `__len__` but no `__getitem__`, so testing only for
     # length would let it through to a TypeError. Wrapped so an iterator that raises is logged
     # like any other read failure. This runs BEFORE the emptiness check because a generator is
@@ -377,34 +299,38 @@ def load_tiff_stack(  # noqa: C901
     if not paths:
         raise ValueError("No file paths provided")
 
+    # If tof_edges provided, use 'TOF', else uses 'N_image'
+    dim_name = "TOF" if tof_edges is not None else "N_image"
+
     with resolve_progress(progress, stage, total=len(paths)) as report:
-        # `_decode_stack` owns the read logging, because only it can tell a failed decode from a
+        # `decode_frames` owns the read logging, because only it can tell a failed decode from a
         # cancelling progress callback; wrapping the whole call here would log a cancel as an I/O
         # error, which is exactly what test_cancelling_is_not_reported_as_a_read_failure forbids.
-        full_data, metadata_list = _decode_stack(paths, report, max_workers)
+        stack = decode_frames(
+            paths,
+            report,
+            max_workers,
+            read_frame=_read_tiff_frame,
+            read_error="Error loading TIFF stack",
+            thread_name_prefix="neunorm-tiff",
+            dim=dim_name,
+            bounds=bounds,
+        )
+        metadata_list = stack.meta
 
-        n_images, ny, nx = full_data.shape
+        n_images, _, _ = stack.shape
 
-        # Determine dimension names
-        # If tof_edges provided, use 'TOF', else uses 'N_image'
-        dim_name = "TOF" if tof_edges is not None else "N_image"
-        dims = [dim_name, "y", "x"]
-
-        # Validate data for Poisson statistics: counts must be non-negative.
-        if np.any(full_data < 0):
+        # Validate data for Poisson statistics: counts must be non-negative, over every whole frame.
+        if stack.negative:
             raise ValueError(
                 "Loaded TIFF data contains negative counts; cannot attach Poisson "
                 "variances (variance = counts) to negative data."
             )
 
-        report.note(f"attaching variances ({full_data.nbytes / 1024**2:.1f} MiB)")
+        report.note(variances_note(stack.data))
 
-        # Create DataArray
         # Assuming variance = counts (Poisson) if not provided.
-        da = sc.DataArray(
-            data=sc.array(dims=dims, values=full_data, unit=sc.units.counts, variances=full_data.copy()),
-            coords={"y": sc.arange("y", ny, unit=None), "x": sc.arange("x", nx, unit=None)},
-        )
+        da = with_poisson_variances(stack)
 
         # Add TOF coordinate if provided
         if tof_edges is not None:
@@ -475,4 +401,4 @@ def load_tiff_stack(  # noqa: C901
                         da.coords[key_name] = sc.array(dims=[dim_name], values=values)
                 da.coords.set_aligned(key_name, False)
 
-        return da
+        return da, stack.shape

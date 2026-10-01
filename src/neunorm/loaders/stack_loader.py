@@ -7,8 +7,9 @@ from typing import Optional, Sequence
 
 import scipp as sc
 
-from neunorm.loaders.fits_loader import load_fits_stack
-from neunorm.loaders.tiff_loader import load_tiff_stack
+from neunorm.data_models.roi import ROILike
+from neunorm.loaders.fits_loader import _load_fits_stack
+from neunorm.loaders.tiff_loader import _load_tiff_stack
 from neunorm.utils.progress import STAGE_LOAD_SAMPLE, ProgressLike
 
 
@@ -18,6 +19,7 @@ def load_stack(
     progress: ProgressLike = False,
     stage: str = STAGE_LOAD_SAMPLE,
     max_workers: Optional[int] = None,
+    roi: Optional[ROILike] = None,
 ) -> sc.DataArray:
     """
     Load a stack of images from the given file paths, supporting both TIFF and FITS formats.
@@ -44,7 +46,24 @@ def load_stack(
         read serially at ``max_workers=1``. Forwarded rather than left to the leaf default so a
         caller on a shared analysis filesystem can turn the concurrency down without reaching past
         this dispatcher; the pipelines take the default and do not expose it.
+    roi : ROI or tuple[int, int, int, int], optional
+        Rectangle ``(x0, y0, x1, y1)`` to keep of each frame, also forwarded. Only the region is
+        stored, so memory scales with the region rather than the detector; the result is identical
+        to :func:`~neunorm.processing.roi_clipper.apply_roi` applied to the full load. See
+        :func:`~neunorm.loaders.tiff_loader.load_tiff_stack`.
     """
+    return _load_stack(paths, progress=progress, stage=stage, max_workers=max_workers, roi=roi)[0]
+
+
+def _load_stack(
+    paths: Sequence[str | Path],
+    *,
+    progress: ProgressLike = False,
+    stage: str = STAGE_LOAD_SAMPLE,
+    max_workers: Optional[int] = None,
+    roi: Optional[ROILike] = None,
+) -> tuple[sc.DataArray, tuple[int, ...]]:
+    """:func:`load_stack`, also returning the uncropped stack shape ``(n_frames, ny, nx)``."""
 
     # Materialise before indexing: this function subscripts `paths[0]` and iterates it twice, so a
     # generator would raise TypeError. The leaf loaders accept one, so this does too.
@@ -66,12 +85,12 @@ def load_stack(
         for path in paths:
             if Path(path).suffix.lower() != first_ext:
                 raise ValueError(f"All files must have the same extension. Found mixed extensions: {paths}")
-        return load_tiff_stack(paths, progress=progress, stage=stage, max_workers=max_workers)
+        return _load_tiff_stack(paths, progress=progress, stage=stage, max_workers=max_workers, roi=roi)
     elif first_ext in (".fits", ".fit", ".fts"):
         for path in paths:
             if Path(path).suffix.lower() != first_ext:
                 raise ValueError(f"All files must have the same extension. Found mixed extensions: {paths}")
-        return load_fits_stack(paths, progress=progress, stage=stage, max_workers=max_workers)
+        return _load_fits_stack(paths, progress=progress, stage=stage, max_workers=max_workers, roi=roi)
     else:
         raise ValueError(
             f"Unsupported file format: {first_ext}. Supported are TIFF (.tiff, .tif) and FITS (.fits, .fit, .fts)."
