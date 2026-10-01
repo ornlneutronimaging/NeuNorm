@@ -266,7 +266,7 @@ def test_a_set_of_paths_loads_but_in_no_defined_order(tmp_path):
     """A set is accepted, as it was before, and its frame order is NOT meaningful.
 
     This pins compatibility, not a recommendation. The pre-change loader iterated ``paths`` without
-    subscripting, so a set was accepted and its frames came out in hash order; ``_decode_stack``
+    subscripting, so a set was accepted and its frames came out in hash order; ``decode_frames``
     addresses frames by index, so the guard materialises one to keep that working. What neither
     version does is *order* it: frame order is the spectral axis, and a set's iteration order varies
     between processes, so the same set yields a different stack each run and pairs frames with the

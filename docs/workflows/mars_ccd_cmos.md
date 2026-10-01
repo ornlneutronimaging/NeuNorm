@@ -15,6 +15,11 @@ flowchart TD
         A1[TIFF/FITS] --> A[Load Sample]
         A2[TIFF/FITS] --> B[Load Open Beam]
         A3[TIFF/FITS] --> C[Load Dark Current]
+        subgraph ROI["ROI Crop, Each Frame As It Is Read"]
+            D{ROI Specified?}
+            E[Keep ROI of Each Frame]
+            F[Full Frame]
+        end
     end
 
     subgraph RunCombine["2. Run Combining"]
@@ -23,57 +28,53 @@ flowchart TD
         RC3[Single Run]
     end
 
-    subgraph ROI["3. ROI Clipping"]
-        D{ROI Specified?}
-        E[Apply ROI]
-        F[Full Frame]
-    end
-
-    subgraph Prepare["4. Reference Preparation"]
+    subgraph Prepare["3. Reference Preparation"]
         G[Average Dark → 2D]
         H[Average OB → 2D]
     end
 
-    subgraph PixelDetect["5. Dead Pixel Detection"]
+    subgraph PixelDetect["4. Dead Pixel Detection"]
         PD[Identify Zero-Count Pixels]
         PM[Dead Pixel Mask]
     end
 
-    subgraph Gamma["6. Gamma Filtering"]
+    subgraph Gamma["5. Gamma Filtering"]
         GF[Detect Gamma Spikes]
         GR[Replace with Median]
     end
 
-    subgraph DarkCorr["7. Dark Correction"]
+    subgraph DarkCorr["6. Dark Correction"]
         DC1["Sample_corr = Sample - Dark"]
         DC2["OB_corr = OB - Dark"]
     end
 
-    subgraph Norm["8. Normalization"]
+    subgraph Norm["7. Normalization"]
         N["T = Sample_corr / OB_corr"]
     end
 
-    subgraph UQ["9. Experiment Error"]
+    subgraph UQ["8. Experiment Error"]
         UQ1[Poisson Statistics]
         UQ2[Error Propagation]
     end
 
-    subgraph Output["10. Output"]
+    subgraph Output["9. Output"]
         O1[Transmission 3D]
         O2[Uncertainty 3D]
         O3[Dead Pixel Mask]
         O4[Metadata]
     end
 
-    Input --> RC1
-    RC1 -->|Yes| RC2
-    RC1 -->|No| RC3
-    RC2 --> D
-    RC3 --> D
+    A --> D
+    B --> D
+    C --> D
     D -->|Yes| E
     D -->|No| F
-    E --> Prepare
-    F --> Prepare
+    E --> RC1
+    F --> RC1
+    RC1 -->|Yes| RC2
+    RC1 -->|No| RC3
+    RC2 --> Prepare
+    RC3 --> Prepare
     G --> PD
     H --> PD
     PD --> PM
@@ -112,7 +113,7 @@ flowchart TD
 | Sample images | TIFF/FITS stack | Yes | Raw neutron transmission images |
 | Open Beam (OB) | TIFF/FITS stack | Yes | Reference without sample |
 | Dark Current | TIFF/FITS stack | No | Electronic noise baseline (beam off). Optional — omit `dark_paths` (or pass `[]`) to skip dark correction. |
-| ROI | (x0, y0, x1, y1) or `ROI` | No | Rectangular region of interest to **crop**. Cropping is rectangle-only; to restrict *statistics* to an arbitrary shape use a `MaskROI` with `background_roi=`/`air_roi=` instead. |
+| ROI | (x0, y0, x1, y1) or `ROI` | No | Rectangular region of interest to **crop**. Each frame is cropped as it is read, before runs are combined, so memory scales with the ROI rather than the detector. Cropping is rectangle-only; to restrict *statistics* to an arbitrary shape use a `MaskROI` with `background_roi=`/`air_roi=` instead. |
 
 **Arbitrary-shape regions.** The region-statistics parameters (`background_roi` and the VENUS
 pipelines' `air_roi`) accept a `MaskROI` — a pixel **selection** mask the same size as the
@@ -157,6 +158,10 @@ processing work is done.
 │  • Load OB stack → 3D array (N_ob, y, x)                        │
 │  • Load Dark Current stack → 3D array (N_dark, y, x)            │
 │  • Validate dimensions match (y, x must be same)                │
+│  IF ROI specified, as each frame is read:                       │
+│    • Keep only the ROI: frame[y0:y1, x0:x1]                     │
+│    • Only the ROI is stored; memory scales with the ROI         │
+│    • Runs of a family must share the uncropped frame size       │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -170,14 +175,7 @@ processing work is done.
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 3: ROI Clipping (Optional)                                │
-│  ───────────────────────────────                                │
-│  IF ROI specified:                                              │
-│    • Crop all arrays to ROI: arr[:, y0:y1, x0:x1]               │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│  STEP 4: Prepare Reference Images                               │
+│  STEP 3: Prepare Reference Images                               │
 │  ────────────────────────────────                               │
 │  • Average dark images: Dark_avg = mean(Dark, axis=0) → 2D      │
 │  • Average OB images: OB_avg = mean(OB, axis=0) → 2D            │
@@ -185,7 +183,7 @@ processing work is done.
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 5: Dead Pixel Detection                                   │
+│  STEP 4: Dead Pixel Detection                                   │
 │  ────────────────────────────                                   │
 │  • Identify Sample pixels with zero total counts, summed over   │
 │    the image-stack dimension (N_image)                          │
@@ -194,7 +192,7 @@ processing work is done.
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 6: Gamma Filtering                                        │
+│  STEP 5: Gamma Filtering                                        │
 │  ───────────────────────                                        │
 │  CRITICAL for MARS (SANS beamline contamination)                │
 │                                                                 │
@@ -211,7 +209,7 @@ processing work is done.
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 7: Dark Current Correction                                │
+│  STEP 6: Dark Current Correction                                │
 │  ───────────────────────────────                                │
 │  FOR each image i in Sample stack:                              │
 │    Sample_corr[i] = Sample[i] - Dark_avg                        │
@@ -224,7 +222,7 @@ processing work is done.
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 8: Normalization                                          │
+│  STEP 7: Normalization                                          │
 │  ─────────────────────                                          │
 │  FOR each image i:                                              │
 │                                                                 │
@@ -239,7 +237,7 @@ processing work is done.
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 9: Experiment Error Propagation                           │
+│  STEP 8: Experiment Error Propagation                           │
 │  ────────────────────────────────────                           │
 │  Poisson statistics for CCD counts:                             │
 │    σ_sample = √(Sample)                                         │
@@ -261,7 +259,7 @@ processing work is done.
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 10: Output                                                │
+│  STEP 9: Output                                                 │
 │  ────────────                                                   │
 │  • Transmission: 3D array (N_images, y, x) or (θ, y, x) for CT  │
 │  • Experiment Error: 3D array (same shape as Transmission)      │
@@ -300,11 +298,11 @@ detectors) and halves the in-memory footprint of large stacks.
 
 | Step | Decision | Options |
 |------|----------|---------|
+| 1 | ROI needed? | Crop each frame as it loads, or full frame |
 | 2 | Multiple runs? | Combine or single run |
-| 3 | ROI needed? | Apply crop or full frame |
-| 4 | OB averaging | Mean vs Median |
-| 6 | Gamma filter method | Automatic / Manual / Statistical |
-| 7 | Negative value handling | Clip to zero / Flag invalid |
+| 3 | OB averaging | Mean vs Median |
+| 5 | Gamma filter method | Automatic / Manual / Statistical |
+| 6 | Negative value handling | Clip to zero / Flag invalid |
 
 ---
 
@@ -316,8 +314,8 @@ detectors) and halves the in-memory footprint of large stacks.
 |-----------|---------|----------|
 | `loaders.tiff_loader` | Load TIFF stacks | P0 |
 | `loaders.fits_loader` | Load FITS stacks | P0 |
+| `loaders.stack_loader` (`roi=`) | Crop each frame to the ROI as it loads | P1 |
 | `processing.run_combiner` | Aggregate multiple runs | P1 |
-| `processing.roi_clipper` | Apply ROI to arrays | P1 |
 | `tof.pixel_detector` | Identify dead pixels | P0 |
 | `filters.gamma_filter` | Remove gamma contamination | P0 |
 | `processing.dark_corrector` | Subtract dark current | P0 |

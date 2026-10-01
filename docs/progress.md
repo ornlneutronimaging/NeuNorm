@@ -74,10 +74,10 @@ transmission = run_mars_ccd_pipeline(
 Three sample runs of 40 frames at 512×512, two open-beam runs of 20, one dark run of 10:
 
 ```text
-load_sample:  100%|██████████| 120/120 [00:01<00:00, 835.97item/s, attaching variances (40.0 MiB)]
-load_ob:      100%|██████████| 40/40   [00:01<00:00,  29.68item/s, attaching variances (20.0 MiB)]
+load_sample:  100%|██████████| 120/120 [00:01<00:00, 835.97item/s, attaching variances to 40 frames of 512 x 512 px (40.0 MiB)]
+load_ob:      100%|██████████| 40/40   [00:01<00:00,  29.68item/s, attaching variances to 20 frames of 512 x 512 px (20.0 MiB)]
 combine_runs: 100%|██████████| 3/3     [00:01<00:00,   2.31item/s, combining 1 dark run(s)]
-load_dark:    100%|██████████| 10/10   [00:01<00:00,   7.76item/s, attaching variances (10.0 MiB)]
+load_dark:    100%|██████████| 10/10   [00:01<00:00,   7.76item/s, attaching variances to 10 frames of 512 x 512 px (10.0 MiB)]
 gamma_filter: 100%|██████████| 4/4     [00:01<00:00,   2.84item/s, detecting and replacing outliers]
 normalize:    100%|██████████| 3/3     [00:00<00:00,  20.47item/s, correcting shared-dark variance]
 export:       100%|██████████| 4/4     [00:00<00:00,  97.85item/s, writing metadata]
@@ -126,11 +126,11 @@ finally:
         bar.close()
 ```
 
-Run against 40 sample frames and 20 open-beam frames, that draws:
+Run against 40 sample frames and 20 open-beam frames at 256×256, that draws:
 
 ```text
-load_sample:  100%|██████████| 40/40 [00:00<00:00, 209.93it/s, attaching variances (10.0 MiB)]
-load_ob:      100%|██████████| 20/20 [00:00<00:00, 123.05it/s, attaching variances (5.0 MiB)]
+load_sample:  100%|██████████| 40/40 [00:00<00:00, 209.93it/s, attaching variances to 40 frames of 256 x 256 px (10.0 MiB)]
+load_ob:      100%|██████████| 20/20 [00:00<00:00, 123.05it/s, attaching variances to 20 frames of 256 x 256 px (5.0 MiB)]
 combine_runs: 100%|██████████| 2/2   [00:00<00:00,  13.29it/s, combining 1 open-beam run(s)]
 gamma_filter: 100%|██████████| 4/4   [00:00<00:00,  29.10it/s, detecting and replacing outliers]
 normalize:    100%|██████████| 1/1   [00:00<00:00,  44.00it/s, dividing sample by open beam]
@@ -214,8 +214,9 @@ before retrying. That is not specific to cancellation — any error during expor
 
 The table below is about the **count** — what advances the number a bar shows. A callback receives more
 events than that: NeuNorm also emits *notes*, which carry a label without advancing the count (naming a
-large allocation, or a step whose cost is only known mid-run). So a callback counting its own invocations
-will exceed the totals here; use `event.completed` rather than counting calls.
+whole-stack step such as filling the variances, or a step whose cost is only known mid-run). So a
+callback counting its own invocations will exceed the totals here; use `event.completed` rather than
+counting calls.
 
 | Stage | What advances the count | Notes |
 |---|---|---|
@@ -228,10 +229,11 @@ will exceed the totals here; use `event.completed` rather than counting calls.
 | `normalize` | named steps | the flux correction (background-ROI or proton-charge) and the division; the count depends on which correction was requested |
 | `export` | named steps for HDF5 | one event per file with `tiff_one_file_per_image=True`, which is the only export path with a determinate item count |
 
-Some work is deliberately **not** reported: the metadata reads, the ROI crop, the open-beam and dark
-averaging, dead and hot pixel detection, the statistics analysis behind `rebin_by_tof=True`, the spatial
-rebin and the air-region correction. Each is a single pass that runs between named stages, and inventing
-a step for each would inflate the counts without adding information. Each pipeline's `progress` docstring
+Some work is deliberately **not** reported: the metadata reads, the ROI crop (except on the CCD
+pipelines, which crop each frame as it loads), the open-beam and dark averaging, dead and hot pixel
+detection, the statistics analysis behind `rebin_by_tof=True`, the spatial rebin and the air-region
+correction. Each is a single pass that runs between named stages, and inventing a step for each would
+inflate the counts without adding information. Each pipeline's `progress` docstring
 lists what its own run leaves out, because the lists differ — VENUS TPX1 detects dead pixels but not hot
 ones, the MARS pipelines have no air-region correction, and only the TOF pipelines rebin.
 
@@ -242,8 +244,8 @@ is briefly silent at the very start; for later runs it happens with the load bar
 pause lands mid-stage. Either way that gap is the metadata, not a hang.
 
 So a bar that pauses briefly between stages is expected. A bar that pauses *within* a stage is telling
-you where the time goes — and if it pauses on `attaching variances (40.0 MiB)`, that is the allocation,
-not a hang.
+you where the time goes — and if it pauses on `attaching variances to 40 frames of 512 x 512 px (40.0 MiB)`,
+that is the variances being filled, not a hang.
 
 ## Log records and bars share stderr
 
@@ -353,27 +355,23 @@ work that has no item of its own.
 
 ## A note on where the time actually goes
 
-For large stacks the wall clock is dominated by **peak memory, not I/O**. On 100 uncompressed
-1024×1024 frames — a 400 MiB stack — the peak is a measured 4.45× the stack for `load_tiff_stack` and
-4.46× for `load_fits_stack`, down from 5.37× and 5.26× measured the same way before the loaders
-decoded into a pre-allocated array. What is left is the output array, the variances copy, and scipp's
-own copy of each. Large enough frames still push the process into swap, at which point per-file cost
-grows with the file count; the lower peak moves that point out, and where it now sits has not been
-re-measured.
+For large stacks the wall clock is dominated by **peak memory, not I/O**. Loading a stack holds about
+2× the stack — its values and its variances, allocated once and filled in place — plus up to
+`max_workers` frames being decoded at once. On 100 uncompressed 1024×1024 frames, a 400 MiB stack, the
+measured peak of `load_tiff_stack` and `load_fits_stack` is 2.0× the stack. With `roi` set, only that
+region of each frame is held, so the stack term scales with the region rather than the detector. The
+frames being decoded are still whole, and they set a floor under the peak: about 0.5 GiB for 6300×6100
+uncompressed 16-bit frames on the default 8 workers. A stack too large
+for memory still pushes the process into swap, where per-file cost grows with the file count.
 
-Parallel decode therefore buys less than a decode benchmark suggests. Stored compressed, those same
-100 frames decode about 2× faster on eight threads, but the whole `load_tiff_stack` call is only
-about 1.7× faster and `load_fits_stack` about 1.2×; the difference is allocation and copying, which
-threads do not help. Treat those three as ratios rather than measurements: the peak-memory multiples
-above reproduce to about a tenth between runs, while the wall-clock numbers move by around 20% on
-the same machine, so the useful claim is "noticeably faster, but not by the factor the decode alone
-suggests". Progress reporting makes that wait legible and shows you which allocation you are waiting
-on; reducing it further is separate work.
+Threads speed up the decode, not the rest of the load. Stored compressed, those same 100 frames decode
+about 2× faster on eight threads, but the first frame is decoded alone before the others start, and the
+variances are filled afterwards on the calling thread. Progress reporting makes the wait legible and
+shows you which step you are waiting on.
 
-`load_tiff_stack` opens each file twice — Pillow for the tags, tifffile for the pixels — where the
-version before it opened once. Reading the file once and parsing the buffer twice removes the second
-open, but holds the raw bytes per in-flight frame and pushes peak memory from 4.5× the stack to
-5.0×, so it is not what the loader does. `load_fits_stack` opens once.
+`load_tiff_stack` opens each file twice — Pillow for the tags, tifffile for the pixels. Reading each
+file once and parsing the buffer twice would remove the second open, but would hold the raw bytes of
+every frame in flight, so it is not what the loader does. `load_fits_stack` opens once.
 
 ## See also
 

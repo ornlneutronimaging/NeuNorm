@@ -1,10 +1,9 @@
 """Progress reporting through the TIFF/FITS load path.
 
 The load loop is the unit a user counts — "1000 files" — and it is the only place where a slow or
-contended filesystem becomes visible per item. The tick after the loop matters for a different
-reason: the memory peak is still a measured ~4.5x multiple of the stack and part of it lands *after*
-the last file, in the variances copy and scipp's own copies. Without that tick a bar reaches 100%
-and then goes silent through the part that can exhaust RAM.
+contended filesystem becomes visible per item. The note after the loop matters for a different
+reason: filling the variances is a whole-stack pass that runs *after* the last file. Without that
+note a bar reaches 100% and then goes silent through it.
 """
 
 import contextlib
@@ -86,17 +85,15 @@ def test_loader_emits_one_event_per_file(loader, paths_fn):
     ids=["tiff", "fits"],
 )
 def test_loader_announces_the_post_loop_allocations_without_advancing(loader, paths_fn):
-    """The whole-stack allocation is announced after the last file, as a note.
+    """The whole-stack variances fill is announced after the last file, as a note.
 
-    It is an announcement, not a completion: it fires *before* the allocation so a bar that stops
-    there tells the user exactly where the run is stuck. It therefore must not advance the count —
+    It is an announcement, not a completion: it fires *before* the fill so a bar that stops there
+    tells the user exactly where the run is stuck. It therefore must not advance the count —
     `completed` is documented as absolute and monotonic, and a fresh per-call stage reporter would
     restart at 1 on every load and leave a bar frozen at its first tick.
 
-    There is one note, not two. Both loaders used to build a list of frames and stack it, which was
-    announced as well; they now decode straight into a pre-allocated array, so only the variances
-    copy is left to name — announcing a phase that no longer runs would point a stalled bar at the
-    wrong place.
+    There is one note: the loaders decode straight into a pre-allocated stack, so the variances fill
+    is the only whole-stack step after the loop.
     """
     expected = ["attaching variances"]
 

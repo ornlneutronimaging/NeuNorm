@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The CCD pipelines crop to `roi` as each frame loads**
+  ([#236](https://github.com/ornlneutronimaging/NeuNorm/issues/236)). `run_mars_ccd_pipeline` and
+  `run_venus_ccd_pipeline` keep only the ROI of each sample, open-beam and dark frame, so peak memory
+  scales with the ROI area and the image count rather than the detector size. Output is unchanged.
+  `load_stack`, `load_tiff_stack` and `load_fits_stack` take a keyword-only `roi` with the same effect;
+  the result is identical to `apply_roi` on the full load. On 6300×6100 frames with a 1704×326 ROI,
+  28 open-beam and 15 dark runs, MARS CCD peaks at 0.2 GB for one sample image (9.5 GB before),
+  3.8 GB for 100 (70.6 GB before) and 19.2 GB for 500 (317.8 GB before), measured on macOS. An invalid ROI now raises before any file
+  is read, and one that does not fit the frames as soon as the first frame is decoded.
+
+- **Stack loading fills values and variances in place**
+  ([#236](https://github.com/ornlneutronimaging/NeuNorm/issues/236)). `load_tiff_stack` and
+  `load_fits_stack` peak at 2.0× the stack, down from 4.0×, for every pipeline that loads image
+  stacks. The CCD pipelines no longer copy a family that has a single run; with `roi=None`, MARS CCD
+  on the frames above peaks at 9.2 GB for one sample image and 11.3 GB for four (9.5 and 17.1 GB
+  before). A stack that cannot be allocated raises a `MemoryError` naming its shape and size.
+
+- **The variances progress note names the stack**
+  ([#236](https://github.com/ornlneutronimaging/NeuNorm/issues/236)), e.g.
+  `attaching variances to 40 frames of 512 x 512 px (40.0 MiB)` instead of
+  `attaching variances (40.0 MiB)`.
+
 ## [2.5.0] - 2026-09-11
 
 ### Added

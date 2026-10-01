@@ -16,6 +16,11 @@ flowchart TD
         A2[TIFF/FITS] --> B[Load Open Beam]
         A3[TIFF/FITS] --> C[Load Dark Current]
         A4[DAQ] --> M[Load p_charge]
+        subgraph ROI["ROI Crop, Each Frame As It Is Read"]
+            D{ROI Specified?}
+            E[Keep ROI of Each Frame]
+            F[Full Frame]
+        end
     end
 
     subgraph RunCombine["2. Run Combining"]
@@ -24,68 +29,65 @@ flowchart TD
         RC3[Single Run]
     end
 
-    subgraph ROI["3. ROI Clipping"]
-        D{ROI Specified?}
-        E[Apply ROI]
-        F[Full Frame]
-    end
-
-    subgraph Prepare["4. Reference Preparation"]
+    subgraph Prepare["3. Reference Preparation"]
         G[Average Dark → 2D]
         H[Average OB → 2D]
     end
 
-    subgraph PixelDetect["5. Dead Pixel Detection"]
+    subgraph PixelDetect["4. Dead Pixel Detection"]
         PD[Identify Zero-Count Pixels]
         PM[Dead Pixel Mask]
     end
 
-    subgraph Gamma["6. Gamma Filtering"]
+    subgraph Gamma["5. Gamma Filtering"]
         GF{Gamma Filter?}
         GY[Apply Filter]
         GN[Skip]
     end
 
-    subgraph DarkCorr["7. Dark Correction"]
+    subgraph DarkCorr["6. Dark Correction"]
         DC1["Sample_corr = Sample - Dark"]
         DC2["OB_corr = OB - Dark"]
     end
 
-    subgraph BeamCorr["8. p_charge Correction"]
+    subgraph BeamCorr["7. p_charge Correction"]
         BC["f = p_charge_OB / p_charge_Sample"]
     end
 
-    subgraph Norm["9. Normalization"]
+    subgraph Norm["8. Normalization"]
         N["T = (Sample_corr / OB_corr) × f"]
     end
 
-    subgraph AirCorr["10. Air Region Correction (Optional)"]
+    subgraph AirCorr["9. Air Region Correction (Optional)"]
         AC1{Air ROI?}
         AC2["T_final = T / mean(T_air)"]
         AC3[Skip]
     end
 
-    subgraph UQ["11. Experiment Error"]
+    subgraph UQ["10. Experiment Error"]
         UQ1[Poisson + p_charge σ]
         UQ2[Error Propagation]
     end
 
-    subgraph Output["12. Output"]
+    subgraph Output["11. Output"]
         O1[Transmission 3D]
         O2[Uncertainty 3D]
         O3[Dead Pixel Mask]
         O4[Metadata]
     end
 
-    Input --> RC1
-    RC1 -->|Yes| RC2
-    RC1 -->|No| RC3
-    RC2 --> D
-    RC3 --> D
+    A --> D
+    B --> D
+    C --> D
     D -->|Yes| E
     D -->|No| F
-    E --> Prepare
-    F --> Prepare
+    E --> RC1
+    F --> RC1
+    M --> RC1
+    RC1 -->|Yes| RC2
+    RC1 -->|No| RC3
+    RC2 --> Prepare
+    RC3 --> Prepare
     G --> PD
     H --> PD
     PD --> PM
@@ -133,7 +135,7 @@ flowchart TD
 | Sample images | TIFF/FITS stack | Yes | Raw neutron transmission images |
 | Open Beam (OB) | TIFF/FITS stack | Yes | Reference without sample |
 | Dark Current | TIFF/FITS stack | No | Electronic noise baseline (beam off). Optional — omit `dark_paths` (or pass `[]`) to skip dark correction. |
-| ROI | (x0, y0, x1, y1) | No | Region of interest to crop |
+| ROI | (x0, y0, x1, y1) | No | Region of interest to crop. Each frame is cropped as it is read, before runs are combined, so memory scales with the ROI rather than the detector. |
 | Reference ROI | (x0, y0, x1, y1) | No | ROI for beam stability correction |
 
 **Metadata** (from files or DAQ):
@@ -159,6 +161,10 @@ flowchart TD
 │  • Load Dark Current stack → 3D array (N_dark, y, x)            │
 │  • Load metadata: p_charge per image                            │
 │  • Validate dimensions match (y, x must be same)                │
+│  IF ROI specified, as each frame is read:                       │
+│    • Keep only the ROI: frame[y0:y1, x0:x1]                     │
+│    • Only the ROI is stored; memory scales with the ROI         │
+│    • Runs of a family must share the uncropped frame size       │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -175,14 +181,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 3: ROI Clipping (Optional)                                │
-│  ───────────────────────────────                                │
-│  IF ROI specified:                                              │
-│    • Crop all arrays to ROI: arr[:, y0:y1, x0:x1]               │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│  STEP 4: Prepare Reference Images                               │
+│  STEP 3: Prepare Reference Images                               │
 │  ────────────────────────────────                               │
 │  • Average dark images: Dark_avg = mean(Dark, axis=0) → 2D      │
 │  • Average OB images: OB_avg = mean(OB, axis=0) → 2D            │
@@ -190,7 +189,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 5: Dead Pixel Detection                                   │
+│  STEP 4: Dead Pixel Detection                                   │
 │  ────────────────────────────                                   │
 │  • Detect on the SAMPLE: pixels whose total counts, summed over │
 │    the image-stack dimension (N_image), are exactly zero        │
@@ -199,7 +198,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 6: Gamma Filtering (Optional)                             │
+│  STEP 5: Gamma Filtering (Optional)                             │
 │  ──────────────────────────────────                             │
 │  Less critical at VENUS than MARS (no adjacent SANS beamline)   │
 │                                                                 │
@@ -210,7 +209,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 7: Dark Current Correction                                │
+│  STEP 6: Dark Current Correction                                │
 │  ───────────────────────────────                                │
 │  FOR each image i in Sample stack:                              │
 │    Sample_corr[i] = Sample[i] - Dark_avg                        │
@@ -221,7 +220,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 8: p_charge Beam Correction                               │
+│  STEP 7: p_charge Beam Correction                               │
 │  ────────────────────────────────                               │
 │  PRIMARY correction for VENUS (pulsed source fluctuates)        │
 │                                                                 │
@@ -233,7 +232,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 9: Normalization                                          │
+│  STEP 8: Normalization                                          │
 │  ─────────────────────                                          │
 │  FOR each image i:                                              │
 │                                                                 │
@@ -248,7 +247,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 10: Air Region Correction (Optional)                      │
+│  STEP 9: Air Region Correction (Optional)                       │
 │  ─────────────────────────────────────────                      │
 │  Post-normalization refinement if p_charge wasn't sufficient    │
 │                                                                 │
@@ -266,7 +265,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 11: Experiment Error Propagation                          │
+│  STEP 10: Experiment Error Propagation                          │
 │  ─────────────────────────────────────                          │
 │  Sources of uncertainty:                                        │
 │    • Poisson: σ_counts = √(N)                                   │
@@ -288,7 +287,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 12: Output                                                │
+│  STEP 11: Output                                                │
 │  ────────────                                                   │
 │  • Transmission: 3D array (N_images, y, x) or (θ, y, x) for CT  │
 │  • Experiment Error: 3D array (same shape as Transmission)      │
@@ -328,12 +327,12 @@ detectors) and halves the in-memory footprint of large stacks.
 
 | Step | Decision | Options |
 |------|----------|---------|
+| 1 | ROI needed? | Crop each frame as it loads, or full frame |
 | 2 | Multiple runs? | Combine or single run |
-| 3 | ROI needed? | Apply crop or full frame |
-| 4 | OB averaging | Mean vs Median |
-| 6 | Gamma filtering? | Apply / Skip |
-| 8 | p_charge available? | Apply (default) / Skip (not recommended) |
-| 10 | Air region correction? | Apply if p_charge insufficient / Skip |
+| 3 | OB averaging | Mean vs Median |
+| 5 | Gamma filtering? | Apply / Skip |
+| 7 | p_charge available? | Apply (default) / Skip (not recommended) |
+| 9 | Air region correction? | Apply if p_charge insufficient / Skip |
 
 ---
 
@@ -345,9 +344,9 @@ detectors) and halves the in-memory footprint of large stacks.
 |-----------|---------|----------|
 | `loaders.tiff_loader` | Load TIFF stacks | P0 |
 | `loaders.fits_loader` | Load FITS stacks | P0 |
+| `loaders.stack_loader` (`roi=`) | Crop each frame to the ROI as it loads | P1 |
 | `loaders.metadata_loader` | Extract p_charge from DAQ | P0 |
 | `processing.run_combiner` | Aggregate multiple runs | P0 (critical for VENUS) |
-| `processing.roi_clipper` | Apply ROI to arrays | P1 |
 | `tof.pixel_detector` | Identify dead pixels | P0 |
 | `filters.gamma_filter` | Remove gamma contamination | P1 |
 | `processing.dark_corrector` | Subtract dark current | P0 |
