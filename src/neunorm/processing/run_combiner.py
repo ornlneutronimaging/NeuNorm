@@ -24,6 +24,28 @@ def _metadata_matches(a: sc.Variable, b: sc.Variable, atol: float) -> bool:
     return bool(np.all(np.abs(av - bv) <= atol))
 
 
+def _require_same_shape(
+    index: int,
+    shape: tuple[int, ...],
+    dims: tuple[str, ...],
+    base_shape: tuple[int, ...],
+    base_dims: tuple[str, ...],
+) -> None:
+    """Raise ``ValueError`` if run ``index`` differs in shape or dims from the base run (run 0)."""
+    if shape != base_shape or dims != base_dims:
+        logger.error(
+            "Run {} has shape {} and dims {}, expected shape {} and dims {}",
+            index,
+            shape,
+            dims,
+            base_shape,
+            base_dims,
+        )
+        raise ValueError(
+            f"Run {index} has shape {shape} and dims {dims}, expected shape {base_shape} and dims {base_dims}"
+        )
+
+
 def combine_runs(  # noqa: C901
     runs: list[sc.DataArray],
     metadata_keys_to_sum: Sequence[str] = ("acquisition_time", "p_charge"),
@@ -85,18 +107,7 @@ def combine_runs(  # noqa: C901
             raise ValueError(f"Metadata key '{key}' not found in base run for matching")
 
     for i, run in enumerate(runs[1:], 1):
-        if run.shape != base_shape or run.dims != base_dims:
-            logger.error(
-                "Run {} has shape {} and dims {}, expected shape {} and dims {}",
-                i,
-                run.shape,
-                run.dims,
-                base_shape,
-                base_dims,
-            )
-            raise ValueError(
-                f"Run {i} has shape {run.shape} and dims {run.dims}, expected shape {base_shape} and dims {base_dims}"
-            )
+        _require_same_shape(i, run.shape, run.dims, base_shape, base_dims)
         for key in metadata_check_match:
             if key not in run.coords:
                 logger.error("Metadata key '{}' not found in run {} for matching", key, i)

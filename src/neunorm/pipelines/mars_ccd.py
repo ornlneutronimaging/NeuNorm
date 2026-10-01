@@ -21,7 +21,7 @@ from neunorm.data_models.roi import (
 from neunorm.exporters.hdf5_writer import hdf5_export_step_count, write_hdf5
 from neunorm.exporters.tiff_writer import tiff_export_step_count, write_tiff_stack
 from neunorm.filters.gamma_filter import GAMMA_FILTER_STEPS, apply_gamma_filter
-from neunorm.loaders.stack_loader import load_stack
+from neunorm.pipelines._ccd_common import combine_owned_runs, load_runs
 from neunorm.processing.normalizer import (
     BackgroundROILike,
     normalize_step_count,
@@ -30,8 +30,6 @@ from neunorm.processing.normalizer import (
     normalize_with_dark_step_count,
 )
 from neunorm.processing.reference_preparer import prepare_reference
-from neunorm.processing.roi_clipper import apply_roi
-from neunorm.processing.run_combiner import combine_runs
 from neunorm.tof.pixel_detector import detect_dead_pixels
 from neunorm.utils.progress import (
     STAGE_COMBINE_RUNS,
@@ -61,10 +59,9 @@ def run_mars_ccd_pipeline(  # noqa: C901
 ) -> sc.DataArray:
     """Execute MARS CCD/CMOS normalization pipeline.
 
-    Pipeline Steps (10 total)
-    - Load TIFF/FITS (sample, OB, dark [optional])
+    Pipeline Steps (8 total)
+    - Load TIFF/FITS (sample, OB, dark [optional]), cropping each frame to the ROI (optional)
     - Run combine (optional)
-    - ROI clip (optional)
     - Average dark (optional) / OB
     - Dead pixel detection (existing tof/pixel_detector.py)
     - Gamma filtering (filters/gamma_filter.py)
@@ -91,7 +88,11 @@ def run_mars_ccd_pipeline(  # noqa: C901
         raises ``ValueError`` (the default exists only so ``dark_paths`` can keep
         its positional slot).
     roi : Optional[tuple]
-        Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
+        Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple. Each sample,
+        open-beam and dark frame is cropped as it is read, so memory scales with the region and the
+        number of images rather than with the detector size; the output, including the ``x`` and ``y``
+        coordinates, is the same as cropping after the load. Runs within a family must still have the
+        same uncropped frame size.
     gamma_filter : bool
         Whether to apply gamma filtering to the sample data (default: True)
     background_roi : ROI, MaskROI, tuple, or a sequence of them
@@ -112,9 +113,9 @@ def run_mars_ccd_pipeline(  # noqa: C901
 
         The stages reported are the sample, open-beam and dark loads — **one event per file**, counted
         across all input runs rather than restarting per run — then the run combine, the gamma filter,
-        the normalization and the export. Not every operation in between is reported: the ROI crop,
-        the dark/open-beam averaging and the dead-pixel detection are single whole-array passes that
-        run between named stages. See :mod:`neunorm.utils.progress`.
+        the normalization and the export. The ROI crop happens inside the loads. Not every operation
+        in between is reported: the dark/open-beam averaging and the dead-pixel detection are single
+        whole-array passes that run between named stages. See :mod:`neunorm.utils.progress`.
 
     Notes
     -----
@@ -146,9 +147,9 @@ def run_mars_ccd_pipeline(  # noqa: C901
         # restarting per run. The `stage` argument of the leaf is not used here — a handed-down reporter
         # carries its own label, and passing one would be silently ignored.
         load_sample = run_progress.for_stage(STAGE_LOAD_SAMPLE, total=total_across_groups(sample_paths))
-        samples = [load_stack(paths, progress=load_sample) for paths in sample_paths]
+        samples = load_runs(sample_paths, roi=roi, progress=load_sample)
         load_ob = run_progress.for_stage(STAGE_LOAD_OB, total=total_across_groups(ob_paths))
-        ob = [load_stack(paths, progress=load_ob) for paths in ob_paths]
+        ob = load_runs(ob_paths, roi=roi, progress=load_ob)
 
         # Combining runs is the largest operation here that no instrumented leaf covers: it copies the
         # first run's values and variances, then adds each further run in place. Reported as named steps
@@ -161,7 +162,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
         # effectively averaged/normalized across runs (not summed) when normalize_by_runs=True.
 
         combine.note(f"combining {len(samples)} sample run(s)")
-        sample = combine_runs(
+        sample = combine_owned_runs(
             samples,
             metadata_keys_to_sum=("ExposureTime",),
             metadata_check_match=[
@@ -176,9 +177,11 @@ def run_mars_ccd_pipeline(  # noqa: C901
             metadata_match_atol=metadata_match_atol,
         )
         combine()
+        # Release the per-run stacks once combined rather than holding them to the end of the run.
+        del samples
 
         combine.note(f"combining {len(ob)} open-beam run(s)")
-        ob = combine_runs(
+        ob = combine_owned_runs(
             ob,
             metadata_keys_to_sum=("ExposureTime",),
             metadata_check_match=[
@@ -198,9 +201,9 @@ def run_mars_ccd_pipeline(  # noqa: C901
         dark = None
         if dark_paths:
             load_dark = run_progress.for_stage(STAGE_LOAD_DARK, total=total_across_groups(dark_paths))
-            dark_runs = [load_stack(paths, progress=load_dark) for paths in dark_paths]
+            dark_runs = load_runs(dark_paths, roi=roi, progress=load_dark)
             combine.note(f"combining {len(dark_runs)} dark run(s)")
-            dark = combine_runs(
+            dark = combine_owned_runs(
                 dark_runs,
                 metadata_keys_to_sum=("ExposureTime",),
                 metadata_check_match=[
@@ -211,13 +214,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
                 metadata_match_atol=metadata_match_atol,
             )
             combine()
-
-        # Apply ROI if specified
-        if roi:
-            sample = apply_roi(sample, roi)
-            ob = apply_roi(ob, roi)
-            if dark is not None:
-                dark = apply_roi(dark, roi)
+            del dark_runs
 
         # Average dark and OB
         if dark is not None:
