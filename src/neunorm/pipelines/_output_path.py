@@ -30,8 +30,8 @@ def spectrum_tiff_error(output_path: Path) -> ValueError:
 def resolve_output_path(output_path: Optional[str | Path], *, spectrum: bool = False) -> Path:
     """Return ``output_path`` as a ``Path``, refusing a suffix the export step cannot write.
 
-    Entry points call this before reading any input, so a bad path fails at once rather than after
-    the whole run. The messages are the ones the export step raises for the same path.
+    Entry points call this before reading any input, so a missing path or an unsupported suffix fails
+    at once rather than after the whole run. The messages are the ones the export step raises for the same path.
 
     Parameters
     ----------
