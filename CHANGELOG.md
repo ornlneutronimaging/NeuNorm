@@ -52,6 +52,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The test suite runs on Python 3.11, the oldest Python NeuNorm supports**
+  ([#254](https://github.com/ornlneutronimaging/NeuNorm/issues/254)). Eight pipeline and
+  loader test classes used `TemporaryDirectory(delete=False)`, which needs Python 3.12. A new `py311`
+  pixi environment runs the suite on Python 3.11 (`pixi run -e py311 test`), and CI runs it before
+  either publish job. The `test-docs` pixi task, which could not run because the documentation does
+  not load `sphinx.ext.doctest`, is removed; the docstring examples remain documentation and the unit
+  tests remain the test suite.
+
+- **The PyPI and conda packages require scitiff 26.6 and scipy 1.13 or newer**
+  ([#252](https://github.com/ornlneutronimaging/NeuNorm/issues/252)). With scitiff 26.1,
+  the previous minimum, `write_tiff_stack` raised `ValueError` on a mask it writes as metadata: any
+  mask in one-file-per-image export unless `concat_stdevs_and_mask=True`, which broke the pipelines'
+  per-image TIFF output, and a mask with fewer dimensions than the image in stack export. scipy 1.11
+  and 1.12, allowed before, cannot be installed with numpy 2, which NeuNorm requires. Development
+  and CI move to pixi 0.81 with the pixi-build-python 0.8 build backend, so `pixi run conda-build`
+  works with current pixi. The CI conda package check now installs the built package alone in a new
+  environment and imports every `neunorm` module and `tqdm` there, instead of importing only the
+  pipelines in an environment that already held some of the dependencies.
+
 - **The CCD pipelines reject sample, open-beam and dark frames of different size**
   ([#238](https://github.com/ornlneutronimaging/NeuNorm/issues/238)). `run_mars_ccd_pipeline` and
   `run_venus_ccd_pipeline` raise a `ValueError` naming both families and both frame sizes as soon as

@@ -22,7 +22,7 @@ class TestVenusTPX3HistogramPipeline:
         cls.sample_tiff_paths = []
         cls.ob_tiff_paths = []
 
-        cls._tmpdir = tempfile.TemporaryDirectory(delete=False)
+        cls._tmpdir = tempfile.TemporaryDirectory()
         tmp_dir = Path(cls._tmpdir.name)
 
         # create 5 sample tiffs with values 81-85 and metadata.

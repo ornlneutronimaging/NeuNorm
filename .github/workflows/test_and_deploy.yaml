@@ -33,7 +33,7 @@ jobs:
       - name: Setup pixi
         uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
         with:
-          pixi-version: v0.70.1
+          pixi-version: v0.81.0
           manifest-path: pyproject.toml
           frozen: true
 
@@ -50,6 +50,28 @@ jobs:
           token: ${{ env.CODECOV_TOKEN }}
           files: ./coverage.xml
           fail_ci_if_error: false
+
+  tests-py311:
+    # requires-python is >=3.11, and the main test matrix runs a newer Python.
+    name: Unit tests (Python 3.11)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup pixi
+        uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
+        with:
+          pixi-version: v0.81.0
+          manifest-path: pyproject.toml
+          frozen: true
+          environments: py311
+
+      - name: Run unit tests
+        run: pixi run -e py311 test
 
   docs:
     # Read the Docs was previously the only consumer of the documentation build, and
@@ -69,7 +91,7 @@ jobs:
       - name: Setup pixi
         uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
         with:
-          pixi-version: v0.70.1
+          pixi-version: v0.81.0
           manifest-path: pyproject.toml
           frozen: true
           environments: docs
@@ -92,7 +114,7 @@ jobs:
       - name: Setup pixi
         uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
         with:
-          pixi-version: v0.70.1
+          pixi-version: v0.81.0
           manifest-path: pyproject.toml
           frozen: true
 
@@ -109,14 +131,14 @@ jobs:
           module-name: ${{ env.MODULE_NAME }}
           local-channel: /tmp/local-channel
           python-version: "3.11"
-          # `module-name` only reaches `neunorm`, whose __init__ imports nothing but
-          # _version -- so that check passes even when a run-dependency needed by the
-          # actual library is missing from the recipe, which is how a missing scitiff
-          # shipped in every 2.x conda package. Import the real surface instead: every
-          # pipeline, which transitively pulls the exporters, loaders and processing
-          # modules and therefore every third-party run-dependency.
+          # `module-name` only imports `neunorm`, whose __init__ imports nothing but
+          # _version, and the action's env also holds conda-build, which brings tqdm
+          # and pydantic. Install the built package alone in a new env and import
+          # every module in it, plus tqdm (imported inside a function), so a
+          # run-dependency missing from the recipe fails here.
           extra-commands: |
-            python -c "import neunorm.pipelines.mars_ccd, neunorm.pipelines.mars_tpx3, neunorm.pipelines.venus_ccd, neunorm.pipelines.venus_tpx1, neunorm.pipelines.venus_tpx3_event, neunorm.pipelines.venus_tpx3_histogram"
+            micromamba create -y -n neunorm-only -c /tmp/local-channel -c conda-forge python=3.11 "neunorm==$(python -c 'import neunorm; print(neunorm.__version__)')"
+            micromamba run -n neunorm-only python -c "import importlib, pkgutil, neunorm, tqdm; [importlib.import_module(m.name) for m in pkgutil.walk_packages(neunorm.__path__, 'neunorm.')]"
 
       - name: Upload conda package as artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -127,7 +149,7 @@ jobs:
   publish:
     name: Upload package to anaconda
     runs-on: ubuntu-latest
-    needs: [tests, conda-build]
+    needs: [tests, tests-py311, conda-build]
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Checkout
@@ -139,7 +161,7 @@ jobs:
       - name: Setup Pixi
         uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
         with:
-          pixi-version: v0.70.1
+          pixi-version: v0.81.0
           manifest-path: pyproject.toml
           frozen: true
 
@@ -162,7 +184,7 @@ jobs:
   pypi-publish:
     name: Upload release to PyPI
     runs-on: ubuntu-latest
-    needs: tests
+    needs: [tests, tests-py311]
     # Must match the "Environment name" on the PyPI trusted publisher exactly;
     # the publish step's OIDC claims include this environment.
     environment: pypi
@@ -179,7 +201,7 @@ jobs:
       - name: Setup pixi
         uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
         with:
-          pixi-version: v0.70.1
+          pixi-version: v0.81.0
           manifest-path: pyproject.toml
           frozen: true
 

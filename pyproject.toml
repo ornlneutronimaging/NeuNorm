@@ -29,10 +29,10 @@ maintainers = [
 dependencies = [
   # Core scientific stack
   "numpy>=2.0,<3",
-  "scipy>=1.11",
+  "scipy>=1.13",
   # Scipp for labeled multi-dimensional data
   "scipp>=25.8.0",
-  "scitiff>=26.1",
+  "scitiff>=26.6",
   # Data I/O
   "h5py>=3.0",
   "pillow",    # TIFF tags, and TIFF pixels wherever tifffile cannot decode them
@@ -118,7 +118,7 @@ platforms = ["linux-64", "osx-arm64"] # Add additional platforms as needed
 # Core scientific stack
 python = ">=3.11,<3.15"
 numpy = ">=2.0,<3"
-scipy = ">=1.11"
+scipy = ">=1.13"
 # Scipp for labeled data
 scipp = ">=25.8.0"
 plopp = ">=25.10.0" # Scipp visualization
@@ -149,7 +149,7 @@ versioningit = "*"
 [tool.pixi.package.run-dependencies]
 python = ">=3.11"
 numpy = ">=2.0,<3"
-scipy = ">=1.11"
+scipy = ">=1.13"
 scipp = ">=25.8.0"
 h5py = ">=3.0"
 pillow = ">=12.2.0"
@@ -158,14 +158,10 @@ pydantic = ">=2.0"
 loguru = ">=0.7"
 tqdm = "*"
 # exporters/tiff_writer.py imports scitiff at module level, and every pipeline imports
-# write_tiff_stack -- so omitting it here made the conda package's pipelines unimportable.
-# It went unnoticed because neunorm/__init__.py pulls in nothing but _version, so the
-# conda-verify import check passed regardless (see the extra-commands in
-# .github/workflows/test_and_deploy.yaml, which now import a pipeline instead).
-scitiff = ">=26.1"
-# loaders/tiff_loader.py imports tifffile at module level. It also arrives transitively via
-# scitiff, but a transitive dependency is exactly how the scitiff omission above went unnoticed,
-# and this table is hand-maintained -- so it is named explicitly rather than relied upon.
+# write_tiff_stack. 26.6 is the first release that accepts a 2-D mask in its metadata.
+scitiff = ">=26.6"
+# loaders/tiff_loader.py imports tifffile at module level, so it is named here even though
+# scitiff also depends on it.
 tifffile = "*"
 
 [tool.pixi.package]
@@ -173,7 +169,7 @@ name = "NeuNorm"
 version = "2.0.0a0" # placeholder, overwritten by sync-version
 
 [tool.pixi.package.build]
-backend = { name = "pixi-build-python", version = "0.4.*" }
+backend = { name = "pixi-build-python", version = "0.8.*" }
 
 # Environments and Features
 
@@ -194,6 +190,8 @@ jupyter = { features = [
   "jupyter",
   "viz",
 ], solve-group = "jupyter" }
+# The oldest Python NeuNorm supports (requires-python); CI runs the unit tests in it.
+py311 = { features = ["test", "py311"], solve-group = "py311" }
 
 [tool.pixi.feature.test.dependencies]
 pytest = ">=9.0.3"
@@ -201,6 +199,9 @@ pytest-cov = "*"
 pytest-repeat = "*"
 pytest-xdist = "*"
 numba = ">=0.60"    # For testing performance module
+
+[tool.pixi.feature.py311.dependencies]
+python = "3.11.*"
 
 [tool.pixi.feature.package.dependencies]
 anaconda-client = ">=1.13.0,<2"
@@ -249,7 +250,6 @@ ipywidgets = "*"
 [tool.pixi.tasks]
 # Documentation
 build-docs = { cmd = 'sphinx-build -b html -W --keep-going docs docs/_build', description = "Build documentation (warnings are errors)" }
-test-docs = { cmd = "sphinx-build -M doctest docs docs/_build", description = "Test building the documentation" }
 # Refresh the intersphinx inventories docs/conf.py falls back to when a site is down.
 # The script reads the projects and URLs from intersphinx_mapping in docs/conf.py.
 update-inventories = { cmd = "python docs/_inventory/update.py", description = "Re-download the committed intersphinx inventories in docs/_inventory/" }
@@ -268,7 +268,7 @@ pypi-publish = { cmd = "twine upload dist/*", description = "Publish the package
 pypi-publish-test = { cmd = "twine upload --repository testpypi dist/*", description = "Publish the package to TestPyPI", depends-on = [
   "pypi-build",
 ] }
-conda-build-command = { cmd = "pixi build", description = "Build the conda package command" }
+conda-build-command = { cmd = "pixi publish --path . --target-dir .", description = "Build the conda package command" }
 conda-build = { description = "Build the conda package", depends-on = [
   "backup-toml",
   "sync-version",
