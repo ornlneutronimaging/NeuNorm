@@ -21,6 +21,25 @@ from neunorm.utils.progress import STAGE_GAMMA_FILTER, ProgressLike, resolve_pro
 #: apart.
 GAMMA_FILTER_STEPS = 4
 
+#: Elements per block when the squared local mean is subtracted from the local mean of squares.
+_BLOCK_SIZE = 1 << 20
+
+
+def _subtract_squared_mean(mean_sq: np.ndarray, local_sum: np.ndarray, count: float) -> None:
+    """Subtract ``(local_sum / count) ** 2`` from ``mean_sq`` in place, ``_BLOCK_SIZE`` elements at a time.
+
+    Both arrays must be C-contiguous and of one shape, so that their flat reshapes are views. Each block
+    of the mean is computed as ``local_sum / count`` with that expression's dtype, so the result is
+    bit-identical to ``mean_sq - (local_sum / count) ** 2`` while only one block of the mean exists.
+    """
+    flat_var = mean_sq.reshape(-1)
+    flat_sum = local_sum.reshape(-1)
+    for start in range(0, flat_var.size, _BLOCK_SIZE):
+        block = slice(start, start + _BLOCK_SIZE)
+        local_mean = flat_sum[block] / count
+        flat_var[block] -= np.square(local_mean, out=local_mean)
+        del local_mean
+
 
 def apply_gamma_filter(
     data: sc.DataArray,
@@ -73,6 +92,15 @@ def apply_gamma_filter(
     -------
     sc.DataArray
         Gamma-filtered data with propagated variance if requested.
+
+    Notes
+    -----
+    Working memory, beyond the input, peaks at one float64 array, one array of the data's dtype and
+    one boolean array of the data's shape, about 3.3 times the size of a float32 stack's values. That
+    bound leaves out the scratch for one block of the local mean, a fixed 2**20 float64 values (8 MiB)
+    whatever the data's size. While the output, one copy of the values and variances, is made, the
+    boolean array and the outliers' replacement values, one element of the data's dtype per outlier,
+    are still alive. ``preserve_variance=False`` with outliers also pads a copy of the variances.
     """
     if kernel_size < 3 or kernel_size % 2 == 0:
         raise ValueError("kernel_size must be an odd integer >= 3.")
@@ -103,37 +131,46 @@ def apply_gamma_filter(
         kernel = footprint.astype(float)
         count = kernel.sum()
         report.note("local mean")
-        local_mean = ndi.convolve(values, kernel, mode="nearest") / count
-        local_mean_sq = ndi.convolve(values**2, kernel, mode="nearest") / count
+        # The float64 local mean of squares becomes the variance, then the deviation, then the threshold, in place.
+        local_var = ndi.convolve(values**2, kernel, mode="nearest") / count
+        local_sum = ndi.convolve(values, kernel, mode="nearest")
         report()
-        # Numerical guard: clip small negative variances due to floating point
         report.note("local deviation")
-        local_var = np.clip(local_mean_sq - local_mean**2, 0, None)
-        local_std = np.sqrt(local_var)
+        _subtract_squared_mean(local_var, local_sum, count)
+        del local_sum
+        # Numerical guard: clip small negative variances due to floating point
+        local_std = np.sqrt(np.clip(local_var, 0, None, out=local_var), out=local_var)
+        del local_var
         report()
         # Calculate local median using scipy's median filter. Named on its own because it dominates
         # the stage — roughly three quarters of it — so a bar parked here is not stuck, just slow.
         report.note("local median")
         local_median = ndi.median_filter(values, footprint=footprint, mode="nearest")
         report()
-        # Calculate threshold for outlier detection
+        # Calculate threshold for outlier detection, in the local deviation's buffer
         report.note("detecting and replacing outliers")
-        local_threshold = local_median + threshold_sigma * local_std
+        local_threshold = local_std
+        del local_std
+        local_threshold *= threshold_sigma
+        local_threshold += local_median
 
         # Identify outliers
         outlier_mask = values > local_threshold
+        del local_threshold
         outlier_count = np.sum(outlier_mask)
 
         logger.info("Identified {} outliers in data of shape {}", outlier_count, values.shape)
 
-        # Replace outliers with local median
-        filtered_values = values.copy()
-        filtered_values[outlier_mask] = local_median[outlier_mask]
+        # Replace outliers with local median, in the one copy of the data that becomes the output
+        replacement = local_median[outlier_mask]
+        del local_median
+        filtered = data.data.copy()
+        filtered.values[outlier_mask] = replacement
+        del replacement
         report()
 
         # Handle variance
         input_variances = data.data.variances
-        filtered_variances = input_variances.copy() if input_variances is not None else None
 
         if not preserve_variance and input_variances is not None and outlier_count > 0:
             # Recalculate variance for outliers from local neighborhood.
@@ -148,6 +185,7 @@ def apply_gamma_filter(
             # Pad input variances to handle edge cases when extracting neighborhood.
             # Matching the 'nearest' mode used in the filters.
             input_variances_padded = np.pad(input_variances, [(s // 2, s // 2) for s in size], mode="edge")
+            filtered_variances = filtered.variances
 
             for idx in np.ndindex(outlier_mask.shape):
                 if outlier_mask[idx]:
@@ -159,11 +197,6 @@ def apply_gamma_filter(
                     logger.debug("Updating variance for outlier at index {} to {}", idx, filtered_variances[idx])
 
         out = data.copy(deep=False)
-        out.data = sc.array(
-            dims=dims,
-            values=filtered_values,
-            variances=filtered_variances,
-            unit=data.unit,
-        )
+        out.data = filtered
 
         return out
