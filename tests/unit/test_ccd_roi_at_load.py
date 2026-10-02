@@ -6,7 +6,7 @@ must equal the result of loading and combining whole frames and cropping afterwa
 tests rebuild from the public functions: ``load_stack`` -> ``combine_runs`` -> ``apply_roi`` ->
 ``prepare_reference`` -> ``detect_dead_pixels`` -> ``apply_gamma_filter`` -> normalization ->
 ``astype("float32")``. Failing inputs must raise the messages ``combine_runs`` and ``apply_roi``
-raise for them.
+raise for them, and families of different frame size a message naming both.
 
 The frames are non-square and, apart from the pixels below, every pixel holds a different value.
 Every sample frame has a dead pixel inside both ROIs, and the first sample frame of each run has
@@ -40,7 +40,13 @@ from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.run_combiner import combine_runs
 from neunorm.tof.pixel_detector import detect_dead_pixels
-from neunorm.utils.progress import STAGE_COMBINE_RUNS, STAGE_LOAD_DARK, STAGE_LOAD_OB, STAGE_LOAD_SAMPLE
+from neunorm.utils.progress import (
+    STAGE_COMBINE_RUNS,
+    STAGE_LOAD_DARK,
+    STAGE_LOAD_OB,
+    STAGE_LOAD_SAMPLE,
+    STAGE_NORMALIZE,
+)
 
 # Full frames are 24 rows by 32 columns; "small" runs come from a detector of another size.
 NY, NX = 24, 32
@@ -146,7 +152,8 @@ def _write_run(directory: Path, fmt: str, family: str, run: int, n_frames: int, 
 
 @pytest.fixture(scope="module")
 def frames(tmp_path_factory):
-    """Per format and family: two full-size runs, a run of another frame size and a run with one frame fewer."""
+    """Per format and family: two full-size runs, a run of another frame size, a run with one frame fewer
+    and a run whose frames are full-size with rows and columns swapped."""
     root = tmp_path_factory.mktemp("ccd_roi_at_load")
     inputs = {}
     for fmt in ("tiff", "fits"):
@@ -160,6 +167,7 @@ def frames(tmp_path_factory):
                 "run1": _write_run(directory, fmt, family, 1, n, (NY, NX)),
                 "small": _write_run(directory, fmt, family, 2, n, (SMALL_NY, SMALL_NX)),
                 "short": _write_run(directory, fmt, family, 3, n - 1, (NY, NX)),
+                "transposed": _write_run(directory, fmt, family, 4, n, (NX, NY)),
             }
     return inputs
 
@@ -448,25 +456,45 @@ def test_runs_of_different_shape_raise_combine_message_while_the_family_loads(
     assert f"combining {len(run_names)} {COMBINE_LABEL[family]} run(s)" not in combine_notes
 
 
-@pytest.mark.parametrize("family", FAMILIES)
-@pytest.mark.parametrize("pipeline", list(PIPELINES))
-def test_roi_fitting_a_later_run_but_not_run0_raises_the_fit_message(frames, tmp_path, timeline, pipeline, family):
-    inputs = frames["tiff"]
-    roi = ROIS["interior"]
-    groups = {f: [inputs[f]["run0"]] for f in FAMILIES}
-    groups[family] = [inputs[family]["small"], inputs[family]["run0"]]
+def _frame_size_message(family: str, size: tuple[int, int], sample_size: tuple[int, int]) -> str:
+    name = {"ob": "Open-beam", "dark": "Dark"}[family]
+    return (
+        f"{name} frames have size (y={size[0]}, x={size[1]}), but sample frames have size"
+        f" (y={sample_size[0]}, x={sample_size[1]}); sample, open-beam and dark frames must be the same size"
+    )
 
+
+def _small_run0_error(inputs, family: str, roi: tuple[int, int, int, int]) -> tuple[str, list[str]]:
+    """The error when ``roi`` fits full-size frames but not ``family``'s smaller run 0, and the ERROR log.
+
+    The sample loads first, so its smaller frames fail the ROI with the message ``apply_roi`` raises,
+    unlogged. A later family's smaller frames are reported as differing in size from the sample's, logged.
+    """
+    if family != "sample":
+        message = _frame_size_message(family, (SMALL_NY, SMALL_NX), (NY, NX))
+        return message, [message]
     with pytest.raises(ValueError) as cropped:
         apply_roi(load_stack(inputs[family]["small"]), roi)
     message = f"ROI (x1=27, y1=19) exceeds data size (x={SMALL_NX}, y={SMALL_NY})"
     assert str(cropped.value) == message
+    return message, []
+
+
+@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("pipeline", list(PIPELINES))
+def test_roi_fitting_a_later_run_but_not_run0_raises_on_run0(frames, tmp_path, timeline, pipeline, family):
+    inputs = frames["tiff"]
+    roi = ROIS["interior"]
+    groups = {f: [inputs[f]["run0"]] for f in FAMILIES}
+    groups[family] = [inputs[family]["small"], inputs[family]["run0"]]
+    message, errors = _small_run0_error(inputs, family, roi)
 
     timeline.clear()
     with pytest.raises(ValueError) as raised:
         _run(pipeline, tmp_path / "out.h5", groups["sample"], groups["ob"], groups["dark"], roi=roi)
 
     assert str(raised.value) == message
-    assert timeline.messages("ERROR") == []
+    assert timeline.messages("ERROR") == errors
     position = FAMILIES.index(family)
     for earlier in FAMILIES[:position]:
         assert timeline.reads(earlier) == _names(*groups[earlier])
@@ -477,24 +505,20 @@ def test_roi_fitting_a_later_run_but_not_run0_raises_the_fit_message(frames, tmp
 
 @pytest.mark.parametrize("family", FAMILIES)
 @pytest.mark.parametrize("pipeline", list(PIPELINES))
-def test_roi_not_fitting_one_family_raises_the_fit_message_with_its_size(frames, tmp_path, timeline, pipeline, family):
+def test_roi_not_fitting_one_family_raises_on_its_first_frame(frames, tmp_path, timeline, pipeline, family):
     """The ROI fits the full-size frames of the other families but not this family's smaller frames."""
     inputs = frames["tiff"]
     roi = ROIS["interior"]
     groups = {f: [inputs[f]["run0"]] for f in FAMILIES}
     groups[family] = [inputs[family]["small"]]
-
-    with pytest.raises(ValueError) as cropped:
-        apply_roi(load_stack(inputs[family]["small"]), roi)
-    message = f"ROI (x1=27, y1=19) exceeds data size (x={SMALL_NX}, y={SMALL_NY})"
-    assert str(cropped.value) == message
+    message, errors = _small_run0_error(inputs, family, roi)
 
     timeline.clear()
     with pytest.raises(ValueError) as raised:
         _run(pipeline, tmp_path / "out.h5", groups["sample"], groups["ob"], groups["dark"], roi=roi)
 
     assert str(raised.value) == message
-    assert timeline.messages("ERROR") == []
+    assert timeline.messages("ERROR") == errors
     position = FAMILIES.index(family)
     for earlier in FAMILIES[:position]:
         assert timeline.reads(earlier) == _names(*groups[earlier])
@@ -506,8 +530,10 @@ def test_roi_not_fitting_one_family_raises_the_fit_message_with_its_size(frames,
 @pytest.mark.parametrize("mismatch", ["small", "short"])
 @pytest.mark.parametrize("family", FAMILIES)
 @pytest.mark.parametrize("pipeline", list(PIPELINES))
-def test_without_roi_mismatched_runs_raise_when_combined(frames, tmp_path, timeline, pipeline, family, mismatch):
-    """Without an ROI the runs are checked by ``combine_runs``, after the sample and open-beam loads."""
+def test_without_roi_mismatched_runs_raise_while_the_family_loads(
+    frames, tmp_path, timeline, pipeline, family, mismatch
+):
+    """Without an ROI the runs are checked as they load, with the message ``combine_runs`` raises."""
     inputs = frames["tiff"]
     groups = {f: [inputs[f]["run0"]] for f in FAMILIES}
     groups[family] = [inputs[family]["run0"], inputs[family][mismatch]]
@@ -526,11 +552,88 @@ def test_without_roi_mismatched_runs_raise_when_combined(frames, tmp_path, timel
     assert str(raised.value) == message
     assert timeline.messages("ERROR") == [message]
     assert timeline.crop_lines() == []
-    assert timeline.reads("sample") == _names(*groups["sample"])
-    assert timeline.reads("ob") == _names(*groups["ob"])
-    assert timeline.reads("dark") == (_names(*groups["dark"]) if family == "dark" else [])
+    position = FAMILIES.index(family)
+    for loaded in FAMILIES[: position + 1]:
+        assert timeline.reads(loaded) == _names(*groups[loaded])
+    for later in FAMILIES[position + 1 :]:
+        assert timeline.reads(later) == []
     combine_notes = [event.detail for event in events if event.stage == STAGE_COMBINE_RUNS and event.detail]
-    assert f"combining 2 {COMBINE_LABEL[family]} run(s)" in combine_notes
+    assert f"combining 2 {COMBINE_LABEL[family]} run(s)" not in combine_notes
+
+
+@pytest.mark.parametrize("fmt", ["tiff", "fits"])
+@pytest.mark.parametrize("pipeline", list(PIPELINES))
+def test_without_roi_a_smaller_sample_run0_is_reported_as_a_sample_run_mismatch(
+    frames, tmp_path, timeline, pipeline, fmt
+):
+    """Sample run 0 is smaller than sample run 1 and the open beam; the error names the sample runs."""
+    inputs = frames[fmt]
+    groups = {f: [inputs[f]["run0"]] for f in FAMILIES}
+    groups["sample"] = [inputs["sample"]["small"], inputs["sample"]["run0"]]
+    message = (
+        "Run 1 has shape (3, 24, 32) and dims ('N_image', 'y', 'x'),"
+        " expected shape (3, 16, 20) and dims ('N_image', 'y', 'x')"
+    )
+
+    timeline.clear()
+    with pytest.raises(ValueError) as raised:
+        _run(pipeline, tmp_path / "out.h5", groups["sample"], groups["ob"], groups["dark"])
+
+    assert str(raised.value) == message
+    assert timeline.messages("ERROR") == [message]
+    assert timeline.reads("sample") == _names(*groups["sample"])
+    assert timeline.reads("ob") == []
+    assert timeline.reads("dark") == []
+
+
+# --- Families of different frame size ----------------------------------------------------------------------
+
+FRAME_SIZE_CASES = {
+    # name: (run of the odd family, roi)
+    "smaller_no_roi": ("small", None),
+    "smaller_roi_fits_both": ("small", ROI_FITS_BOTH_SIZES),
+    "transposed_no_roi": ("transposed", None),
+    "transposed_roi_fits_both": ("transposed", ROI_FITS_BOTH_SIZES),
+}
+
+
+@pytest.mark.parametrize("case", list(FRAME_SIZE_CASES))
+@pytest.mark.parametrize("odd", FAMILIES)
+@pytest.mark.parametrize("fmt", ["tiff", "fits"])
+@pytest.mark.parametrize("pipeline", list(PIPELINES))
+def test_families_of_different_frame_size_raise_while_the_family_loads(
+    frames, tmp_path, timeline, pipeline, fmt, odd, case
+):
+    """The first family whose frames differ in size from the sample's raises, logged, before anything is normalized.
+
+    The number of frames differs between the families in every case (3 sample, 2 open-beam, 2 dark).
+    """
+    inputs = frames[fmt]
+    run_name, roi = FRAME_SIZE_CASES[case]
+    groups = {f: [inputs[f]["run0"]] for f in FAMILIES}
+    groups[odd] = [inputs[odd][run_name]]
+    sizes = {f: load_stack(groups[f][0]).shape[1:] for f in FAMILIES}
+    failing = "ob" if odd == "sample" else odd
+    message = _frame_size_message(failing, sizes[failing], sizes["sample"])
+    assert sizes[failing] != sizes["sample"]
+    output_path = tmp_path / "out.h5"
+
+    timeline.clear()
+    events = []
+    with pytest.raises(ValueError) as raised:
+        _run(pipeline, output_path, groups["sample"], groups["ob"], groups["dark"], roi=roi, progress=events.append)
+
+    assert str(raised.value) == message
+    assert timeline.messages("ERROR") == [message]
+    position = FAMILIES.index(failing)
+    for loaded in FAMILIES[: position + 1]:
+        assert timeline.reads(loaded) == _names(*groups[loaded])
+    for later in FAMILIES[position + 1 :]:
+        assert timeline.reads(later) == []
+    assert STAGE_NORMALIZE not in {event.stage for event in events}
+    combine_notes = [event.detail for event in events if event.stage == STAGE_COMBINE_RUNS and event.detail]
+    assert f"combining 1 {COMBINE_LABEL[failing]} run(s)" not in combine_notes
+    assert not output_path.exists()
 
 
 # --- ROIs rejected without reading a file ------------------------------------------------------------------
