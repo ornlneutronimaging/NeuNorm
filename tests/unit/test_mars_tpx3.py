@@ -21,7 +21,7 @@ class TestMarsTPX3Pipeline:
         cls.sample_paths_bad_pixels = []
         cls.ob_paths = []
 
-        cls._tmpdir = tempfile.TemporaryDirectory(delete=False)
+        cls._tmpdir = tempfile.TemporaryDirectory()
         tmp_dir = Path(cls._tmpdir.name)
 
         # for our test data we have 32x32 detector

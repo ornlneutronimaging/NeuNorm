@@ -21,7 +21,7 @@ class TestVenusTPX3EventPipeline:
         """Create HDF5 event files for testing once for all tests in this class."""
         cls.binning = BinningConfig(bins=5, bin_space="tof", tof_range=(100000, 125000), use_log_bin=False)  # ns
 
-        cls._tmpdir = tempfile.TemporaryDirectory(delete=False)
+        cls._tmpdir = tempfile.TemporaryDirectory()
         tmp_dir = Path(cls._tmpdir.name)
 
         offset = 1_000_000  # add offset to match VENUS TPX3 event_id format

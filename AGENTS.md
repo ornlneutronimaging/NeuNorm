@@ -63,6 +63,9 @@ docs/            Sphinx (autodoc) + MyST workflow guides
 
 - `pixi run test` (pytest + coverage). The suite must pass on **both `linux-64`
   and `osx-arm64`** (CI matrix; primary development is on Apple Silicon).
+- The suite must also pass on **Python 3.11**, the `requires-python` minimum:
+  `pixi run -e py311 test` (a separate CI job). Do not use 3.12+ APIs in `src/`
+  or `tests/`.
 - Compare floating-point arrays with **`np.testing.assert_allclose`, not
   `assert_equal`** — bit-exact comparisons differ by ~1 ULP across x86_64/arm64.
 

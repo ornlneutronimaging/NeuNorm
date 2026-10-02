@@ -13,7 +13,7 @@ class TestMetadataLoader:
     @classmethod
     def setup_class(cls):
         """Create temporary HDF5 file with minimal metadata for testing."""
-        cls._tmpdir = tempfile.TemporaryDirectory(delete=False)
+        cls._tmpdir = tempfile.TemporaryDirectory()
         cls.nexus_path = Path(cls._tmpdir.name) / "nexus" / "test_metadata.nxs.h5"
         cls.nexus_path.parent.mkdir(parents=True, exist_ok=True)
         with h5py.File(cls.nexus_path, "w") as f:
