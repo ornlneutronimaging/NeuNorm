@@ -616,8 +616,8 @@ class TestMarsCCDPipelineFITS:
     def test_mars_ccd_pipeline_crop_roi_accepts_roi_object(self):
         """A crop roi=ROI(...) crops correctly AND is coerced to a tuple in the written provenance.
 
-        Guards the pipeline-level coercion specifically: ``apply_roi`` coerces internally (so the
-        shape is right regardless), and the HDF5 writer would NOT crash on a raw ROI — it would
+        Guards the pipeline-level coercion specifically: the loaders coerce the ROI internally (so
+        the shape is right regardless), and the HDF5 writer would NOT crash on a raw ROI — it would
         str()-coerce it via the JSON backstop (``encoding="json"``). So we round-trip
         ``roi_applied`` and assert it is the native int array (the coerced tuple), which fails if a
         raw ROI ever reaches provenance.

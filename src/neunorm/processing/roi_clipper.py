@@ -5,7 +5,7 @@ Function for cropping spatial dimensions to a region of interest (ROI).
 import scipp as sc
 from loguru import logger
 
-from neunorm.data_models.roi import MaskROI, ROILike, as_roi_bounds
+from neunorm.data_models.roi import ROILike, _checked_crop_bounds, _crop_fit_message
 
 
 def apply_roi(
@@ -40,35 +40,16 @@ def apply_roi(
     sc.DataArray
         Cropped (rectangular) data array with updated coordinates.
     """
-    if isinstance(roi, MaskROI):
-        raise TypeError(
-            "apply_roi crops to a rectangle and does not accept a MaskROI. Use a MaskROI only with "
-            "the region-statistics APIs (background_roi= / air_roi= / apply_air_region_correction / "
-            "normalize_transmission), which average over the selected pixels without cropping."
-        )
-    roi = as_roi_bounds(roi)
+    x0, y0, x1, y1 = _checked_crop_bounds(roi, caller="apply_roi")
 
-    logger.info("Applying ROI: {}", roi)
+    logger.info("Applying ROI: {}", (x0, y0, x1, y1))
 
-    if len(roi) != 4:
-        raise ValueError("ROI must be a tuple of 4 integers (x0, y0, x1, y1)")
-
-    x0, y0, x1, y1 = roi
-
-    if not all(isinstance(i, int) for i in roi):
-        raise ValueError("ROI must be a tuple of 4 integers (x0, y0, x1, y1)")
-
-    # Validate ROI
-    if x0 < 0 or y0 < 0 or x1 <= x0 or y1 <= y0:
-        raise ValueError("Invalid ROI: (x0, y0, x1, y1) must satisfy 0 <= x0 < x1 and 0 <= y0 < y1")
-
-    # Get current dimensions
     if "x" not in data.dims or "y" not in data.dims:
         raise ValueError("DataArray must have 'x' and 'y' dimensions for ROI cropping")
 
-    # Validate ROI against current sizes
-    if x1 > data.sizes["x"] or y1 > data.sizes["y"]:
-        raise ValueError(f"ROI (x1={x1}, y1={y1}) exceeds data size (x={data.sizes['x']}, y={data.sizes['y']})")
+    message = _crop_fit_message((x0, y0, x1, y1), ny=data.sizes["y"], nx=data.sizes["x"])
+    if message is not None:
+        raise ValueError(message)
 
     # Create slices for cropping
     x_slice = slice(x0, x1)
