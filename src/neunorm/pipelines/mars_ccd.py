@@ -21,7 +21,7 @@ from neunorm.data_models.roi import (
 from neunorm.exporters.hdf5_writer import hdf5_export_step_count, write_hdf5
 from neunorm.exporters.tiff_writer import tiff_export_step_count, write_tiff_stack
 from neunorm.filters.gamma_filter import GAMMA_FILTER_STEPS, apply_gamma_filter
-from neunorm.pipelines._ccd_common import combine_owned_runs, load_runs
+from neunorm.pipelines._ccd_common import FrameSize, combine_owned_runs, load_runs
 from neunorm.processing.normalizer import (
     BackgroundROILike,
     normalize_step_count,
@@ -91,8 +91,10 @@ def run_mars_ccd_pipeline(  # noqa: C901
         Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple. Each sample,
         open-beam and dark frame is cropped as it is read, so memory scales with the region and the
         number of images rather than with the detector size; the output, including the ``x`` and ``y``
-        coordinates, is the same as cropping after the load. Runs within a family must still have the
-        same uncropped frame size.
+        coordinates, is the same as cropping after the load. Sizes are checked on the uncropped frames,
+        with or without an ROI: sample, open-beam and dark frames must be the same size, though their
+        number may differ, and the runs of one family must have the same number of frames of that size.
+        A mismatch raises ``ValueError`` while the mismatched family loads, before any later family is read.
     gamma_filter : bool
         Whether to apply gamma filtering to the sample data (default: True)
     background_roi : ROI, MaskROI, tuple, or a sequence of them
@@ -147,9 +149,10 @@ def run_mars_ccd_pipeline(  # noqa: C901
         # restarting per run. The `stage` argument of the leaf is not used here — a handed-down reporter
         # carries its own label, and passing one would be silently ignored.
         load_sample = run_progress.for_stage(STAGE_LOAD_SAMPLE, total=total_across_groups(sample_paths))
-        samples = load_runs(sample_paths, roi=roi, progress=load_sample)
+        frame_size = FrameSize()
+        samples = load_runs(sample_paths, roi=roi, progress=load_sample, family="sample", frame_size=frame_size)
         load_ob = run_progress.for_stage(STAGE_LOAD_OB, total=total_across_groups(ob_paths))
-        ob = load_runs(ob_paths, roi=roi, progress=load_ob)
+        ob = load_runs(ob_paths, roi=roi, progress=load_ob, family="open-beam", frame_size=frame_size)
 
         # Combining runs is the largest operation here that no instrumented leaf covers: it copies the
         # first run's values and variances, then adds each further run in place. Reported as named steps
@@ -201,7 +204,7 @@ def run_mars_ccd_pipeline(  # noqa: C901
         dark = None
         if dark_paths:
             load_dark = run_progress.for_stage(STAGE_LOAD_DARK, total=total_across_groups(dark_paths))
-            dark_runs = load_runs(dark_paths, roi=roi, progress=load_dark)
+            dark_runs = load_runs(dark_paths, roi=roi, progress=load_dark, family="dark", frame_size=frame_size)
             combine.note(f"combining {len(dark_runs)} dark run(s)")
             dark = combine_owned_runs(
                 dark_runs,
