@@ -32,6 +32,13 @@ from neunorm.data_models.roi import (
 from neunorm.exporters.ascii_writer import ascii_spectrum_export_step_count, write_ascii_spectrum
 from neunorm.exporters.hdf5_writer import hdf5_export_step_count, write_hdf5
 from neunorm.exporters.tiff_writer import tiff_export_step_count, write_tiff_stack
+from neunorm.pipelines._output_path import (
+    HDF5_SUFFIXES,
+    SPECTRUM_TEXT_SUFFIX,
+    TIFF_SUFFIXES,
+    spectrum_tiff_error,
+    unsupported_suffix_error,
+)
 from neunorm.processing.air_region_corrector import apply_air_region_correction
 from neunorm.processing.moving_window import moving_window, moving_window_step_count
 from neunorm.processing.normalizer import normalize_step_count, normalize_transmission
@@ -345,7 +352,7 @@ def _export_transmission(
     Returns the description to log and the transmission as written — the TIFF path rewrites it (see
     :func:`_write_tiff_output`), the HDF5 path leaves it alone.
     """
-    if output_path.suffix.lower() in (".hdf5", ".h5"):
+    if output_path.suffix.lower() in HDF5_SUFFIXES:
         hot_kwargs = {} if profile.hdf5_hot_pixel_mask is None else {"hot_pixel_mask": profile.hdf5_hot_pixel_mask}
         write_hdf5(
             output_path,
@@ -356,7 +363,7 @@ def _export_transmission(
             **hot_kwargs,
         )
         return str(output_path), transmission
-    if output_path.suffix.lower() in (".tiff", ".tif"):
+    if output_path.suffix.lower() in TIFF_SUFFIXES:
         return _write_tiff_output(
             output_path,
             transmission,
@@ -366,7 +373,7 @@ def _export_transmission(
             tiff_one_file_per_image=tiff_one_file_per_image,
             run_progress=run_progress,
         )
-    raise ValueError(f"Unsupported output file format: {output_path.suffix}")
+    raise unsupported_suffix_error(output_path)
 
 
 def _export_spectrum(
@@ -393,13 +400,9 @@ def _export_spectrum(
     bin, which even reads back cleanly. Nothing downstream would flag it.
     """
     suffix = output_path.suffix.lower()
-    if suffix in (".tiff", ".tif"):
-        raise ValueError(
-            f"spectrum_roi produces a 1-D spectrum, which cannot be written as a TIFF image stack "
-            f"(got {output_path.name}). Use '.txt' for the three-column ASCII spectrum (an HDF5 file "
-            "is written alongside it) or '.hdf5' for HDF5 only."
-        )
-    if suffix in (".hdf5", ".h5"):
+    if suffix in TIFF_SUFFIXES:
+        raise spectrum_tiff_error(output_path)
+    if suffix in HDF5_SUFFIXES:
         write_hdf5(
             output_path,
             spectrum,
@@ -407,7 +410,7 @@ def _export_spectrum(
             progress=run_progress.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(spectrum, metadata)),
         )
         return str(output_path)
-    if suffix == ".txt":
+    if suffix == SPECTRUM_TEXT_SUFFIX:
         hdf5_path = output_path.with_suffix(".hdf5")
         _refuse_to_overwrite_an_input(hdf5_path, metadata)
         # ONE reporter shared by both writers: each borrows it and shares its counter cell, so the
@@ -420,7 +423,7 @@ def _export_spectrum(
         write_ascii_spectrum(output_path, spectrum, bin_indices, progress=export)
         write_hdf5(hdf5_path, spectrum, metadata=metadata, progress=export)
         return f"{output_path} (+ {hdf5_path.name})"
-    raise ValueError(f"Unsupported output file format: {output_path.suffix}")
+    raise unsupported_suffix_error(output_path)
 
 
 def _input_paths(metadata: dict) -> set:

@@ -27,11 +27,6 @@ transmission = run_mars_ccd_pipeline(
 | `True` | NeuNorm draws one [`tqdm`](https://tqdm.github.io/) bar per stage |
 | a callable | it receives a {py:class}`~neunorm.utils.progress.ProgressEvent` for every item or step |
 
-```{note}
-`output_path` must be a `pathlib.Path`, not a string — the pipelines choose HDF5 or TIFF from
-`output_path.suffix`. Every example below wraps it for that reason.
-```
-
 The callable is the actual contract — `progress=True` is a convenience built on it. A library that owns
 the bar breaks headless runs, log files and any caller who wants their own display, so NeuNorm reports
 events and lets you decide what to draw.

@@ -711,9 +711,9 @@ def test_a_tag_missing_from_some_frames_is_dropped_not_raised(tmp_path):
     plain = tmp_path / "b_plain.tif"
     # Hand-written, and each frame carries a tag the other lacks rather than one frame carrying an
     # extra: that keeps the two IFDs the same size, so the strip offsets match. An IFD of a
-    # different size shifts StripOffsets between frames, which trips a separate pre-existing
-    # failure in the metadata block and would test the wrong thing. Having a tag missing in each
-    # direction also exercises both orders inside a single stack.
+    # different size shifts StripOffsets between frames, which drops that tag for a different
+    # reason and would test the wrong thing. Having a tag missing in each direction also exercises
+    # both orders inside a single stack.
     _write_raw_tiff(tagged, 6, 4, 16, stored, extras=[(254, 4, 1, 0)])
     _write_raw_tiff(plain, 6, 4, 16, stored, extras=[(255, 4, 1, 1)])
 
@@ -747,6 +747,251 @@ def test_a_tag_missing_from_some_frames_is_dropped_not_raised(tmp_path):
     for label, text in warned.items():
         assert "254" in text, f"the tag only the first file carries went unmentioned ({label})"
         assert "255" in text, f"the tag only the second file carries went unmentioned ({label})"
+
+
+def _load_with_warnings(paths):
+    """Load ``paths`` with ``load_tiff_stack`` and return the stack and the warnings logged."""
+    import io
+
+    from loguru import logger
+
+    from neunorm.loaders.tiff_loader import load_tiff_stack
+
+    captured = io.StringIO()
+    sink_id = logger.add(captured, level="WARNING", format="{message}")
+    try:
+        da = load_tiff_stack(paths)
+    finally:
+        logger.remove(sink_id)
+    return da, captured.getvalue()
+
+
+def _tags(paths):
+    """Each file's TIFF tags as Pillow reads them, keyed by tag code."""
+    from PIL import Image
+
+    tags = []
+    for p in paths:
+        with Image.open(p) as img:
+            tags.append(dict(img.tag_v2))
+    return tags
+
+
+#: The coordinates of a stack of 16 x 12 ``uint16`` frames written by Pillow, when every tag is kept.
+_PILLOW_COORDS = {
+    "x",
+    "y",
+    "ImageWidth",
+    "ImageLength",
+    "BitsPerSample",
+    "Compression",
+    "PhotometricInterpretation",
+    "StripOffsets",
+    "RowsPerStrip",
+    "PlanarConfiguration",
+}
+#: The same for tifffile with ``metadata=None``, which otherwise also writes ``ImageDescription``.
+_TIFFFILE_COORDS = {
+    "x",
+    "y",
+    "ImageWidth",
+    "ImageLength",
+    "BitsPerSample",
+    "Compression",
+    "PhotometricInterpretation",
+    "StripOffsets",
+    "SamplesPerPixel",
+    "RowsPerStrip",
+    "XResolution",
+    "YResolution",
+    "ResolutionUnit",
+    "Software",
+}
+_STRIP_BYTE_COUNTS_WARNING = (
+    "TIFF tag 279 (StripByteCounts) is not published as a coordinate: "
+    "its tuple values differ across files and have no per-frame array form."
+)
+
+
+def _assert_three_frame_coords(da, compression):
+    """Check coordinates every three-frame stack of 16 x 12 ``uint16`` frames below keeps."""
+    assert da.coords["x"].aligned
+    assert da.coords["y"].aligned
+    for name in set(da.coords) - {"x", "y"}:
+        assert not da.coords[name].aligned, name
+    for name, value in (("ImageWidth", 12), ("ImageLength", 16), ("Compression", compression)):
+        assert da.coords[name].dims == ("N_image",), name
+        np.testing.assert_allclose(da.coords[name].values, [value, value, value])
+    assert da.coords["BitsPerSample"].dims == ()
+    assert da.coords["BitsPerSample"].value == (16,)
+
+
+def _assert_tifffile_software(da):
+    """Check the ``Software`` tag tifffile writes is kept as a scalar string coordinate."""
+    assert da.coords["Software"].dims == ()
+    assert da.coords["Software"].value == "tifffile.py"
+
+
+@pytest.mark.parametrize("codec", ["lzw", "deflate", "packbits"])
+def test_compressed_frames_of_different_sizes_load(tmp_path, codec):
+    """A compressed stack whose frames compress to different sizes loads, without StripByteCounts.
+
+    ``StripByteCounts`` is a tuple per file; when it differs between files it cannot be a per-frame
+    coordinate, so it is left out with a warning naming it and the reason. Every other tag is still
+    published as a coordinate.
+    """
+    import tifffile
+    from PIL import ExifTags, Image
+
+    rng = np.random.default_rng(7)
+    frames = [rng.poisson(lam, size=(16, 12)).astype(np.uint16) for lam in (0.2, 2, 20)]
+    paths = []
+    for i, frame in enumerate(frames):
+        p = tmp_path / f"{codec}{i}.tif"
+        if codec == "deflate":
+            tifffile.imwrite(p, frame, compression="zlib")
+        else:
+            Image.fromarray(frame).save(p, compression={"lzw": "tiff_lzw", "packbits": "packbits"}[codec])
+        paths.append(p)
+    compression, kept = {
+        "lzw": (5, _PILLOW_COORDS),
+        "deflate": (8, _TIFFFILE_COORDS | {"ImageDescription"}),
+        "packbits": (32773, _PILLOW_COORDS),
+    }[codec]
+    tags = _tags(paths)
+    assert {ExifTags.TAGS[c] for c in tags[0]} == (kept - {"x", "y"}) | {"StripByteCounts"}
+    assert len({t[279] for t in tags}) == len(paths), "every frame must compress to its own size"
+
+    da, warned = _load_with_warnings(paths)
+
+    np.testing.assert_allclose(da.values, np.stack(frames))
+    np.testing.assert_allclose(da.variances, np.stack(frames))
+    assert set(da.coords) == kept
+    assert warned.splitlines() == [_STRIP_BYTE_COUNTS_WARNING]
+    _assert_three_frame_coords(da, compression)
+    if codec == "deflate":
+        _assert_tifffile_software(da)
+        assert da.coords["ImageDescription"].dims == ()
+        assert da.coords["ImageDescription"].value == '{"shape": [16, 12]}'
+
+
+def test_a_bytes_tag_that_differs_across_files_is_dropped(tmp_path):
+    """A ``bytes`` tag that differs between files is left out with a warning; the stack loads."""
+    import tifffile
+
+    frames = [np.full((4, 6), 10 + i, dtype=np.uint16) for i in range(3)]
+    paths = []
+    for i, frame in enumerate(frames):
+        p = tmp_path / f"xmp{i}.tif"
+        xmp = f"<x:xmpmeta t='{i}'/>".encode()
+        tifffile.imwrite(p, frame, extratags=[(700, "B", 0, xmp, True)], metadata=None)
+        paths.append(p)
+    assert len({t[700] for t in _tags(paths)}) == len(paths)
+
+    da, warned = _load_with_warnings(paths)
+
+    np.testing.assert_allclose(da.values, np.stack(frames))
+    assert "XMLPacket" not in da.coords
+    assert warned.splitlines() == [
+        "TIFF tag 700 (XMLPacket) is not published as a coordinate: its bytes values cannot be stored as a coordinate."
+    ]
+    assert "StripOffsets" in da.coords and "StripByteCounts" in da.coords
+
+
+def test_identical_compressed_frames_keep_their_tuple_tags(tmp_path):
+    """Tuple tags that are the same in every file stay scalar coordinates, with nothing dropped."""
+    import tifffile
+
+    frame = np.random.default_rng(3).poisson(80, size=(16, 12)).astype(np.uint16)
+    paths = []
+    for i in range(3):
+        p = tmp_path / f"same{i}.tif"
+        tifffile.imwrite(p, frame, compression="zlib")
+        paths.append(p)
+    tags = _tags(paths)[0]
+
+    da, warned = _load_with_warnings(paths)
+
+    for name, code in (("BitsPerSample", 258), ("StripOffsets", 273), ("StripByteCounts", 279)):
+        assert da.coords[name].dims == (), name
+        assert da.coords[name].value == tags[code], name
+    assert warned == ""
+
+
+_BYTES_TAGS = {700: ("XMLPacket", b"<x:xmpmeta/>"), 34675: ("InterColorProfile", b"\x00\x00\x02\x0cprofile")}
+
+
+@pytest.mark.parametrize(("codec", "code"), [("deflate", 700), ("lzw", 34675)])
+def test_an_identical_bytes_tag_on_a_compressed_stack_is_dropped(tmp_path, codec, code):
+    """A ``bytes`` tag that is the same in every file is left out with a warning; the stack loads.
+
+    The frames compress to different sizes, so ``StripByteCounts`` is left out as well, and every
+    other tag is still published as a coordinate. A single one of the files keeps
+    ``StripByteCounts`` and leaves out only the ``bytes`` tag.
+    """
+    import tifffile
+    from PIL import ExifTags, Image
+
+    name, payload = _BYTES_TAGS[code]
+    rng = np.random.default_rng(11)
+    frames = [rng.poisson(lam, size=(16, 12)).astype(np.uint16) for lam in (0.2, 2, 20)]
+    paths = []
+    for i, frame in enumerate(frames):
+        p = tmp_path / f"{codec}{i}.tif"
+        if codec == "deflate":
+            tifffile.imwrite(p, frame, compression="zlib", extratags=[(code, "B", 0, payload, True)], metadata=None)
+        else:
+            Image.fromarray(frame).save(p, compression="tiff_lzw", icc_profile=payload)
+        paths.append(p)
+    compression, kept = {"deflate": (8, _TIFFFILE_COORDS), "lzw": (5, _PILLOW_COORDS)}[codec]
+    tags = _tags(paths)
+    assert {ExifTags.TAGS[c] for c in tags[0]} == (kept - {"x", "y"}) | {"StripByteCounts", name}
+    assert all(t[code] == payload for t in tags)
+    assert len({t[279] for t in tags}) == len(paths), "every frame must compress to its own size"
+    bytes_warning = (
+        f"TIFF tag {code} ({name}) is not published as a coordinate: its bytes value cannot be stored as a coordinate."
+    )
+
+    da, warned = _load_with_warnings(paths)
+
+    np.testing.assert_allclose(da.values, np.stack(frames))
+    np.testing.assert_allclose(da.variances, np.stack(frames))
+    assert set(da.coords) == kept
+    assert sorted(warned.splitlines()) == sorted([_STRIP_BYTE_COUNTS_WARNING, bytes_warning])
+    _assert_three_frame_coords(da, compression)
+    if codec == "deflate":
+        _assert_tifffile_software(da)
+
+    single, warned_single = _load_with_warnings(paths[:1])
+
+    assert set(single.coords) == kept | {"StripByteCounts"}
+    assert warned_single.splitlines() == [bytes_warning]
+    assert single.coords["StripByteCounts"].dims == ()
+    assert single.coords["StripByteCounts"].value == tags[0][279]
+    assert not single.coords["StripByteCounts"].aligned
+
+
+@pytest.mark.parametrize("code", [700, 34675])
+def test_a_single_file_with_a_bytes_tag_loads(tmp_path, code):
+    """One file carrying a ``bytes`` tag loads; that tag is left out with a warning, the rest kept."""
+    import tifffile
+
+    name, payload = _BYTES_TAGS[code]
+    frame = np.random.default_rng(5).poisson(30, size=(8, 10)).astype(np.uint16)
+    path = tmp_path / "one.tif"
+    tifffile.imwrite(path, frame, extratags=[(code, "B", 0, payload, True)], metadata=None)
+    assert _tags([path])[0][code] == payload
+
+    da, warned = _load_with_warnings([path])
+
+    np.testing.assert_allclose(da.values, frame[np.newaxis])
+    np.testing.assert_allclose(da.variances, frame[np.newaxis])
+    assert name not in da.coords
+    assert warned.splitlines() == [
+        f"TIFF tag {code} ({name}) is not published as a coordinate: its bytes value cannot be stored as a coordinate."
+    ]
+    for kept in ("ImageWidth", "ImageLength", "StripOffsets", "StripByteCounts"):
+        assert kept in da.coords, kept
 
 
 def test_max_workers_rejects_values_that_are_not_a_worker_count(tmp_path):

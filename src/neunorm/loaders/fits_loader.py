@@ -11,6 +11,7 @@ from typing import Optional, Sequence
 import numpy as np
 import scipp as sc
 from astropy.io import fits
+from astropy.io.fits.verify import VerifyError
 from loguru import logger
 
 from neunorm.data_models.roi import ROILike, _checked_crop_bounds
@@ -109,11 +110,14 @@ def load_fits_stack(
         - dims: ['TOF', 'y', 'x'] if tof_edges provided, else ['N_image', 'y', 'x']
         - coords: y, x detector pixel indices (offset by the ROI origin when ``roi`` is given),
           and optionally TOF.
-          Additionally, FITS header keys are added as (unaligned) coordinates.
-          The ``COMMENT`` and ``HISTORY`` keys are skipped. A key whose value is
-          constant across the stack is stored as a scalar coordinate; a key
-          whose value differs across files is stored as an array coordinate
-          along the stack dimension.
+          Additionally, the keys of the first file's FITS header are added as (unaligned)
+          coordinates. The ``COMMENT`` and ``HISTORY`` keys are skipped. A key whose value is
+          constant across the stack is stored as a scalar coordinate; a key whose value differs
+          across files is stored as an array coordinate along the stack dimension, holding
+          ``None`` for a file where the key is absent or undefined. A key with no value in any
+          file, a key whose card astropy cannot parse in some file (such as an unquoted string
+          value), and a key whose values scipp cannot store as a coordinate are skipped and named
+          in a warning; the pixel data are loaded either way.
     """
     return _load_fits_stack(paths, tof_edges, progress=progress, stage=stage, max_workers=max_workers, roi=roi)[0]
 
@@ -208,19 +212,44 @@ def _load_fits_stack(  # noqa: C901
                     f"with {n_images} images"
                 )
 
-        # Process header
         if headers:
-            # Assume all headers have the same keys.
-            # Storing all as coords with dimension of the stack (e.g. 'N_image' or 'TOF')
-            for key in headers[0].keys():
-                if key not in ("COMMENT", "HISTORY"):  # Skip multi-line text fields
-                    values = [hdr.get(key) for hdr in headers]
-                    if len(set(str(v) for v in values)) == 1:
-                        # If all values are the same, store as scalar
-                        da.coords[key] = sc.scalar(value=values[0])
-                    else:
-                        # Values differ across files, store as array with dimension of the stack
-                        da.coords[key] = sc.array(dims=[dim_name], values=values)
-                    da.coords.set_aligned(key, False)
+            _add_header_coords(da, headers, dim_name)
 
         return da, stack.shape
+
+
+def _add_header_coords(da: sc.DataArray, headers: Sequence[fits.Header], dim: str) -> None:
+    """Store the keys of the first frame's header as unaligned coordinates of ``da``.
+
+    A key whose value is the same in every header becomes a scalar coordinate; otherwise it becomes
+    an array along ``dim``, with ``None`` for a header that lacks the key or leaves it undefined.
+    ``COMMENT`` and ``HISTORY`` are not stored. A key with no value in any header, a key whose card
+    astropy cannot parse in some header, and a key whose values scipp cannot store as a coordinate
+    are not stored either, and one warning names all such keys.
+    """
+    skipped = []
+    for key in headers[0].keys():
+        if key in ("COMMENT", "HISTORY"):  # Skip multi-line text fields
+            continue
+        try:
+            values = [hdr.get(key) for hdr in headers]
+        except VerifyError:
+            skipped.append(key)
+            continue
+        constant = len(set(str(v) for v in values)) == 1
+        if constant and values[0] is None:
+            skipped.append(key)
+            continue
+        try:
+            coord = sc.scalar(value=values[0]) if constant else sc.array(dims=[dim], values=values)
+        except (ValueError, RuntimeError, TypeError):
+            skipped.append(key)
+            continue
+        da.coords[key] = coord
+        da.coords.set_aligned(key, False)
+
+    if skipped:
+        logger.warning(
+            "FITS header keys with no readable or storable value were not stored as coordinates: {}",
+            ", ".join(dict.fromkeys(skipped)),
+        )
