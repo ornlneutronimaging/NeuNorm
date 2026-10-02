@@ -24,6 +24,7 @@ from neunorm.exporters.hdf5_writer import hdf5_export_step_count, write_hdf5
 from neunorm.exporters.tiff_writer import tiff_export_step_count, write_tiff_stack
 from neunorm.filters.gamma_filter import GAMMA_FILTER_STEPS, apply_gamma_filter
 from neunorm.pipelines._ccd_common import combine_owned_runs, load_runs
+from neunorm.pipelines._output_path import HDF5_SUFFIXES, TIFF_SUFFIXES, resolve_output_path, unsupported_suffix_error
 from neunorm.processing.air_region_corrector import apply_air_region_correction
 from neunorm.processing.normalizer import (
     BackgroundROILike,
@@ -52,7 +53,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
     sample_paths: Sequence[Sequence[str | Path]],
     ob_paths: Sequence[Sequence[str | Path]],
     dark_paths: Optional[Sequence[Sequence[str | Path]]] = None,
-    output_path: Optional[Path] = None,
+    output_path: Optional[str | Path] = None,
     roi: Optional[ROILike] = None,
     gamma_filter: bool = True,
     air_roi: Optional[RegionLike] = None,
@@ -90,10 +91,10 @@ def run_venus_ccd_pipeline(  # noqa: C901
         Optional (default: None). If omitted (None or an empty list), dark
         correction is skipped and the dark-frame variance does not contribute to
         the propagated uncertainty.
-    output_path : Optional[Path]
-        Path to save the output file (HDF5 or TIFF). Required; a value of None
-        raises ``ValueError`` (the default exists only so ``dark_paths`` can keep
-        its positional slot).
+    output_path : Optional[str | Path]
+        Path to save the output file: ``.hdf5``/``.h5`` for HDF5 or ``.tiff``/``.tif`` for TIFF.
+        Required; a value of None raises ``ValueError`` (the default exists only so ``dark_paths``
+        can keep its positional slot). Any other suffix raises ``ValueError`` before any input is read.
     roi : Optional[tuple]
         Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple. Each sample,
         open-beam and dark frame is cropped as it is read, so memory scales with the region and the
@@ -143,8 +144,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
     if background_roi is not None:
         background_roi = as_region_list(background_roi, arg_name="background_roi")
 
-    if output_path is None:
-        raise ValueError("output_path is required")
+    output_path = resolve_output_path(output_path)
 
     # One reporter for the whole run, resolved exactly once: a second resolve of `progress=True`
     # would build a second tqdm sink and a duplicate set of bars. Each stage below takes its own
@@ -310,7 +310,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
         if background_roi is not None:
             metadata["background_roi"] = as_region_provenance(background_roi)
 
-        if output_path.suffix.lower() in (".hdf5", ".h5"):
+        if output_path.suffix.lower() in HDF5_SUFFIXES:
             write_hdf5(
                 output_path,
                 transmission,
@@ -318,7 +318,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
                 metadata=metadata,
                 progress=run_progress.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(transmission, metadata)),
             )
-        elif output_path.suffix.lower() in (".tiff", ".tif"):
+        elif output_path.suffix.lower() in TIFF_SUFFIXES:
             rename_map = {}
             if "N_image" in transmission.dims:
                 rename_map["N_image"] = "z"  # TIFF stacks typically use 'z' for the stack dimension
@@ -360,7 +360,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
                 progress=run_progress.for_stage(STAGE_EXPORT, total=tiff_export_step_count(transmission)),
             )
         else:
-            raise ValueError(f"Unsupported output file format: {output_path.suffix}")
+            raise unsupported_suffix_error(output_path)
 
         logger.success("VENUS CCD pipeline completed successfully. Output written to {}", output_path)
         return transmission

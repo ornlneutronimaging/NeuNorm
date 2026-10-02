@@ -14,6 +14,7 @@ from neunorm.data_models.moving_window import MovingWindow
 from neunorm.data_models.roi import RegionLike, RegionsLike, ROILike
 from neunorm.loaders.metadata_loader import load_metadata
 from neunorm.loaders.tiff_loader import load_tiff_stack
+from neunorm.pipelines._output_path import resolve_output_path
 from neunorm.pipelines._tof_spine import (
     TofPipelineProfile,
     coerce_roi_arguments,
@@ -64,7 +65,7 @@ def run_venus_tpx1_pipeline(
     ob_hdf5_paths: Sequence[str | Path],
     sample_tiff_paths: Sequence[Sequence[str | Path]],
     ob_tiff_paths: Sequence[Sequence[str | Path]],
-    output_path: Path,
+    output_path: str | Path,
     roi: Optional[ROILike] = None,
     air_roi: Optional[RegionLike] = None,
     rebin_by_tof: Optional[bool | int | list | tuple] = False,
@@ -108,8 +109,10 @@ def run_venus_tpx1_pipeline(
     ob_tiff_paths : Sequence[Sequence[str | Path]]
         List of lists of paths to open beam TIFF files.
         Each inner list represents a run that should be combined before processing.
-    output_path : Path
-        Path to save the output file (HDF5 or TIFF)
+    output_path : str | Path
+        Path to save the output file: ``.hdf5``/``.h5`` for HDF5 or ``.tiff``/``.tif`` for TIFF, or with
+        ``spectrum_roi`` ``.txt`` or ``.hdf5``/``.h5`` (see below). Any other suffix raises ``ValueError``
+        before any input is read.
     roi : Optional[tuple]
         Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
     air_roi : ROI, MaskROI, or tuple, optional
@@ -209,6 +212,8 @@ def run_venus_tpx1_pipeline(
 
     # length of hdf5 paths and tiff paths should match for both sample and OB
     require_matching_group_counts(sample_hdf5_paths, sample_tiff_paths, ob_hdf5_paths, ob_tiff_paths)
+
+    output_path = resolve_output_path(output_path, spectrum=spectrum_roi is not None)
 
     # One reporter for the whole run, resolved exactly once: a second resolve of `progress=True`
     # would build a second tqdm sink and a duplicate set of bars. Each stage below takes its own
