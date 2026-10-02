@@ -360,9 +360,12 @@ For large stacks the wall clock is dominated by **peak memory, not I/O**. Loadin
 `max_workers` frames being decoded at once. On 100 uncompressed 1024×1024 frames, a 400 MiB stack, the
 measured peak of `load_tiff_stack` and `load_fits_stack` is 2.0× the stack. With `roi` set, only that
 region of each frame is held, so the stack term scales with the region rather than the detector. The
-frames being decoded are still whole, and they set a floor under the peak: about 0.5 GiB for 6300×6100
-uncompressed 16-bit frames on the default 8 workers. A stack too large
-for memory still pushes the process into swap, where per-file cost grows with the file count.
+frames being decoded are still whole, and they set a floor under the peak. Each is held in its file's
+dtype for an uncompressed TIFF, and as float32 for FITS and for compressed TIFFs decoded by Pillow, so
+the floor depends on the format. Measured on local disk at 6300×6100 with the default 8 workers, it is
+about 0.5 GiB for uncompressed 16-bit TIFF and for FITS, and about 2 GiB for LZW TIFF; it can be
+higher on a slow filesystem, where more decodes overlap. A stack too large for memory still pushes the
+process into swap, where per-file cost grows with the file count.
 
 Threads speed up the decode, not the rest of the load. Stored compressed, those same 100 frames decode
 about 2× faster on eight threads, but the first frame is decoded alone before the others start, and the
