@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The CCD pipelines reject sample, open-beam and dark frames of different size**
+  ([#238](https://github.com/ornlneutronimaging/NeuNorm/issues/238)). `run_mars_ccd_pipeline` and
+  `run_venus_ccd_pipeline` raise a `ValueError` naming both families and both frame sizes as soon as
+  the mismatched family loads; an `roi` that fit both sizes used to crop and normalize them without
+  an error, and `roi=None` failed later with a scipp coordinate error. With `roi=None`, runs of one
+  family that differ in shape are now also rejected while that family loads, before any later family
+  is read, with the message `combine_runs` raises.
+
 - **`load_fits_stack` loads FITS files whose header has a card astropy cannot parse, a card with no
   value, or values a coordinate cannot hold**
   ([#242](https://github.com/ornlneutronimaging/NeuNorm/issues/242)). Such keys, for example one with
