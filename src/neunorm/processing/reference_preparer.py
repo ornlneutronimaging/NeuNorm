@@ -43,12 +43,37 @@ def median_with_variance(data: sc.DataArray, dim: str) -> sc.DataArray:
     )
 
 
-def prepare_reference(  # noqa: C901
+def _reduce_coord(name: str, coord: sc.Variable, method: str, dim: str) -> sc.Variable:
+    """Reduce the per-frame coordinate ``name`` along ``dim`` with ``method`` ("mean" or "median").
+
+    A coordinate whose dtype cannot be averaged, such as text, keeps its first and last values
+    along ``dim`` instead.
+    """
+    try:
+        return coord.mean(dim=dim) if method == "mean" else coord.median(dim=dim)
+    except (TypeError, np.exceptions.AxisError):
+        logger.info(
+            "Could not reduce coordinate '{}' along dimension '{}'. Keeping its first and last values.",
+            name,
+            dim,
+        )
+        return sc.concat([coord[dim, 0:1], coord[dim, -1:]], dim=dim)
+
+
+def prepare_reference(
     stack: sc.DataArray,
     method: str = "mean",
     dim: str = "frame",
 ) -> sc.DataArray:
     """Reduce a 3D frame stack to a 2D reference image.
+
+    Unaligned coordinates are carried over to the reference. Those along ``dim`` are reduced with
+    the same ``method``, except one whose dtype cannot be averaged, such as a text tag that differs
+    per frame (e.g. the TIFF ``DateTime``): it keeps its first and last values along ``dim``, the
+    span of the frames that were reduced. Aligned coordinates along ``dim`` are dropped and the
+    others kept. Masks along ``dim`` leave the masked values out of the reduction and are dropped;
+    the others are kept. ``method="median"`` on data with variances ignores masks: every value enters
+    the median and its variance, and the reference has no masks and no aligned coordinates.
 
     Parameters
     ----------
@@ -82,30 +107,10 @@ def prepare_reference(  # noqa: C901
     else:
         raise ValueError(f"Unsupported method '{method}'. Use 'mean' or 'median'.")
 
-    # Integrate non-aligned coords along the same dimension by taking the mean (or median) across the same dimension.
-    # Otherwise just copy the coordinate.
-    for coord in stack.coords:
-        if not stack.coords[coord].aligned:
-            if dim in stack.coords[coord].dims:
-                try:
-                    if method == "mean":
-                        result.coords[coord] = stack.coords[coord].mean(dim=dim)
-                    elif method == "median":
-                        result.coords[coord] = stack.coords[coord].median(dim=dim)
-                    else:
-                        raise ValueError(
-                            f"Unsupported method '{method}' for coordinate '{coord}'. Use 'mean' or 'median'."
-                        )
-                except sc.DTypeError:
-                    logger.warning(
-                        "Could not reduce coordinate '{}' along dimension '{}'. Copying without reduction.",
-                        coord,
-                        dim,
-                    )
-                    result.coords[coord] = stack.coords[coord]
-            else:
-                # If the coordinate does not have the reduction dimension, just copy
-                result.coords[coord] = stack.coords[coord]
-            result.coords.set_aligned(coord, False)
+    # Reduce unaligned coords along `dim` with the same method; copy the ones without `dim`.
+    for name, coord in stack.coords.items():
+        if not coord.aligned:
+            result.coords[name] = _reduce_coord(name, coord, method, dim) if dim in coord.dims else coord
+            result.coords.set_aligned(name, False)
 
     return result

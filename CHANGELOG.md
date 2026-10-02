@@ -31,6 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `attaching variances to 40 frames of 512 x 512 px (40.0 MiB)` instead of
   `attaching variances (40.0 MiB)`.
 
+### Fixed
+
+- **Open-beam and dark runs whose text tags differ per frame are averaged**
+  ([#240](https://github.com/ornlneutronimaging/NeuNorm/issues/240)). `prepare_reference` raised
+  `DimensionError` for three or more such frames, which stopped the CCD pipelines on TIFF frames
+  that each carry their own `DateTime`, and `TypeError` for two or more with `method="median"`; the
+  reference now keeps the first and last value of such a tag, as two-frame mean runs already did,
+  and logs this at INFO instead of WARNING. Runs that worked before give unchanged output.
+
 ## [2.5.0] - 2026-09-11
 
 ### Added
