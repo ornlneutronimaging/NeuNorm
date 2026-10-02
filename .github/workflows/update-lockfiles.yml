@@ -32,7 +32,7 @@ jobs:
         with:
           # Pin to the same pixi the rest of CI uses, so the regenerated
           # lockfile stays in a format the pinned CI pixi can read.
-          pixi-version: v0.70.1
+          pixi-version: v0.81.0
           run-install: false
 
       - name: Update lockfiles
