@@ -23,7 +23,8 @@ from neunorm.data_models.roi import (
 from neunorm.exporters.hdf5_writer import hdf5_export_step_count, write_hdf5
 from neunorm.exporters.tiff_writer import tiff_export_step_count, write_tiff_stack
 from neunorm.filters.gamma_filter import GAMMA_FILTER_STEPS, apply_gamma_filter
-from neunorm.pipelines._ccd_common import combine_owned_runs, load_runs
+from neunorm.pipelines._ccd_common import FrameSize, combine_owned_runs, load_runs
+from neunorm.pipelines._output_path import HDF5_SUFFIXES, TIFF_SUFFIXES, resolve_output_path, unsupported_suffix_error
 from neunorm.processing.air_region_corrector import apply_air_region_correction
 from neunorm.processing.normalizer import (
     BackgroundROILike,
@@ -52,7 +53,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
     sample_paths: Sequence[Sequence[str | Path]],
     ob_paths: Sequence[Sequence[str | Path]],
     dark_paths: Optional[Sequence[Sequence[str | Path]]] = None,
-    output_path: Optional[Path] = None,
+    output_path: Optional[str | Path] = None,
     roi: Optional[ROILike] = None,
     gamma_filter: bool = True,
     air_roi: Optional[RegionLike] = None,
@@ -90,16 +91,18 @@ def run_venus_ccd_pipeline(  # noqa: C901
         Optional (default: None). If omitted (None or an empty list), dark
         correction is skipped and the dark-frame variance does not contribute to
         the propagated uncertainty.
-    output_path : Optional[Path]
-        Path to save the output file (HDF5 or TIFF). Required; a value of None
-        raises ``ValueError`` (the default exists only so ``dark_paths`` can keep
-        its positional slot).
+    output_path : Optional[str | Path]
+        Path to save the output file: ``.hdf5``/``.h5`` for HDF5 or ``.tiff``/``.tif`` for TIFF.
+        Required; a value of None raises ``ValueError`` (the default exists only so ``dark_paths``
+        can keep its positional slot). Any other suffix raises ``ValueError`` before any input is read.
     roi : Optional[tuple]
         Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple. Each sample,
         open-beam and dark frame is cropped as it is read, so memory scales with the region and the
         number of images rather than with the detector size; the output, including the ``x`` and ``y``
-        coordinates, is the same as cropping after the load. Runs within a family must still have the
-        same uncropped frame size.
+        coordinates, is the same as cropping after the load. Sizes are checked on the uncropped frames,
+        with or without an ROI: sample, open-beam and dark frames must be the same size, though their
+        number may differ, and the runs of one family must have the same number of frames of that size.
+        A mismatch raises ``ValueError`` while the mismatched family loads, before any later family is read.
     gamma_filter : bool
         Whether to apply gamma filtering to the sample data (default: True)
     air_roi : ROI, MaskROI, or tuple, optional
@@ -143,8 +146,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
     if background_roi is not None:
         background_roi = as_region_list(background_roi, arg_name="background_roi")
 
-    if output_path is None:
-        raise ValueError("output_path is required")
+    output_path = resolve_output_path(output_path)
 
     # One reporter for the whole run, resolved exactly once: a second resolve of `progress=True`
     # would build a second tqdm sink and a duplicate set of bars. Each stage below takes its own
@@ -155,9 +157,10 @@ def run_venus_ccd_pipeline(  # noqa: C901
         # its counter cell, so N calls accumulate into one count across the whole run instead of
         # restarting per run.
         load_sample = run_progress.for_stage(STAGE_LOAD_SAMPLE, total=total_across_groups(sample_paths))
-        samples = load_runs(sample_paths, roi=roi, progress=load_sample)
+        frame_size = FrameSize()
+        samples = load_runs(sample_paths, roi=roi, progress=load_sample, family="sample", frame_size=frame_size)
         load_ob = run_progress.for_stage(STAGE_LOAD_OB, total=total_across_groups(ob_paths))
-        ob = load_runs(ob_paths, roi=roi, progress=load_ob)
+        ob = load_runs(ob_paths, roi=roi, progress=load_ob, family="open-beam", frame_size=frame_size)
 
         # Combining runs is the largest operation here that no instrumented leaf covers, and VENUS
         # relies on it, so it is reported as named steps rather than left silent.
@@ -194,7 +197,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
         dark = None
         if dark_paths:
             load_dark = run_progress.for_stage(STAGE_LOAD_DARK, total=total_across_groups(dark_paths))
-            dark_runs = load_runs(dark_paths, roi=roi, progress=load_dark)
+            dark_runs = load_runs(dark_paths, roi=roi, progress=load_dark, family="dark", frame_size=frame_size)
             combine.note(f"combining {len(dark_runs)} dark run(s)")
             dark = combine_owned_runs(
                 dark_runs,
@@ -310,7 +313,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
         if background_roi is not None:
             metadata["background_roi"] = as_region_provenance(background_roi)
 
-        if output_path.suffix.lower() in (".hdf5", ".h5"):
+        if output_path.suffix.lower() in HDF5_SUFFIXES:
             write_hdf5(
                 output_path,
                 transmission,
@@ -318,7 +321,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
                 metadata=metadata,
                 progress=run_progress.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(transmission, metadata)),
             )
-        elif output_path.suffix.lower() in (".tiff", ".tif"):
+        elif output_path.suffix.lower() in TIFF_SUFFIXES:
             rename_map = {}
             if "N_image" in transmission.dims:
                 rename_map["N_image"] = "z"  # TIFF stacks typically use 'z' for the stack dimension
@@ -360,7 +363,7 @@ def run_venus_ccd_pipeline(  # noqa: C901
                 progress=run_progress.for_stage(STAGE_EXPORT, total=tiff_export_step_count(transmission)),
             )
         else:
-            raise ValueError(f"Unsupported output file format: {output_path.suffix}")
+            raise unsupported_suffix_error(output_path)
 
         logger.success("VENUS CCD pipeline completed successfully. Output written to {}", output_path)
         return transmission
