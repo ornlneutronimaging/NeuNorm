@@ -47,6 +47,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an unquoted string value, are left out of the coordinates and named in one warning instead of
   failing the load; files that loaded before are unchanged.
 
+- **`load_tiff_stack` loads compressed stacks whose frames compress to different sizes, and files
+  with `bytes` tags** ([#241](https://github.com/ornlneutronimaging/NeuNorm/issues/241)). A tag whose
+  values cannot be stored as a coordinate is left out of the coordinates with a warning naming it
+  and the reason, instead of failing the load with a scipp error: per-file tuples that differ between
+  files, such as `StripByteCounts` of an LZW, Deflate or PackBits stack, and `bytes` values such as an
+  ICC profile or an XMP packet, including one that is the same in every file or that a single file
+  carries. Stacks that loaded before load unchanged.
+
 ## [2.5.0] - 2026-09-11
 
 ### Added

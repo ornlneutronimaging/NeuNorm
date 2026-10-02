@@ -185,6 +185,45 @@ def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
     return values, tags
 
 
+def _scalar_or_none(value) -> Optional[sc.Variable]:
+    """``value`` as a scipp scalar, or None if scipp cannot store it (``bytes``, for one)."""
+    try:
+        return sc.scalar(value=value)
+    except (AttributeError, TypeError, RuntimeError):
+        return None
+
+
+def _tag_coordinate(values: list, dim: str) -> sc.Variable | str:
+    """The coordinate for one TIFF tag's per-frame ``values``, or the reason they cannot form one.
+
+    Float-convertible values become an array along ``dim``. Otherwise values that are the same in
+    every frame become a scalar, and values that differ become an array along ``dim``. When neither
+    is possible the result is a string giving the reason, phrased to complete "TIFF tag ... is not
+    published as a coordinate: ...":
+
+    - a value scipp cannot store at all, such as ``bytes`` (an ICC profile or an XMP packet),
+      whether or not it differs between frames;
+    - values scipp can store one at a time that differ between frames and have no per-frame
+      array form, such as the tuples of ``StripByteCounts`` in a compressed stack.
+    """
+    try:
+        return sc.array(dims=[dim], values=[float(v) for v in values])
+    except (ValueError, TypeError):
+        pass
+    kind = type(values[0]).__name__
+    if len(set(values)) == 1:
+        if (scalar := _scalar_or_none(values[0])) is not None:
+            return scalar
+        return f"its {kind} value cannot be stored as a coordinate"
+    try:
+        return sc.array(dims=[dim], values=values)
+    except (ValueError, RuntimeError):
+        pass
+    if any(_scalar_or_none(v) is None for v in values):
+        return f"its {kind} values cannot be stored as a coordinate"
+    return f"its {kind} values differ across files and have no per-frame array form"
+
+
 def load_tiff_stack(
     paths: Sequence[str | Path],
     tof_edges: Optional[np.ndarray] = None,
@@ -248,7 +287,18 @@ def load_tiff_stack(
           Additionally, TIFF metadata is added as coordinates. Each metadata
           coordinate may be scalar (when its value is constant across the stack
           and not float-convertible) or stack-dimensioned (when values are
-          float-convertible or differ across files).
+          float-convertible or differ across files). A tag is left out, with a
+          warning naming it and the reason, when some files lack it. A tag Pillow
+          names (one in ``PIL.ExifTags.TAGS``) is also left out, with such a
+          warning, when its values cannot be stored as a coordinate: ``bytes``
+          values such as an ICC profile or an XMP packet, even in a single file,
+          and per-file tuples that differ across files, such as ``StripOffsets``
+          and ``StripByteCounts`` of a compressed stack. A tag Pillow does not
+          name is published from the text form of its values, so its values never
+          leave it out: text containing a colon gives a coordinate named by the
+          text before the first colon, holding the text between the first and
+          second colons, and text without a colon gives a coordinate named by the
+          tag code holding the whole text.
     """
     return _load_tiff_stack(paths, tof_edges, progress=progress, stage=stage, max_workers=max_workers, roi=roi)[0]
 
@@ -385,17 +435,10 @@ def _load_tiff_stack(  # noqa: C901
                         key_name = str(key)
                         values = [str(metadata_list[i][key]) for i in range(n_images)]
 
-                # Try converting to float if possible, otherwise keep as string
-                try:
-                    values = [float(v) for v in values]
-                    da.coords[key_name] = sc.array(dims=[dim_name], values=values)
-                except (ValueError, TypeError):
-                    if len(set(v for v in values)) == 1:
-                        # If all values are the same string, store as scalar
-                        da.coords[key_name] = sc.scalar(value=values[0])
-                    else:
-                        # Values differ across files, store as array with dimension of the stack
-                        da.coords[key_name] = sc.array(dims=[dim_name], values=values)
+                if isinstance(coord := _tag_coordinate(values, dim_name), str):
+                    logger.warning("TIFF tag {} ({}) is not published as a coordinate: {}.", key, key_name, coord)
+                    continue
+                da.coords[key_name] = coord
                 da.coords.set_aligned(key_name, False)
 
         return da, stack.shape
