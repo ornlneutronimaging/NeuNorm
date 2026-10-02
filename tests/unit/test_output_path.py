@@ -366,3 +366,31 @@ def test_a_missing_output_path_is_refused_before_any_input_is_read(name, inputs,
         reader_calls,
         tmp_path,
     )
+
+
+# the export step refuses an unsupported suffix on its own
+
+
+@pytest.fixture
+def entry_check_bypassed(monkeypatch):
+    """Let any output_path through the entry check, so a run reaches the export step's own refusal."""
+    for name in _ALL:
+        module = importlib.import_module(f"neunorm.pipelines.{name}")
+        monkeypatch.setattr(module, "resolve_output_path", lambda output_path, **_: Path(output_path))
+
+
+@pytest.mark.usefixtures("entry_check_bypassed")
+@pytest.mark.parametrize("name", _ALL)
+def test_the_export_step_refuses_an_unsupported_image_suffix(name, inputs, tmp_path):
+    with pytest.raises(ValueError, match=_unsupported(".bmp")):
+        _run(name, inputs, tmp_path / "out.bmp")
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.usefixtures("entry_check_bypassed")
+@pytest.mark.parametrize("name", _TOF)
+@pytest.mark.parametrize(("filename", "pattern"), _SPECTRUM_REFUSALS, ids=[f for f, _ in _SPECTRUM_REFUSALS])
+def test_the_export_step_refuses_an_unsupported_spectrum_suffix(name, filename, pattern, inputs, tmp_path):
+    with pytest.raises(ValueError, match=pattern):
+        _run(name, inputs, tmp_path / filename, spectrum_roi=_REGION)
+    assert list(tmp_path.iterdir()) == []
