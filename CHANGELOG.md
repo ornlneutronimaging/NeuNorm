@@ -33,6 +33,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The CCD pipelines reject sample, open-beam and dark frames of different size**
+  ([#238](https://github.com/ornlneutronimaging/NeuNorm/issues/238)). `run_mars_ccd_pipeline` and
+  `run_venus_ccd_pipeline` raise a `ValueError` naming both families and both frame sizes as soon as
+  the mismatched family loads; an `roi` that fit both sizes used to crop and normalize them without
+  an error, and `roi=None` failed later with a scipp coordinate error. With `roi=None`, runs of one
+  family that differ in shape are now also rejected while that family loads, before any later family
+  is read, with the message `combine_runs` raises.
+
+- **`load_fits_stack` loads FITS files whose header has a card astropy cannot parse, a card with no
+  value, or values a coordinate cannot hold**
+  ([#242](https://github.com/ornlneutronimaging/NeuNorm/issues/242)). Such keys, for example one with
+  an unquoted string value, are left out of the coordinates and named in one warning instead of
+  failing the load; files that loaded before are unchanged.
+
+- **`load_tiff_stack` loads compressed stacks whose frames compress to different sizes, and files
+  with `bytes` tags** ([#241](https://github.com/ornlneutronimaging/NeuNorm/issues/241)). A tag whose
+  values cannot be stored as a coordinate is left out of the coordinates with a warning naming it
+  and the reason, instead of failing the load with a scipp error: per-file tuples that differ between
+  files, such as `StripByteCounts` of an LZW, Deflate or PackBits stack, and `bytes` values such as an
+  ICC profile or an XMP packet, including one that is the same in every file or that a single file
+  carries. Stacks that loaded before load unchanged.
+
+- **Open-beam and dark runs whose text tags differ per frame are averaged**
+  ([#240](https://github.com/ornlneutronimaging/NeuNorm/issues/240)). `prepare_reference` raised
+  `DimensionError` for three or more such frames, which stopped the CCD pipelines on TIFF frames
+  that each carry their own `DateTime`, and `TypeError` for two or more with `method="median"`; the
+  reference now keeps the first and last value of such a tag, as two-frame mean runs already did,
+  and logs this at INFO instead of WARNING. Runs that worked before give unchanged output.
+
 - **The pipelines accept a `str` `output_path` and check its suffix before reading any input**
   ([#239](https://github.com/ornlneutronimaging/NeuNorm/issues/239)). A string path used to raise
   `AttributeError`, and an unsupported suffix (or TIFF with `spectrum_roi`) `ValueError`, only after

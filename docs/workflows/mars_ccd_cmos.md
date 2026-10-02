@@ -157,11 +157,13 @@ once rather than after the processing work is done.
 │  • Load Sample stack → 3D array (N_images, y, x)                │
 │  • Load OB stack → 3D array (N_ob, y, x)                        │
 │  • Load Dark Current stack → 3D array (N_dark, y, x)            │
-│  • Validate dimensions match (y, x must be same)                │
+│  • Validate uncropped frame sizes as each family loads:         │
+│    runs of a family must match its first run's (N, y, x);       │
+│    OB and dark (y, x) must match the sample's; N_ob and N_dark  │
+│    may differ from N_images                                     │
 │  IF ROI specified, as each frame is read:                       │
 │    • Keep only the ROI: frame[y0:y1, x0:x1]                     │
 │    • Only the ROI is stored; memory scales with the ROI         │
-│    • Runs of a family must share the uncropped frame size       │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐

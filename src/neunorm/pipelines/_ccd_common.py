@@ -13,21 +13,55 @@ from neunorm.processing.run_combiner import _require_same_shape, combine_runs
 from neunorm.utils.progress import ProgressLike
 
 
+class FrameSize:
+    """The uncropped frame size ``(ny, nx)`` that every input family of one pipeline run must share.
+
+    Sample, open-beam and dark frames are subtracted and divided pixel by pixel, so each family's
+    frames must be the size of the first family's; only the number of frames may differ.
+    """
+
+    def __init__(self) -> None:
+        self._family: Optional[str] = None
+        self._size: Optional[tuple[int, int]] = None
+
+    def check(self, family: str, stack_shape: tuple[int, ...]) -> None:
+        """Record the frame size of the first family checked; raise ``ValueError`` if a later one differs.
+
+        ``stack_shape`` is the family's uncropped ``(n_frames, ny, nx)``. The error is logged before it
+        is raised and names both families and both sizes.
+        """
+        _, ny, nx = stack_shape
+        if self._size is None:
+            self._family, self._size = family, (ny, nx)
+            return
+        if (ny, nx) != self._size:
+            base_ny, base_nx = self._size
+            message = (
+                f"{family.capitalize()} frames have size (y={ny}, x={nx}), but {self._family} frames have size"
+                f" (y={base_ny}, x={base_nx}); sample, open-beam and dark frames must be the same size"
+            )
+            logger.error(message)
+            raise ValueError(message)
+
+
 def load_runs(
     groups: Sequence[Sequence],
     *,
     roi: Optional[tuple[int, int, int, int]],
     progress: ProgressLike,
+    family: str,
+    frame_size: FrameSize,
 ) -> list[sc.DataArray]:
     """Load every run of one input family (sample, open beam or dark), cropping each frame to ``roi``.
 
     Only the ROI of each frame is kept, so memory scales with the region rather than the detector.
-    Cropping before combining hides each run's detector size from
-    :func:`~neunorm.processing.run_combiner.combine_runs`, whose shape check is what rejects runs of
-    different size (for example, taken at different binning). With ``roi`` set, each run's uncropped
-    shape is therefore checked against the first run's here, raising the error ``combine_runs``
-    raises. An ROI that does not fit a run is reported as a shape mismatch when it fits the first
-    run, and as an ROI error otherwise.
+    With or without ``roi``, each run's uncropped shape is checked against the first run's as it
+    loads, raising and logging the error :func:`~neunorm.processing.run_combiner.combine_runs` raises
+    for runs of different shape (for example, taken at different binning), so a mismatch within the
+    family is reported before any later family is read. The first run's uncropped frame size is
+    checked against the families loaded before it with ``frame_size``. An ROI that does not fit a run
+    is reported as a mismatch with the frames loaded before it, and as an ROI error when no frames
+    were loaded before.
 
     Parameters
     ----------
@@ -37,6 +71,10 @@ def load_runs(
         Crop bounds ``(x0, y0, x1, y1)``; ``None`` keeps whole frames.
     progress : bool, callable or ProgressReporter
         The family's load-stage reporter, shared by every run so the count spans the family.
+    family : str
+        The family's name in error messages: ``"sample"``, ``"open-beam"`` or ``"dark"``.
+    frame_size : FrameSize
+        Shared by every family of one pipeline run.
 
     Returns
     -------
@@ -53,10 +91,13 @@ def load_runs(
         except _ROIFitError as error:
             if base_shape is not None:
                 _require_same_shape(i, error.stack_shape, base_dims, base_shape, base_dims)
+            else:
+                frame_size.check(family, error.stack_shape)
             raise
         if base_shape is None:
+            frame_size.check(family, shape)
             base_shape, base_dims = shape, run.dims
-        elif roi is not None:
+        else:
             _require_same_shape(i, shape, run.dims, base_shape, base_dims)
         runs.append(run)
     return runs
