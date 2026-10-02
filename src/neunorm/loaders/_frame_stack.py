@@ -13,10 +13,8 @@ from loguru import logger
 
 from neunorm.data_models.roi import _crop_fit_message
 
-#: Threads used to decode a stack when the caller does not say. Deliberately modest: the
-#: right number depends on whether the files are local or on a mounted analysis filesystem,
-#: and that was not measured, so this trades some of the available speedup for not swamping
-#: a shared mount from every concurrent user. Raise it via ``max_workers`` once measured.
+#: Threads used to decode a stack when the caller does not pass ``max_workers``. Kept modest so
+#: concurrent users do not swamp a shared analysis filesystem.
 DEFAULT_MAX_WORKERS = 8
 
 

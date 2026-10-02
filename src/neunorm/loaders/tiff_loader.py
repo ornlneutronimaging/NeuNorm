@@ -157,9 +157,7 @@ def _read_tiff_frame(path: str | Path) -> tuple[np.ndarray, dict]:
     HDF5 product. That is a deliberate behaviour change to make on its own terms, with a migration
     note, rather than a side effect of a change whose purpose is decoding speed.
     """
-    # This opens the file twice: Pillow for the IFD, tifffile for the pixels. Reading the bytes once
-    # and parsing them twice would remove the second open, but would hold the raw bytes plus a
-    # BytesIO copy per in-flight frame, which costs more memory than the open saves time.
+    # This opens the file twice: Pillow for the IFD, tifffile for the pixels.
     #
     # `dict(img.tag_v2)` produced {tag_code: value}; reproduce that exactly so the metadata
     # block in the caller is untouched. Pillow's open is lazy — this reads the IFD, not pixels.
@@ -213,9 +211,8 @@ def load_tiff_stack(
         Progress reporting, off by default. ``True`` draws a :mod:`tqdm` bar; a callable receives a
         :class:`~neunorm.utils.progress.ProgressEvent` per file read, plus a note naming the
         stack's frame count, frame size and memory before its variances are filled. A pipeline
-        normally passes a
-        pre-bound reporter here instead, so its per-file count spans every run rather than
-        restarting. See :mod:`neunorm.utils.progress`.
+        normally passes a pre-bound reporter here instead, so its per-file count spans every run
+        rather than restarting. See :mod:`neunorm.utils.progress`.
     stage : str, optional
         Stage label the events carry. Defaults to ``STAGE_LOAD_SAMPLE``; pass ``STAGE_LOAD_OB`` or
         ``STAGE_LOAD_DARK`` when loading those, so a callback can tell the loads of a run apart.

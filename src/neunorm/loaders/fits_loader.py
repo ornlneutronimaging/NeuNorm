@@ -75,9 +75,8 @@ def load_fits_stack(
         Progress reporting, off by default. ``True`` draws a :mod:`tqdm` bar; a callable receives a
         :class:`~neunorm.utils.progress.ProgressEvent` per file read, plus a note naming the
         stack's frame count, frame size and memory before its variances are filled. A pipeline
-        normally passes a
-        pre-bound reporter here instead, so its per-file count spans every run rather than
-        restarting. See :mod:`neunorm.utils.progress`.
+        normally passes a pre-bound reporter here instead, so its per-file count spans every run
+        rather than restarting. See :mod:`neunorm.utils.progress`.
     stage : str, optional
         Stage label the events carry. Defaults to ``STAGE_LOAD_SAMPLE``; pass ``STAGE_LOAD_OB`` or
         ``STAGE_LOAD_DARK`` when loading those, so a callback can tell the loads of a run apart.
