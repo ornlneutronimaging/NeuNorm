@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `attaching variances to 40 frames of 512 x 512 px (40.0 MiB)` instead of
   `attaching variances (40.0 MiB)`.
 
+- **The gamma filter needs less than a quarter of the memory it did**
+  ([#243](https://github.com/ornlneutronimaging/NeuNorm/issues/243)). `apply_gamma_filter` frees
+  each temporary after its last use and builds its output with one copy, so on a float32 stack it
+  peaks at about 3.3 times the stack's values instead of about 15, with bit-identical output. With
+  the frames and ROI used for [#236](https://github.com/ornlneutronimaging/NeuNorm/issues/236), MARS
+  CCD now peaks at 2.7 GB for 100 and 13.4 GB for 500 sample images (19.2 GB with load-time cropping
+  alone), and 10.2 GB for four images without an ROI; measured on macOS.
+
 ## [2.5.0] - 2026-09-11
 
 ### Added
