@@ -16,13 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `load_stack`, `load_tiff_stack` and `load_fits_stack` take a keyword-only `roi` with the same effect;
   the result is identical to `apply_roi` on the full load. On 6300×6100 frames with a 1704×326 ROI,
   28 open-beam and 15 dark runs, MARS CCD peaks at 0.2 GB for one sample image (9.5 GB before),
-  3.8 GB for 100 (70.6 GB before) and 19.2 GB for 500 (317.8 GB before), measured on macOS. An invalid ROI now raises before any file
-  is read, and one that does not fit the frames as soon as the first frame is decoded.
+  3.8 GB for 100 and 19.2 GB for 500, measured on macOS; the issue reported 70.6 GB for 100 and
+  317.8 GB for 500 before. An invalid ROI now raises before any file is read, and one that does not
+  fit the frames as soon as the first frame is decoded.
 
 - **Stack loading fills values and variances in place**
   ([#236](https://github.com/ornlneutronimaging/NeuNorm/issues/236)). `load_tiff_stack` and
-  `load_fits_stack` peak at 2.0× the stack, down from 4.0×, for every pipeline that loads image
-  stacks. The CCD pipelines no longer copy a family that has a single run; with `roi=None`, MARS CCD
+  `load_fits_stack` peak at about twice the stack, half what they did, for every pipeline that loads
+  image stacks. The CCD pipelines no longer copy a family that has a single run; with `roi=None`, MARS CCD
   on the frames above peaks at 9.2 GB for one sample image and 11.3 GB for four (9.5 and 17.1 GB
   before). A stack that cannot be allocated raises a `MemoryError` naming its shape and size.
 
@@ -31,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `attaching variances to 40 frames of 512 x 512 px (40.0 MiB)` instead of
   `attaching variances (40.0 MiB)`.
 
-- **The gamma filter needs less than a quarter of the memory it did**
+- **The gamma filter needs about a quarter of the memory it did**
   ([#243](https://github.com/ornlneutronimaging/NeuNorm/issues/243)). `apply_gamma_filter` frees
   each temporary after its last use and builds its output with one copy, so on a float32 stack it
   peaks at about 3.3 times the stack's values instead of about 15, with bit-identical output. With
@@ -45,11 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged. On 512×512 frames with a 64×64 ROI and one run per family, TPX1 peaks at 0.27 GB for 500
   frames (4.47 GB before) and 0.42 GB for 1000 (8.82 GB before), measured on macOS as the peak memory
   footprint, about 0.12 GB of which is importing NeuNorm. Neither pipeline copies a family that has a
-  single run any more, and each run's stack is released once its family is combined; with `roi=None`
-  on 200 frames, TPX1 peaks at 3.48 GB for one run per family (4.32 GB before) and 3.06 GB for three
-  (5.16 GB before). Sample and open-beam frames of different size now raise a `ValueError` naming both
-  sizes, with or without `roi`, and runs of one family that differ in shape raise the `combine_runs`
-  error while that family loads.
+  single run any more, and each run's stack is released once its family is combined. An invalid ROI
+  now raises before any file is read, and one that does not fit the frames as soon as the first frame
+  is decoded.
 
 ### Fixed
 
@@ -76,9 +75,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([#238](https://github.com/ornlneutronimaging/NeuNorm/issues/238)). `run_mars_ccd_pipeline` and
   `run_venus_ccd_pipeline` raise a `ValueError` naming both families and both frame sizes as soon as
   the mismatched family loads; an `roi` that fit both sizes used to crop and normalize them without
-  an error, and `roi=None` failed later with a scipp coordinate error. With `roi=None`, runs of one
-  family that differ in shape are now also rejected while that family loads, before any later family
-  is read, with the message `combine_runs` raises.
+  an error, and `roi=None` failed later with a scipp coordinate error. With or without `roi`, runs of
+  one family that differ in shape are now also rejected while that family loads, before any later
+  family is read, with the message `combine_runs` raises.
+
+- **The TPX1 and TPX3 histogram pipelines reject sample and open-beam frames of different size**
+  ([#244](https://github.com/ornlneutronimaging/NeuNorm/issues/244)). `run_venus_tpx1_pipeline` and
+  `run_venus_tpx3_histogram_pipeline` raise a `ValueError` naming both sizes as the open beam loads;
+  an `roi` that fit both sizes used to normalize them without an error, and `roi=None` failed later
+  with a scipp `DimensionError`. Runs of one family that differ in shape raise the `combine_runs`
+  error while that family loads.
 
 - **`load_fits_stack` loads FITS files whose header has a card astropy cannot parse, a card with no
   value, or values a coordinate cannot hold**
