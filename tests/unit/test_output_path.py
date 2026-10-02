@@ -43,8 +43,8 @@ _READERS = {
     "mars_ccd": ["load_runs"],
     "venus_ccd": ["load_runs"],
     "mars_tpx3": ["load_event_nexus"],
-    "venus_tpx1": ["load_metadata", "load_tiff_stack"],
-    "venus_tpx3_histogram": ["load_metadata", "load_tiff_stack"],
+    "venus_tpx1": ["load_runs", "load_metadata", "_load_tiff_stack"],
+    "venus_tpx3_histogram": ["load_runs", "load_metadata", "_load_tiff_stack"],
     "venus_tpx3_event": ["load_metadata", "load_event_nexus"],
 }
 

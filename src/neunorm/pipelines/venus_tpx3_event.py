@@ -20,6 +20,7 @@ from neunorm.pipelines._tof_spine import (
     coerce_roi_arguments,
     reduce_tof_stacks,
 )
+from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.run_combiner import combine_runs
 from neunorm.tof.event_converter import convert_events_to_histogram
 from neunorm.utils.constants import VENUS_FLIGHT_PATH_M
@@ -306,6 +307,11 @@ def run_venus_tpx3_event_pipeline(
             normalize_by_runs=True,
         )
         combine()
+
+        # The shared reduction takes stacks already cropped to the ROI.
+        if roi:
+            sample = apply_roi(sample, roi)
+            ob = apply_roi(ob, roi)
 
         metadata = {
             "sample_paths": [str(run) for run in sample_paths],

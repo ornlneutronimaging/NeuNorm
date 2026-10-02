@@ -224,11 +224,12 @@ counting calls.
 | `normalize` | named steps | the flux correction (background-ROI or proton-charge) and the division; the count depends on which correction was requested |
 | `export` | named steps for HDF5 | one event per file with `tiff_one_file_per_image=True`, which is the only export path with a determinate item count |
 
-Some work is deliberately **not** reported: the metadata reads, the ROI crop (except on the CCD
-pipelines, which crop each frame as it loads), the open-beam and dark averaging, dead and hot pixel
-detection, the statistics analysis behind `rebin_by_tof=True`, the spatial rebin and the air-region
-correction. Each is a single pass that runs between named stages, and inventing a step for each would
-inflate the counts without adding information. Each pipeline's `progress` docstring
+Some work is deliberately **not** reported: the metadata reads, the ROI crop on the two event
+pipelines (the CCD, VENUS TPX1 and VENUS TPX3 histogram pipelines crop each frame as it loads, within
+the load stage), the open-beam and dark averaging, dead and hot pixel detection, the statistics analysis
+behind `rebin_by_tof=True`, the spatial rebin and the air-region correction. Each is a single pass that
+runs between named stages, and inventing a step for each would inflate the counts without adding
+information. Each pipeline's `progress` docstring
 lists what its own run leaves out, because the lists differ — VENUS TPX1 detects dead pixels but not hot
 ones, the MARS pipelines have no air-region correction, and only the TOF pipelines rebin.
 

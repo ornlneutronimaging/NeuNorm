@@ -3,10 +3,10 @@ The shared middle of the three VENUS TOF pipelines.
 
 ``venus_tpx1``, ``venus_tpx3_histogram`` and ``venus_tpx3_event`` differ only in how they get their
 two stacks — a TIFF stack plus a spectra sidecar, a TIFF stack plus NeXus TOF binning, or events
-histogrammed on the fly — and in a handful of per-detector details. Everything from the ROI crop to
-the written file was the same 150 lines copied three times.
+histogrammed on the fly — and in a handful of per-detector details. Everything from the cropped,
+run-combined stacks to the written file is shared.
 
-That middle lives here, once. Each entry point keeps its own loading and metadata and calls
+That middle lives here, once. Each entry point keeps its own loading, metadata and ROI crop and calls
 :func:`reduce_tof_stacks`; the per-detector differences are named in a :class:`TofPipelineProfile`
 rather than encoded by which copy of the code you are reading.
 """
@@ -42,7 +42,6 @@ from neunorm.pipelines._output_path import (
 from neunorm.processing.air_region_corrector import apply_air_region_correction
 from neunorm.processing.moving_window import moving_window, moving_window_step_count
 from neunorm.processing.normalizer import normalize_step_count, normalize_transmission
-from neunorm.processing.roi_clipper import apply_roi
 from neunorm.processing.spatial_rebinner import rebin_spatial
 from neunorm.processing.spectrum_reducer import (
     normalize_roi_spectrum,
@@ -512,12 +511,12 @@ def _validate_argument_combinations(
 
     Gathered in one place rather than scattered down the run, so the list of what is incompatible
     with what can be read without following the control flow of the whole reduction, and so a run
-    that is going to be rejected is rejected before it crops, rebins, normalizes or writes anything.
+    that is going to be rejected is rejected before it rebins, normalizes or writes anything.
 
-    It does NOT run before the expensive part. Every entry point loads and run-combines both stacks
-    before it reaches :func:`reduce_tof_stacks`, so a rejected run still pays for the load — minutes,
-    on a large TOF stack. Moving these checks into the three entry points would fix that, but the
-    warnings below would then fire twice unless refusals and warnings were split first.
+    It does NOT run before the expensive part. Every entry point loads, run-combines and crops both
+    stacks before it reaches :func:`reduce_tof_stacks`, so a rejected run still pays for the load —
+    minutes, on a large TOF stack. Moving these checks into the three entry points would fix that, but
+    the warnings below would then fire twice unless refusals and warnings were split first.
     """
     if spectrum_roi is not None:
         if air_roi is not None:
@@ -674,11 +673,11 @@ def reduce_tof_stacks(
     moving_window_config: Optional[MovingWindow] = None,
     run_progress: ProgressReporter,
 ) -> sc.DataArray:
-    """Crop, mask, rebin, normalize, label and write — the part every VENUS TOF pipeline shares.
+    """Mask, rebin, normalize, label and write — the part every VENUS TOF pipeline shares.
 
-    Called with both stacks already loaded and run-combined. The steps run in the order the three
-    pipelines have always run them: crop, dead/hot detection, spatial rebin (re-detecting the masks),
-    TOF rebin, normalization, air-region correction, wavelength/energy labelling, export.
+    Called with both stacks already loaded, run-combined and cropped to ``roi``. The steps run in this
+    order: dead/hot detection, spatial rebin (re-detecting the masks), TOF rebin, normalization,
+    air-region correction, wavelength/energy labelling, export.
 
     That order is why an ROI resolved at normalization time is expressed in **post-crop,
     post-spatial-rebin** pixels rather than detector pixels.
@@ -691,7 +690,7 @@ def reduce_tof_stacks(
     Parameters
     ----------
     sample, ob : sc.DataArray
-        The combined sample and open-beam stacks.
+        The combined sample and open-beam stacks, already cropped to ``roi``.
     output_path : Path
         Where to write; the suffix selects the writer.
     profile : TofPipelineProfile
@@ -700,7 +699,8 @@ def reduce_tof_stacks(
         Provenance assembled by the entry point. ``roi``/``air_roi``/``spectrum_roi`` provenance is
         added here, so every pipeline records it identically.
     roi : tuple, optional
-        Crop bounds, already coerced by :func:`coerce_roi_arguments`.
+        The crop bounds both stacks were cropped to, already coerced by :func:`coerce_roi_arguments`.
+        Recorded as ``roi_applied`` and named in the ``spectrum_roi`` warning; nothing is cropped here.
     air_roi : ROI, MaskROI, or tuple, optional
         Air region for the post-normalization scale correction. Image mode only — it scales an image
         so its air region reads 1.0, which is meaningless once the output is one number per bin.
@@ -737,11 +737,6 @@ def reduce_tof_stacks(
         spectrum_roi=spectrum_roi,
         moving_window_config=moving_window_config,
     )
-
-    # Apply ROI if specified
-    if roi:
-        sample = apply_roi(sample, roi)
-        ob = apply_roi(ob, roi)
 
     # Dead (and hot) pixel detection
     _attach_pixel_masks(sample, ob, profile)
