@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   family that differ in shape are now also rejected while that family loads, before any later family
   is read, with the message `combine_runs` raises.
 
+- **`load_fits_stack` loads FITS files whose header has a card astropy cannot parse, a card with no
+  value, or values a coordinate cannot hold**
+  ([#242](https://github.com/ornlneutronimaging/NeuNorm/issues/242)). Such keys, for example one with
+  an unquoted string value, are left out of the coordinates and named in one warning instead of
+  failing the load; files that loaded before are unchanged.
+
 ## [2.5.0] - 2026-09-11
 
 ### Added
