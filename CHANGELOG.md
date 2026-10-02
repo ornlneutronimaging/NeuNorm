@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `attaching variances to 40 frames of 512 x 512 px (40.0 MiB)` instead of
   `attaching variances (40.0 MiB)`.
 
+### Fixed
+
+- **`load_fits_stack` loads FITS files whose header has a card astropy cannot parse, a card with no
+  value, or values a coordinate cannot hold**
+  ([#242](https://github.com/ornlneutronimaging/NeuNorm/issues/242)). Such keys, for example one with
+  an unquoted string value, are left out of the coordinates and named in one warning instead of
+  failing the load; files that loaded before are unchanged.
+
 ## [2.5.0] - 2026-09-11
 
 ### Added
