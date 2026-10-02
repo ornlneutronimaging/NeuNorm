@@ -33,7 +33,7 @@ jobs:
       - name: Setup pixi
         uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
         with:
-          pixi-version: v0.70.1
+          pixi-version: v0.81.0
           manifest-path: pyproject.toml
           frozen: true
 
@@ -69,7 +69,7 @@ jobs:
       - name: Setup pixi
         uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
         with:
-          pixi-version: v0.70.1
+          pixi-version: v0.81.0
           manifest-path: pyproject.toml
           frozen: true
           environments: docs
@@ -92,7 +92,7 @@ jobs:
       - name: Setup pixi
         uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
         with:
-          pixi-version: v0.70.1
+          pixi-version: v0.81.0
           manifest-path: pyproject.toml
           frozen: true
 
@@ -109,14 +109,14 @@ jobs:
           module-name: ${{ env.MODULE_NAME }}
           local-channel: /tmp/local-channel
           python-version: "3.11"
-          # `module-name` only reaches `neunorm`, whose __init__ imports nothing but
-          # _version -- so that check passes even when a run-dependency needed by the
-          # actual library is missing from the recipe, which is how a missing scitiff
-          # shipped in every 2.x conda package. Import the real surface instead: every
-          # pipeline, which transitively pulls the exporters, loaders and processing
-          # modules and therefore every third-party run-dependency.
+          # `module-name` only imports `neunorm`, whose __init__ imports nothing but
+          # _version, and the action's env also holds conda-build, which brings tqdm
+          # and pydantic. Install the built package alone in a new env and import
+          # every module in it, plus tqdm (imported inside a function), so a
+          # run-dependency missing from the recipe fails here.
           extra-commands: |
-            python -c "import neunorm.pipelines.mars_ccd, neunorm.pipelines.mars_tpx3, neunorm.pipelines.venus_ccd, neunorm.pipelines.venus_tpx1, neunorm.pipelines.venus_tpx3_event, neunorm.pipelines.venus_tpx3_histogram"
+            micromamba create -y -n neunorm-only -c /tmp/local-channel -c conda-forge python=3.11 "neunorm==$(python -c 'import neunorm; print(neunorm.__version__)')"
+            micromamba run -n neunorm-only python -c "import importlib, pkgutil, neunorm, tqdm; [importlib.import_module(m.name) for m in pkgutil.walk_packages(neunorm.__path__, 'neunorm.')]"
 
       - name: Upload conda package as artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -139,7 +139,7 @@ jobs:
       - name: Setup Pixi
         uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
         with:
-          pixi-version: v0.70.1
+          pixi-version: v0.81.0
           manifest-path: pyproject.toml
           frozen: true
 
@@ -179,7 +179,7 @@ jobs:
       - name: Setup pixi
         uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
         with:
-          pixi-version: v0.70.1
+          pixi-version: v0.81.0
           manifest-path: pyproject.toml
           frozen: true
 
