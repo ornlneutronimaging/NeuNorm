@@ -21,7 +21,7 @@ from neunorm.data_models.roi import (
 from neunorm.exporters.hdf5_writer import hdf5_export_step_count, write_hdf5
 from neunorm.exporters.tiff_writer import tiff_export_step_count, write_tiff_stack
 from neunorm.filters.gamma_filter import GAMMA_FILTER_STEPS, apply_gamma_filter
-from neunorm.pipelines._ccd_common import FrameSize, combine_owned_runs, load_runs
+from neunorm.pipelines._run_loading import FrameSize, combine_owned_runs, load_runs
 from neunorm.processing.normalizer import (
     BackgroundROILike,
     normalize_step_count,

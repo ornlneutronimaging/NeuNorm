@@ -31,6 +31,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `attaching variances to 40 frames of 512 x 512 px (40.0 MiB)` instead of
   `attaching variances (40.0 MiB)`.
 
+- **The TPX1 and TPX3 histogram pipelines crop to `roi` as each frame loads**
+  ([#244](https://github.com/ornlneutronimaging/NeuNorm/issues/244)). `run_venus_tpx1_pipeline` and
+  `run_venus_tpx3_histogram_pipeline` keep only the ROI of each sample and open-beam frame. Output is
+  unchanged. On 512×512 frames with a 64×64 ROI and one run per family, TPX1 peaks at 0.27 GB for 500
+  frames (4.47 GB before) and 0.42 GB for 1000 (8.82 GB before), measured on macOS as the peak memory
+  footprint, about 0.12 GB of which is importing NeuNorm. Neither pipeline copies a family that has a
+  single run any more, and each run's stack is released once its family is combined; with `roi=None`
+  on 200 frames, TPX1 peaks at 3.48 GB for one run per family (4.32 GB before) and 3.06 GB for three
+  (5.16 GB before). Sample and open-beam frames of different size now raise a `ValueError` naming both
+  sizes, with or without `roi`, and runs of one family that differ in shape raise the `combine_runs`
+  error while that family loads.
+
 ### Fixed
 
 - **The CCD pipelines reject sample, open-beam and dark frames of different size**

@@ -31,7 +31,7 @@ from neunorm.loaders import fits_loader, tiff_loader
 from neunorm.loaders.stack_loader import load_stack
 from neunorm.pipelines import mars_ccd as mars_ccd_module
 from neunorm.pipelines import venus_ccd as venus_ccd_module
-from neunorm.pipelines._ccd_common import combine_owned_runs
+from neunorm.pipelines._run_loading import combine_owned_runs
 from neunorm.pipelines.mars_ccd import run_mars_ccd_pipeline
 from neunorm.pipelines.venus_ccd import run_venus_ccd_pipeline
 from neunorm.processing.air_region_corrector import apply_air_region_correction

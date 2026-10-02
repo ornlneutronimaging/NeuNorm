@@ -3,6 +3,7 @@ VENUS TPX1 pipeline.
 """
 
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Literal, Optional, Sequence
 
@@ -13,20 +14,21 @@ from neunorm import __version__
 from neunorm.data_models.moving_window import MovingWindow
 from neunorm.data_models.roi import RegionLike, RegionsLike, ROILike
 from neunorm.loaders.metadata_loader import load_metadata
-from neunorm.loaders.tiff_loader import load_tiff_stack
+from neunorm.loaders.tiff_loader import _load_tiff_stack
+from neunorm.pipelines._run_loading import FrameSize, combine_owned_runs, load_runs
 from neunorm.pipelines._tof_spine import (
     TofPipelineProfile,
     coerce_roi_arguments,
     reduce_tof_stacks,
     require_matching_group_counts,
 )
-from neunorm.processing.run_combiner import combine_runs
 from neunorm.utils.constants import VENUS_FLIGHT_PATH_M
 from neunorm.utils.progress import (
     STAGE_COMBINE_RUNS,
     STAGE_LOAD_OB,
     STAGE_LOAD_SAMPLE,
     Progress,
+    ProgressLike,
     resolve_progress,
     total_across_groups,
 )
@@ -59,6 +61,39 @@ def _tof_bin_edges_from_left_edges(spectra_tof: sc.Variable) -> sc.Variable:
     return sc.array(dims=["tof"], values=np.append(values, closing), unit=spectra_tof.unit)
 
 
+def _load_run(
+    group: tuple[str | Path, Sequence[str | Path]],
+    *,
+    progress: ProgressLike,
+    roi: Optional[tuple[int, int, int, int]],
+    label: str,
+) -> tuple[sc.DataArray, tuple[int, ...]]:
+    """Load one run: its metadata, then its TIFF stack cropped to ``roi``, with the metadata attached.
+
+    ``group`` is the run's ``(hdf5_path, tiff_paths)``; ``label`` names its family in the error for an
+    empty ``tiff_paths``. Returns the run, with ``tof`` bin edges built from the spectra sidecar, and its
+    uncropped shape ``(n_frames, ny, nx)``.
+    """
+    hdf5_path, tiff_paths = group
+    if not tiff_paths:
+        raise ValueError(f"Each {label} TIFF path group must contain at least one TIFF file.")
+    # Read the spectra TOF sidecar from the directory the images actually came from (the
+    # auto-reduction tree), not the raw-acquisition path in the DAS log.
+    metadata = load_metadata(hdf5_path, read_spectra_tof=True, image_dir=Path(tiff_paths[0]).parent)
+    run, shape = _load_tiff_stack(tiff_paths, progress=progress, roi=roi)
+    # Attach metadata as coordinates for later use in normalization and rebinning
+    for key, value in metadata.items():
+        if key == "spectra_tof":
+            # spectra_tof holds per-frame LEFT bin edges; build N+1 bin edges so tof is a
+            # proper bin-edge axis and rebin_by_tof works.
+            run = run.rename_dims({"N_image": "tof"})
+            run.coords["tof"] = _tof_bin_edges_from_left_edges(value)
+        else:
+            run.coords[key] = value
+            run.coords.set_aligned(key, False)
+    return run, shape
+
+
 def run_venus_tpx1_pipeline(
     sample_hdf5_paths: Sequence[str | Path],
     ob_hdf5_paths: Sequence[str | Path],
@@ -80,12 +115,11 @@ def run_venus_tpx1_pipeline(
 ) -> sc.DataArray:
     """Execute VENUS TPX1 normalization pipeline.
 
-    Pipeline Steps (11 total)
-    - Load TIFF stack (pre-binned histograms from auto-reduction)
+    Pipeline Steps (12 total)
+    - Load TIFF stack (pre-binned histograms from auto-reduction), cropping each frame to the ROI (optional)
     - Load TOF bin edges
     - Load metadata (including proton charge and detector time offset)
     - Run combine
-    - ROI clip (optional)
     - Dead pixel detection
     - Statistics analysis + rebinning recommendation (only when ``rebin_by_tof=True``)
     - Rebinning (TOF and/or spatial, optional)
@@ -111,7 +145,13 @@ def run_venus_tpx1_pipeline(
     output_path : Path
         Path to save the output file (HDF5 or TIFF)
     roi : Optional[tuple]
-        Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
+        Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple. Each sample and
+        open-beam frame is cropped as it is read, so memory scales with the region and the number of
+        images rather than with the detector size; the output, including the ``x`` and ``y``
+        coordinates, is the same as cropping after the load. Sizes are checked on the uncropped frames,
+        with or without an ROI: sample and open-beam frames must be the same size, and the runs of one
+        family must have the same number of frames of that size. A mismatch raises ``ValueError`` while
+        the mismatched family loads, before any later family is read.
     air_roi : ROI, MaskROI, or tuple, optional
         Region of interest for air correction — an ``ROI``, a bare ``(x0, y0, x1, y1)`` tuple, or an
         arbitrary-shape ``MaskROI`` selection. If None, air correction is not applied.
@@ -184,9 +224,9 @@ def run_venus_tpx1_pipeline(
         The stages reported are the sample and open-beam loads — **one event per TIFF**, counted across
         all input runs rather than restarting per run — then the run combine, the TOF rebin when one is
         requested, the normalization, and the export, which is per file with
-        ``tiff_one_file_per_image=True``. Not every operation in between is reported: the metadata
-        reads, the ROI crop, the dead-pixel detection, the statistics analysis, the spatial rebin and the
-        air-region correction are single passes that run between named stages. See
+        ``tiff_one_file_per_image=True``. The ROI crop happens inside the loads. Not every operation in
+        between is reported: the metadata reads, the dead-pixel detection, the statistics analysis, the
+        spatial rebin and the air-region correction are single passes that run between named stages. See
         :mod:`neunorm.utils.progress`.
 
     Notes
@@ -215,68 +255,44 @@ def run_venus_tpx1_pipeline(
     # view via `run_progress.for_stage(...)`, and the leaves it calls borrow that view, so only this
     # context manager retires the bars — on the way out of a clean run and of a failed one alike.
     with resolve_progress(progress) as run_progress:
-        samples = []
-        ob = []
-
         # One reporter per input family, reused for every run in it: a borrowed view shares its counter
         # cell, so N calls accumulate into one count across the whole run instead of restarting per run.
         load_sample = run_progress.for_stage(STAGE_LOAD_SAMPLE, total=total_across_groups(sample_tiff_paths))
         load_ob = run_progress.for_stage(STAGE_LOAD_OB, total=total_across_groups(ob_tiff_paths))
         combine = run_progress.for_stage(STAGE_COMBINE_RUNS, total=2)
 
-        # Load data from TIFF files and metadata from HDF5 files
-        for hdf5_path, tiff_paths in zip(sample_hdf5_paths, sample_tiff_paths):
-            if not tiff_paths:
-                raise ValueError("Each sample TIFF path group must contain at least one TIFF file.")
-            # Read the spectra TOF sidecar from the directory the images actually came from (the
-            # auto-reduction tree), not the raw-acquisition path in the DAS log — see GitHub #187.
-            metadata = load_metadata(hdf5_path, read_spectra_tof=True, image_dir=Path(tiff_paths[0]).parent)
-            sample = load_tiff_stack(tiff_paths, progress=load_sample)
-            # Attach metadata as coordinates to the sample DataArray for later use in normalization and rebinning
-            for key, value in metadata.items():
-                if key == "spectra_tof":
-                    # spectra_tof holds per-frame LEFT bin edges; build N+1 bin edges so tof is a
-                    # proper bin-edge axis and rebin_by_tof works (#187).
-                    sample = sample.rename_dims({"N_image": "tof"})
-                    sample.coords["tof"] = _tof_bin_edges_from_left_edges(value)
-                else:
-                    sample.coords[key] = value
-                    sample.coords.set_aligned(key, False)
-
-            samples.append(sample)
-
-        # Load data from TIFF files and metadata from HDF5 files
-        for hdf5_path, tiff_paths in zip(ob_hdf5_paths, ob_tiff_paths):
-            if not tiff_paths:
-                raise ValueError("Each OB TIFF path group must contain at least one TIFF file.")
-            # Read the spectra TOF sidecar from the directory the images actually came from (the
-            # auto-reduction tree), not the raw-acquisition path in the DAS log — see GitHub #187.
-            metadata = load_metadata(hdf5_path, read_spectra_tof=True, image_dir=Path(tiff_paths[0]).parent)
-            ob_run = load_tiff_stack(tiff_paths, progress=load_ob)
-            # Attach metadata as coordinates to the OB DataArray for later use in normalization and rebinning
-            for key, value in metadata.items():
-                if key == "spectra_tof":
-                    # spectra_tof holds per-frame LEFT bin edges; build N+1 bin edges so tof is a
-                    # proper bin-edge axis and rebin_by_tof works (#187).
-                    ob_run = ob_run.rename_dims({"N_image": "tof"})
-                    ob_run.coords["tof"] = _tof_bin_edges_from_left_edges(value)
-                else:
-                    ob_run.coords[key] = value
-                    ob_run.coords.set_aligned(key, False)
-
-            ob.append(ob_run)
+        # Load data from TIFF files and metadata from HDF5 files, keeping only the ROI of each frame
+        frame_size = FrameSize(("sample", "open-beam"))
+        samples = load_runs(
+            list(zip(sample_hdf5_paths, sample_tiff_paths)),
+            roi=roi,
+            progress=load_sample,
+            family="sample",
+            frame_size=frame_size,
+            load=partial(_load_run, label="sample"),
+        )
+        ob = load_runs(
+            list(zip(ob_hdf5_paths, ob_tiff_paths)),
+            roi=roi,
+            progress=load_ob,
+            family="open-beam",
+            frame_size=frame_size,
+            load=partial(_load_run, label="OB"),
+        )
 
         combine.note(f"combining {len(samples)} sample run(s)")
-        sample = combine_runs(
+        sample = combine_owned_runs(
             samples,
             metadata_keys_to_sum=["proton_charge", "duration"],
             metadata_check_match=["detector_time_offset", "detector"],
             normalize_by_runs=True,
         )
-
         combine()
+        # Release the per-run stacks once combined rather than holding them to the end of the run.
+        del samples
+
         combine.note(f"combining {len(ob)} open-beam run(s)")
-        ob = combine_runs(
+        ob = combine_owned_runs(
             ob,
             metadata_keys_to_sum=["proton_charge", "duration"],
             metadata_check_match=["detector_time_offset", "detector"],

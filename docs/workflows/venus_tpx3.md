@@ -635,6 +635,11 @@ flowchart TD
         A2[TIFF Stack] --> B[Load OB Histograms]
         A3[Metadata] --> C[Load TOF Bin Edges]
         A4[DAQ] --> M[Load p_charge]
+        subgraph ROI["ROI Crop, Each Frame As It Is Read"]
+            D{ROI Specified?}
+            E[Keep ROI of Each Frame]
+            F[Full Frame]
+        end
     end
 
     subgraph RunCombine["2. Run Combining"]
@@ -643,13 +648,7 @@ flowchart TD
         RC3[Single Run]
     end
 
-    subgraph ROI["3. ROI Clipping"]
-        D{ROI Specified?}
-        E[Apply Spatial ROI]
-        F[Full Frame]
-    end
-
-    subgraph PixelDetect["4-5. Pixel Detection"]
+    subgraph PixelDetect["3-4. Pixel Detection"]
         PD1[Dead Pixel Detection]
         PD2[Hot Pixel Detection]
         PM1[Dead Mask]
@@ -657,38 +656,38 @@ flowchart TD
         PM3[Combined Mask]
     end
 
-    subgraph Stats["6. Statistics Analysis"]
+    subgraph Stats["5. Statistics Analysis"]
         ST1[Count per TOF Bin]
         ST2[SNR Analysis]
         ST3[Rebinning Recommendation]
     end
 
-    subgraph Rebin["7. Rebinning"]
+    subgraph Rebin["6. Rebinning"]
         RB1{Rebinning?}
         RB2[Combine N Adjacent Bins]
         RB3[Keep Original]
     end
 
-    subgraph BeamCorr["8. Beam Correction"]
+    subgraph BeamCorr["7. Beam Correction"]
         BC["f = p_charge_OB / p_charge_Sample"]
     end
 
-    subgraph Norm["9. Normalization"]
+    subgraph Norm["8. Normalization"]
         N["T(TOF) = Sample(TOF) / OB(TOF) × f"]
     end
 
-    subgraph AirCorr["10. Air Region Correction (Optional)"]
+    subgraph AirCorr["9. Air Region Correction (Optional)"]
         AC1{Air ROI?}
         AC2["T_final = T / mean(T_air)"]
         AC3[Skip]
     end
 
-    subgraph UQ["11. Experiment Error"]
+    subgraph UQ["10. Experiment Error"]
         UQ1[Poisson + p_charge σ]
         UQ2[Error Propagation]
     end
 
-    subgraph Output["12. Output"]
+    subgraph Output["11. Output"]
         O1[Transmission 3D]
         O2[Uncertainty 3D]
         O3[TOF Bin Edges]
@@ -697,15 +696,18 @@ flowchart TD
         O6[Metadata]
     end
 
-    Input --> RC1
-    RC1 -->|Yes| RC2
-    RC1 -->|No| RC3
-    RC2 --> D
-    RC3 --> D
+    A --> D
+    B --> D
     D -->|Yes| E
     D -->|No| F
-    E --> PD1
-    F --> PD1
+    E --> RC1
+    F --> RC1
+    C --> RC1
+    M --> RC1
+    RC1 -->|Yes| RC2
+    RC1 -->|No| RC3
+    RC2 --> PD1
+    RC3 --> PD1
     PD1 --> PM1
     PD1 --> PD2
     PD2 --> PM2
@@ -759,7 +761,7 @@ flowchart TD
 | Sample histograms | TIFF stack | Yes | Pre-binned TOF histograms (TOF, y, x) |
 | Open Beam histograms | TIFF stack | Yes | Reference histograms without sample |
 | TOF bin edges | Metadata/file | Yes | Time-of-flight bin boundaries |
-| ROI | (x0, y0, x1, y1) | No | Spatial region of interest |
+| ROI | (x0, y0, x1, y1) | No | Spatial region of interest. Each frame is cropped as it is read, before runs are combined, so memory scales with the ROI rather than the detector. |
 
 **Metadata** (from files or DAQ):
 - Acquisition time
@@ -785,7 +787,12 @@ flowchart TD
 │  • Load OB TIFF stack → 3D array (TOF, y, x)                    │
 │  • Load TOF bin edges from metadata                             │
 │  • Load metadata: p_charge, acquisition time                    │
-│  • Validate dimensions match                                    │
+│  • Validate uncropped frame sizes as each family loads:         │
+│    runs of a family must match its first run's (TOF, y, x);     │
+│    OB (y, x) must match the sample's                            │
+│  IF ROI specified, as each frame is read:                       │
+│    • Keep only the ROI: frame[y0:y1, x0:x1]                     │
+│    • Only the ROI is stored; memory scales with the ROI         │
 │                                                                 │
 │  Note: DAQ pipeline has already converted events to histograms  │
 │  with pre-defined TOF bins                                      │
@@ -802,15 +809,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 3: ROI Clipping (Optional)                                │
-│  ───────────────────────────────                                │
-│  IF ROI specified:                                              │
-│    • Crop spatial dimensions: arr[:, y0:y1, x0:x1]              │
-│    • TOF dimension unchanged                                    │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│  STEP 4: Dead Pixel Detection                                   │
+│  STEP 3: Dead Pixel Detection                                   │
 │  ────────────────────────────                                   │
 │  • Sum OB across TOF: OB_summed = sum(OB_hist, axis=TOF)        │
 │  • dead_mask = (OB_summed == 0)                                 │
@@ -818,7 +817,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 5: Hot Pixel Detection                                    │
+│  STEP 4: Hot Pixel Detection                                    │
 │  ───────────────────────────                                    │
 │  TPX3-specific: radiation damage causes false counts            │
 │  (applies to histogram mode since source is TPX3)               │
@@ -836,7 +835,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 6: Statistics Analysis & Rebinning Recommendation         │
+│  STEP 5: Statistics Analysis & Rebinning Recommendation         │
 │  ──────────────────────────────────────────────────────         │
 │  Analyze count statistics per TOF bin:                          │
 │                                                                 │
@@ -851,7 +850,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 7: Rebinning (Optional)                                   │
+│  STEP 6: Rebinning (Optional)                                   │
 │  ─────────────────────────────                                  │
 │  IF rebinning requested:                                        │
 │                                                                 │
@@ -870,7 +869,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 8: Beam Correction                                        │
+│  STEP 7: Beam Correction                                        │
 │  ────────────────────────                                       │
 │  PRIMARY correction - p_charge-based:                           │
 │                                                                 │
@@ -880,7 +879,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 9: Normalization                                          │
+│  STEP 8: Normalization                                          │
 │  ──────────────────────                                         │
 │  FOR each TOF bin t:                                            │
 │                                                                 │
@@ -896,7 +895,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 10: Air Region Correction (Optional)                      │
+│  STEP 9: Air Region Correction (Optional)                       │
 │  ─────────────────────────────────────────                      │
 │  Post-normalization refinement if p_charge wasn't sufficient    │
 │                                                                 │
@@ -912,7 +911,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 11: Experiment Error Propagation                          │
+│  STEP 10: Experiment Error Propagation                          │
 │  ─────────────────────────────────────                          │
 │  Sources:                                                       │
 │    • Poisson: σ_N = √(N) for counts                             │
@@ -929,7 +928,7 @@ flowchart TD
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  STEP 12: Output                                                │
+│  STEP 11: Output                                                │
 │  ────────────                                                   │
 │  • Transmission: 3D array (TOF, y, x)                           │
 │  • Experiment Error: 3D array (same shape)                      │
@@ -993,12 +992,12 @@ TPX1 guide's "Rebinning Constraints" for the full description; the API is
 
 | Step | Decision | Options |
 |------|----------|---------|
+| 1 | ROI needed? | Crop each frame as it loads, or full frame |
 | 2 | Multiple runs? | Combine or single run |
-| 3 | ROI needed? | Apply crop or full frame |
-| 5 | Hot pixel method | Statistical / Temporal |
-| 6 | Statistics adequate? | Proceed / Recommend rebinning |
-| 7 | Rebinning factor | N adjacent bins / Keep original |
-| 10 | Air correction? | Apply / Skip |
+| 4 | Hot pixel method | Statistical / Temporal |
+| 5 | Statistics adequate? | Proceed / Recommend rebinning |
+| 6 | Rebinning factor | N adjacent bins / Keep original |
+| 9 | Air correction? | Apply / Skip |
 
 ---
 
@@ -1011,7 +1010,7 @@ Histogram mode shares most modules with event mode and TPX1:
 | `loaders.tiff_loader` | TPX1 | Load TIFF stacks |
 | `loaders.metadata_loader` | TPX1 | Extract TOF bins, p_charge |
 | `processing.run_combiner` | Event mode | Sum histograms |
-| `processing.roi_clipper` | Event mode | Apply ROI |
+| `loaders.tiff_loader` (`roi=`) | TPX1 | Crop each frame to the ROI as it loads |
 | `tof.pixel_detector` | Event mode | Same algorithm |
 | `tof.pixel_detector` | Event mode | TPX3-specific |
 | `tof.statistics_analyzer` | Event mode | Same algorithm |
