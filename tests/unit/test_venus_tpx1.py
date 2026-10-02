@@ -63,7 +63,7 @@ class TestVenusTPX1Pipeline:
         cls.sample_tiff_paths = []
         cls.ob_tiff_paths = []
 
-        cls._tmpdir = tempfile.TemporaryDirectory(delete=False)
+        cls._tmpdir = tempfile.TemporaryDirectory()
         tmp_dir = Path(cls._tmpdir.name)
 
         # Images + co-located spectra live in the auto-reduction tree (where the pipeline reads).

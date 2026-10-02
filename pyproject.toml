@@ -190,6 +190,8 @@ jupyter = { features = [
   "jupyter",
   "viz",
 ], solve-group = "jupyter" }
+# The oldest Python NeuNorm supports (requires-python); CI runs the unit tests in it.
+py311 = { features = ["test", "py311"], solve-group = "py311" }
 
 [tool.pixi.feature.test.dependencies]
 pytest = ">=9.0.3"
@@ -197,6 +199,9 @@ pytest-cov = "*"
 pytest-repeat = "*"
 pytest-xdist = "*"
 numba = ">=0.60"    # For testing performance module
+
+[tool.pixi.feature.py311.dependencies]
+python = "3.11.*"
 
 [tool.pixi.feature.package.dependencies]
 anaconda-client = ">=1.13.0,<2"
@@ -245,7 +250,6 @@ ipywidgets = "*"
 [tool.pixi.tasks]
 # Documentation
 build-docs = { cmd = 'sphinx-build -b html -W --keep-going docs docs/_build', description = "Build documentation (warnings are errors)" }
-test-docs = { cmd = "sphinx-build -M doctest docs docs/_build", description = "Test building the documentation" }
 # Refresh the intersphinx inventories docs/conf.py falls back to when a site is down.
 # The script reads the projects and URLs from intersphinx_mapping in docs/conf.py.
 update-inventories = { cmd = "python docs/_inventory/update.py", description = "Re-download the committed intersphinx inventories in docs/_inventory/" }

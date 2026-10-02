@@ -53,6 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The test suite runs on Python 3.11, the oldest Python NeuNorm supports**
+  ([#254](https://github.com/ornlneutronimaging/NeuNorm/issues/254)). Eight pipeline and
+  loader test classes used `TemporaryDirectory(delete=False)`, which needs Python 3.12. A new `py311`
+  pixi environment runs the suite on Python 3.11 (`pixi run -e py311 test`), and CI runs it before
+  either publish job. The `test-docs` pixi task, which could not run because the documentation does
+  not load `sphinx.ext.doctest`, is removed; the docstring examples remain documentation and the unit
+  tests remain the test suite.
+
 - **The PyPI and conda packages require scitiff 26.6 and scipy 1.13 or newer**
   ([#252](https://github.com/ornlneutronimaging/NeuNorm/issues/252)). With scitiff 26.1,
   the previous minimum, `write_tiff_stack` raised `ValueError` on a mask it writes as metadata: any
