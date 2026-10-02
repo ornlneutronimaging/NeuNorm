@@ -22,6 +22,7 @@ from neunorm.exporters.hdf5_writer import hdf5_export_step_count, write_hdf5
 from neunorm.exporters.tiff_writer import tiff_export_step_count, write_tiff_stack
 from neunorm.filters.gamma_filter import GAMMA_FILTER_STEPS, apply_gamma_filter
 from neunorm.loaders.event_loader import LOAD_EVENT_NEXUS_STEPS, load_event_nexus
+from neunorm.pipelines._output_path import HDF5_SUFFIXES, TIFF_SUFFIXES, resolve_output_path, unsupported_suffix_error
 from neunorm.processing.normalizer import BackgroundROILike, normalize_step_count, normalize_transmission
 from neunorm.processing.reference_preparer import prepare_reference
 from neunorm.processing.roi_clipper import apply_roi
@@ -45,7 +46,7 @@ from neunorm.utils.progress import (
 def run_mars_tpx3_pipeline(  # noqa: C901
     sample_paths: Sequence[Sequence[str | Path]],
     ob_paths: Sequence[Sequence[str | Path]],
-    output_path: Path,
+    output_path: str | Path,
     roi: Optional[ROILike] = None,
     gamma_filter: bool = True,
     detector_shape: tuple[int, int] = (514, 514),
@@ -74,8 +75,9 @@ def run_mars_tpx3_pipeline(  # noqa: C901
     ob_paths : Sequence[Sequence[str | Path]]
         List of lists of paths to open beam HDF5 files
         Each inner list corresponds to one run and will be combined before processing.
-    output_path : Path
-        Path to save the output file (HDF5 or TIFF)
+    output_path : str | Path
+        Path to save the output file: ``.hdf5``/``.h5`` for HDF5 or ``.tiff``/``.tif`` for TIFF. Any
+        other suffix raises ``ValueError`` before any input is read.
     roi : Optional[tuple]
         Region of interest to crop to — an ``ROI`` or a bare ``(x0, y0, x1, y1)`` tuple.
     gamma_filter : bool
@@ -118,6 +120,8 @@ def run_mars_tpx3_pipeline(  # noqa: C901
         roi = as_roi_bounds(roi)
     if background_roi is not None:
         background_roi = as_region_list(background_roi, arg_name="background_roi")
+
+    output_path = resolve_output_path(output_path)
 
     # One reporter for the whole run, resolved exactly once: a second resolve of `progress=True`
     # would build a second tqdm sink and a duplicate set of bars. Each stage below takes its own
@@ -223,7 +227,7 @@ def run_mars_tpx3_pipeline(  # noqa: C901
         if background_roi is not None:
             metadata["background_roi"] = as_region_provenance(background_roi)
 
-        if output_path.suffix.lower() in (".hdf5", ".h5"):
+        if output_path.suffix.lower() in HDF5_SUFFIXES:
             write_hdf5(
                 output_path,
                 transmission,
@@ -232,7 +236,7 @@ def run_mars_tpx3_pipeline(  # noqa: C901
                 metadata=metadata,
                 progress=run_progress.for_stage(STAGE_EXPORT, total=hdf5_export_step_count(transmission, metadata)),
             )
-        elif output_path.suffix.lower() in (".tiff", ".tif"):
+        elif output_path.suffix.lower() in TIFF_SUFFIXES:
             rename_map = {}
             if "N_image" in transmission.dims:
                 rename_map["N_image"] = "z"  # TIFF stacks typically use 'z' for the stack dimension
@@ -266,7 +270,7 @@ def run_mars_tpx3_pipeline(  # noqa: C901
                 progress=run_progress.for_stage(STAGE_EXPORT, total=tiff_export_step_count(transmission)),
             )
         else:
-            raise ValueError(f"Unsupported output file format: {output_path.suffix}")
+            raise unsupported_suffix_error(output_path)
 
         logger.success("MARS TPX3 pipeline completed successfully. Output written to {}", output_path)
         return transmission

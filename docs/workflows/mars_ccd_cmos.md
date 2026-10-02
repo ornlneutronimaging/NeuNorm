@@ -138,9 +138,9 @@ transmission = run_mars_ccd_pipeline(
 )
 ```
 
-`output_path` must be a `Path`, not a `str` — the pipeline selects the writer from
-`output_path.suffix` without coercing, so a string fails at the export step after all the
-processing work is done.
+`output_path` may be a `str` or a `Path`. Its suffix selects the writer (`.h5`/`.hdf5` for HDF5,
+`.tif`/`.tiff` for TIFF) and is checked before any input is read, so an unsupported suffix fails at
+once rather than after the processing work is done.
 
 **Metadata** (from files or user):
 - Acquisition time per image

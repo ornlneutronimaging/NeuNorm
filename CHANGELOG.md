@@ -62,6 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference now keeps the first and last value of such a tag, as two-frame mean runs already did,
   and logs this at INFO instead of WARNING. Runs that worked before give unchanged output.
 
+- **The pipelines accept a `str` `output_path` and check its suffix before reading any input**
+  ([#239](https://github.com/ornlneutronimaging/NeuNorm/issues/239)). A string path used to raise
+  `AttributeError`, and an unsupported suffix (or TIFF with `spectrum_roi`) `ValueError`, only after
+  the whole run; all six pipelines now convert the path and raise the export step's `ValueError` up
+  front. A missing `output_path` (`None`) now raises `ValueError("output_path is required")` before
+  any input is read in all six pipelines, where MARS TPX3 and the three VENUS TOF pipelines used to
+  raise `AttributeError` after the run.
+
 ## [2.5.0] - 2026-09-11
 
 ### Added
