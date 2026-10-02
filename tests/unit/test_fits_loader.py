@@ -284,3 +284,150 @@ def test_a_set_of_paths_loads_but_in_no_defined_order(tmp_path):
 
     assert da.data.shape == (4, 3, 4)
     assert sorted(da.values[:, 0, 0]) == [0.0, 1.0, 2.0, 3.0]
+
+
+def _write_fits_with_raw_cards(path, value, header=(), raw_cards=()):
+    """Write a 3x4 uint16 frame filled with ``value``.
+
+    ``header`` items are set through astropy. Each of ``raw_cards`` is written into the header
+    verbatim as an 80-column card image, so the file can carry a card astropy would refuse to
+    write, such as an unquoted string value.
+    """
+    from astropy.io import fits
+
+    hdu = fits.PrimaryHDU(data=np.full((3, 4), value, dtype=np.uint16))
+    for key, card_value in header:
+        hdu.header[key] = card_value
+    for i in range(len(raw_cards)):
+        hdu.header[f"RAWCARD{i}"] = 0
+    hdu.writeto(path)
+
+    raw = path.read_bytes()
+    for i, card in enumerate(raw_cards):
+        placeholder = hdu.header.cards[f"RAWCARD{i}"].image.encode("ascii")
+        assert raw.count(placeholder) == 1
+        raw = raw.replace(placeholder, card.ljust(80).encode("ascii"))
+    path.write_bytes(raw)
+    return path
+
+
+@pytest.fixture
+def loader_warnings():
+    """Collect loguru WARNING messages emitted inside the test."""
+    from loguru import logger
+
+    messages: list[str] = []
+    sink_id = logger.add(lambda record: messages.append(record.record["message"]), level="WARNING")
+    yield messages
+    logger.remove(sink_id)
+
+
+def test_unparsable_and_valueless_header_cards_are_skipped_with_one_warning(tmp_path, loader_warnings):
+    """A header card astropy cannot parse, or one with no value, does not stop the stack loading.
+
+    ``SAMPLE``, ``stage/x`` and ``DUPBAD`` carry unquoted strings, which astropy raises on when the
+    value is read, and ``DUPBAD`` appears twice in each header; ``UNDEF`` is a legal card with no
+    value, which cannot become a scalar coordinate. All four are left out and named once each in a
+    single warning. ``COMMENT`` and ``HISTORY`` are neither stored nor named. Every other key keeps
+    its usual coordinate: ``PARTIAL`` (undefined in one file only) and ``ONLY0`` (absent from the
+    second file) stay array coordinates holding ``None`` for that file.
+    """
+    import scipp as sc
+
+    from neunorm.loaders.fits_loader import load_fits_stack
+
+    raw_cards = [
+        "SAMPLE  = Soil and snow",
+        "HIERARCH stage/x = 12.5 mm / stage x position",
+        "DUPBAD  = open shutter",
+        "DUPBAD  = open shutter",
+    ]
+    commentary = [("COMMENT", "beam on"), ("HISTORY", "dark subtracted")]
+    paths = [
+        _write_fits_with_raw_cards(
+            tmp_path / "f000.fits",
+            7,
+            header=[("EXPTIME", 30.0), ("FRAMEIDX", 0), ("UNDEF", None), ("PARTIAL", None), ("ONLY0", 3), *commentary],
+            raw_cards=raw_cards,
+        ),
+        _write_fits_with_raw_cards(
+            tmp_path / "f001.fits",
+            9,
+            header=[("EXPTIME", 30.0), ("FRAMEIDX", 1), ("UNDEF", None), ("PARTIAL", 5), *commentary],
+            raw_cards=raw_cards,
+        ),
+    ]
+
+    da = load_fits_stack(paths)
+
+    assert da.values.dtype == np.float32
+    np.testing.assert_allclose(da.values[0], 7.0)
+    np.testing.assert_allclose(da.values[1], 9.0)
+    np.testing.assert_allclose(da.variances, da.values)
+
+    for key in ("UNDEF", "SAMPLE", "stage/x", "DUPBAD", "COMMENT", "HISTORY"):
+        assert key not in da.coords
+    assert sc.identical(da.coords["EXPTIME"], sc.scalar(30.0))
+    np.testing.assert_array_equal(da.coords["FRAMEIDX"].values, [0, 1])
+    assert [da.coords["PARTIAL"]["N_image", i].value for i in range(2)] == [None, 5]
+    assert [da.coords["ONLY0"]["N_image", i].value for i in range(2)] == [3, None]
+    assert not da.coords["EXPTIME"].aligned
+
+    skipped = [m for m in loader_warnings if "not stored as coordinates" in m]
+    assert len(skipped) == 1
+    assert skipped[0].endswith(": UNDEF, SAMPLE, stage/x, DUPBAD")
+
+
+def test_header_card_unparsable_in_one_file_only_is_skipped(tmp_path, loader_warnings):
+    """A key is left out when its card cannot be parsed in any one file, even if the first is fine."""
+    from neunorm.loaders.fits_loader import load_fits_stack
+
+    paths = [
+        _write_fits_with_raw_cards(tmp_path / "f000.fits", 7, raw_cards=["HIERARCH m/pos = 5.0"]),
+        _write_fits_with_raw_cards(tmp_path / "f001.fits", 9, raw_cards=["HIERARCH m/pos = 5.0 mm"]),
+    ]
+
+    da = load_fits_stack(paths)
+
+    np.testing.assert_allclose(da.values[:, 0, 0], [7.0, 9.0])
+    assert "m/pos" not in da.coords
+    assert "BITPIX" in da.coords
+    assert [m for m in loader_warnings if "not stored as coordinates" in m] == [
+        "FITS header keys with no readable or storable value were not stored as coordinates: m/pos"
+    ]
+
+
+def test_header_values_scipp_cannot_hold_are_skipped_with_one_warning(tmp_path, loader_warnings):
+    """A key whose values astropy reads but scipp cannot hold is left out instead of stopping the load.
+
+    ``MIXED`` is a string in one file and an integer in the other, ``CPLX`` is a complex number that
+    differs between files, and ``BIGINT`` is an integer beyond 64 bits. Each is named in a single
+    warning, and the other keys are stored as usual.
+    """
+    from neunorm.loaders.fits_loader import load_fits_stack
+
+    bigint = ["BIGINT  = 99999999999999999999999999"]
+    paths = [
+        _write_fits_with_raw_cards(
+            tmp_path / "f000.fits",
+            7,
+            header=[("EXPTIME", 30.0), ("MIXED", "open"), ("CPLX", complex(1, 0))],
+            raw_cards=bigint,
+        ),
+        _write_fits_with_raw_cards(
+            tmp_path / "f001.fits",
+            9,
+            header=[("EXPTIME", 30.0), ("MIXED", 5), ("CPLX", complex(1, 1))],
+            raw_cards=bigint,
+        ),
+    ]
+
+    da = load_fits_stack(paths)
+
+    np.testing.assert_allclose(da.values[:, 0, 0], [7.0, 9.0])
+    for key in ("MIXED", "CPLX", "BIGINT"):
+        assert key not in da.coords
+    assert da.coords["EXPTIME"].value == 30.0
+    assert [m for m in loader_warnings if "not stored as coordinates" in m] == [
+        "FITS header keys with no readable or storable value were not stored as coordinates: MIXED, CPLX, BIGINT"
+    ]
