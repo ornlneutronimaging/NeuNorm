@@ -31,7 +31,7 @@ jobs:
           fetch-tags: true
 
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
+        uses: prefix-dev/setup-pixi@9dabb60412d3d2d967a8d682f7ce01317af40514 # v0.11.0
         with:
           pixi-version: v0.81.0
           manifest-path: pyproject.toml
@@ -63,7 +63,7 @@ jobs:
           fetch-tags: true
 
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
+        uses: prefix-dev/setup-pixi@9dabb60412d3d2d967a8d682f7ce01317af40514 # v0.11.0
         with:
           pixi-version: v0.81.0
           manifest-path: pyproject.toml
@@ -89,7 +89,7 @@ jobs:
           fetch-tags: true
 
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
+        uses: prefix-dev/setup-pixi@9dabb60412d3d2d967a8d682f7ce01317af40514 # v0.11.0
         with:
           pixi-version: v0.81.0
           manifest-path: pyproject.toml
@@ -112,7 +112,7 @@ jobs:
           fetch-tags: true
 
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
+        uses: prefix-dev/setup-pixi@9dabb60412d3d2d967a8d682f7ce01317af40514 # v0.11.0
         with:
           pixi-version: v0.81.0
           manifest-path: pyproject.toml
@@ -141,7 +141,7 @@ jobs:
             micromamba run -n neunorm-only python -c "import importlib, pkgutil, neunorm, tqdm; [importlib.import_module(m.name) for m in pkgutil.walk_packages(neunorm.__path__, 'neunorm.')]"
 
       - name: Upload conda package as artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: artifact-conda-package
           path: ${{ env.PKG_NAME }}-*.conda
@@ -159,14 +159,14 @@ jobs:
           fetch-tags: true
 
       - name: Setup Pixi
-        uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
+        uses: prefix-dev/setup-pixi@9dabb60412d3d2d967a8d682f7ce01317af40514 # v0.11.0
         with:
           pixi-version: v0.81.0
           manifest-path: pyproject.toml
           frozen: true
 
       - name: Download conda package artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: artifact-conda-package
 
@@ -199,7 +199,7 @@ jobs:
           fetch-tags: true
 
       - name: Setup pixi
-        uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
+        uses: prefix-dev/setup-pixi@9dabb60412d3d2d967a8d682f7ce01317af40514 # v0.11.0
         with:
           pixi-version: v0.81.0
           manifest-path: pyproject.toml
@@ -224,7 +224,7 @@ jobs:
       # since nothing else consumes them.
       - name: Upload PyPI distributions as artifact
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: artifact-pypi-package
           path: dist/*
@@ -254,13 +254,13 @@ jobs:
           fetch-tags: true
 
       - name: Download conda package artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: artifact-conda-package
           path: dist/conda
 
       - name: Download PyPI distributions artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: artifact-pypi-package
           path: dist/pypi
