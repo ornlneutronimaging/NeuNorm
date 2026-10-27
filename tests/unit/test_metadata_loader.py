@@ -2,9 +2,15 @@ import tempfile
 from pathlib import Path
 
 import h5py
+import numpy as np
 import scipp as sc
 
-from neunorm.loaders.metadata_loader import load_metadata
+from neunorm.loaders.metadata_loader import (
+    find_nexus_file,
+    load_metadata,
+    load_proton_charge_coulombs,
+    run_number_in_name,
+)
 
 
 class TestMetadataLoader:
@@ -113,3 +119,50 @@ class TestMetadataLoader:
 
         # values come from real_dir, not the tmp/images shutter file used by the other tests
         assert sc.identical(metadata["shutter_counts"], sc.array(dims=["N_image"], values=[111.0, 222.0]))
+
+
+class TestNexusLookup:
+    """Locating the NeXus file of a VENUS image from the run number in its name."""
+
+    def test_run_number_in_name(self):
+        assert run_number_in_name("20260928_Run_31567_reptVert_PFV231_300_000s_Ang_000_000_1.tiff") == 31567
+        assert run_number_in_name("20260814_Run_27075_Moon_0.tiff") == 27075
+        assert run_number_in_name("x_Run_12.tiff") == 12
+        assert run_number_in_name("x_Run_12") == 12
+        assert run_number_in_name("x_Run_abc_Run_7_y.tiff") == 7
+        assert run_number_in_name("dark_current_temporary.tiff") is None
+        assert run_number_in_name("x_Run_12a_y.tiff") is None
+
+    def test_find_nexus_file(self, tmp_path):
+        ipts = tmp_path / "SNS" / "VENUS" / "IPTS-38722"
+        image = ipts / "images" / "qhy411" / "raw" / "radiography" / "20260814_Run_27075_Moon_0.tiff"
+        image.parent.mkdir(parents=True)
+        image.touch()
+        nexus = ipts / "nexus" / "VENUS_27075.nxs.h5"
+        # No nexus/ folder yet.
+        assert find_nexus_file(image) is None
+        nexus.parent.mkdir()
+        assert find_nexus_file(image) is None
+        nexus.touch()
+        assert find_nexus_file(image) == nexus
+        # Another run of the same experiment has no file.
+        other = image.with_name("20260814_Run_27076_Moon_0.tiff")
+        other.touch()
+        assert find_nexus_file(other) is None
+        # No run number in the name.
+        assert find_nexus_file(image.with_name("dark_current_temporary.tiff")) is None
+        # Outside an IPTS tree: nothing without nexus_dir, found with it.
+        copy = tmp_path / "copies" / image.name
+        copy.parent.mkdir()
+        copy.touch()
+        assert find_nexus_file(copy) is None
+        assert find_nexus_file(copy, nexus_dir=nexus.parent) == nexus
+        assert find_nexus_file(copy, nexus_dir=tmp_path / "nowhere") is None
+
+    def test_load_proton_charge_coulombs(self, tmp_path):
+        path = tmp_path / "VENUS_1.nxs.h5"
+        with h5py.File(path, "w") as f:
+            entry = f.create_group("entry")
+            entry.create_dataset("proton_charge", data=[4.41537944e11])  # pC
+            entry.create_dataset("duration", data=[338.0])
+        np.testing.assert_allclose(load_proton_charge_coulombs(path), 0.441537944)

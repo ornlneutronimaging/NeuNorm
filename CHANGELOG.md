@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **VENUS CCD/CMOS: proton charge from the NeXus file when the TIFF carries no tag.**
+  `run_venus_ccd_pipeline` still reads the `IntegratedPCharge` TIFF tag the DAQ writes on the
+  iKon-XL frames; a run whose frames lack it — every QHY411 frame does — now gets one value per frame
+  from `entry/proton_charge` of the NeXus file of that frame's run, `<IPTS>/nexus/*_<run>.nxs.h5`
+  with the run number taken from the `_Run_<n>` token of the file name (pC converted to C, the unit of
+  the tag), instead of failing with `KeyError: "Expected 'IntegratedPCharge' …"`. The new keyword-only
+  `nexus_dir=` names the NeXus folder for images kept outside their `IPTS-<n>` tree. A frame with
+  neither source raises a `ValueError` naming it and the two ways out (`nexus_dir`,
+  `background_roi`); with `background_roi` no proton charge is read at all, as before. The output
+  metadata records `proton_charge_source` (`tiff`, `nexus` or `mixed`) and, per frame, the NeXus
+  file read. `neunorm.loaders.metadata_loader` gains `run_number_in_name`, `find_nexus_file` and
+  `load_proton_charge_coulombs`. The NeXus value covers the whole run where the tag covers the
+  exposure alone: on a 300 s iKon-XL run they differ by about 0.4 %.
+
+### Changed
+
+- **VENUS CCD/CMOS: the dark frames no longer need a proton charge.** Only the sample's and the open
+  beam's enter the normalization, yet `run_venus_ccd_pipeline` required (and averaged) the dark's
+  `IntegratedPCharge` too, so a dark without the tag — the shared temporary darks, the QHY411
+  darks — failed the run. The dark is now combined without it.
+
 ## [2.6.0] - 2026-10-02
 
 ### Changed

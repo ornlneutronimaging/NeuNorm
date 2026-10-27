@@ -574,3 +574,123 @@ class TestVenusCCDPipeline:
             # ...nor persisted to the HDF5 file
             with h5py.File(output_path, "r") as hf:
                 assert "IntegratedPCharge" not in hf
+
+
+class TestVenusCCDProtonChargeFromNexus:
+    """``IntegratedPCharge`` from the NeXus file of each run when the TIFF carries no tag.
+
+    The VENUS DAQ writes the tag on the iKon-XL frames but not on the QHY411 ones; the pipeline then
+    reads ``entry/proton_charge`` (pC) of ``<IPTS>/nexus/*_<run>.nxs.h5`` and converts it to coulombs.
+    The fixtures are a miniature IPTS tree: tagless frames under ``images/``, NeXus files under
+    ``nexus/``, with the run number in the frame names.
+    """
+
+    @classmethod
+    def setup_class(cls):
+        cls._tmpdir = tempfile.TemporaryDirectory()
+        root = Path(cls._tmpdir.name) / "IPTS-1"
+        images = root / "images" / "qhy411" / "raw"
+        images.mkdir(parents=True)
+        cls.nexus_dir = root / "nexus"
+        cls.nexus_dir.mkdir()
+        cls.sample_pc = [0.10, 0.11, 0.12]  # coulombs
+        cls.ob_pc = 0.2
+        cls.sample_paths = []
+        for i, pc in enumerate(cls.sample_pc):
+            cls.sample_paths.append(cls._frame(images, 1000 + i, 80 + i, tag=None))
+            cls._nexus(cls.nexus_dir / f"VENUS_{1000 + i}.nxs.h5", pc)
+        cls.ob_paths = []
+        for i in range(2):
+            cls.ob_paths.append(cls._frame(images, 2000 + i, 100, tag=None))
+            cls._nexus(cls.nexus_dir / f"VENUS_{2000 + i}.nxs.h5", cls.ob_pc)
+        # A tagged frame whose NeXus file says something else: the tag must win.
+        cls.tagged_path = cls._frame(images, 3000, 80, tag=0.3)
+        cls._nexus(cls.nexus_dir / "VENUS_3000.nxs.h5", 0.9)
+        # A tagless frame with a run number but no NeXus file.
+        cls.orphan_path = cls._frame(images, 4000, 80, tag=None)
+        # A tagless frame outside any IPTS tree (needs an explicit nexus_dir).
+        elsewhere = Path(cls._tmpdir.name) / "elsewhere"
+        elsewhere.mkdir()
+        cls.elsewhere_path = cls._frame(elsewhere, 1000, 80, tag=None)
+
+    @classmethod
+    def teardown_class(cls):
+        cls._tmpdir.cleanup()
+
+    @staticmethod
+    def _frame(folder: Path, run: int, value: float, tag: float | None) -> Path:
+        img = Image.fromarray(np.full((16, 16), value, dtype=np.float32))
+        exif = img.getexif()
+        exif[65025] = "ManufacturerStr:QHY"
+        if tag is not None:
+            exif[65027] = f"IntegratedPCharge:{tag}"
+        path = folder / f"20260101_Run_{run}_x_0.tiff"
+        img.save(path, exif=exif)
+        return path
+
+    @staticmethod
+    def _nexus(path: Path, coulombs: float) -> None:
+        with h5py.File(path, "w") as f:
+            entry = f.create_group("entry")
+            entry.create_dataset("proton_charge", data=[coulombs * 1e12])  # picocoulombs, as the DAS writes it
+            entry.create_dataset("duration", data=[60.0])
+
+    def _run(self, sample_paths, ob_paths, output_path, **kwargs):
+        return run_venus_ccd_pipeline(
+            sample_paths=[sample_paths], ob_paths=[ob_paths], output_path=output_path, gamma_filter=False, **kwargs
+        )
+
+    def test_nexus_fills_the_missing_tag(self):
+        with tempfile.NamedTemporaryFile(suffix=".h5") as f:
+            output_path = Path(f.name)
+            t = self._run(self.sample_paths, self.ob_paths, output_path)
+            np.testing.assert_allclose(t.coords["IntegratedPCharge"].values, self.sample_pc)
+            # T_i = (sample_i / pc_i) / (mean OB / pc_ob)
+            for i, pc in enumerate(self.sample_pc):
+                np.testing.assert_allclose(t.values[i], ((80 + i) / pc) / (100 / self.ob_pc), rtol=1e-5)
+            with h5py.File(output_path, "r") as hf:
+                assert hf["metadata/proton_charge_source"].asstr()[()] == "nexus"
+                assert json.loads(hf["metadata/proton_charge_nexus_sample"].asstr()[()]) == [
+                    [str(self.nexus_dir / f"VENUS_{1000 + i}.nxs.h5") for i in range(3)]
+                ]
+                assert json.loads(hf["metadata/proton_charge_nexus_ob"].asstr()[()]) == [
+                    [str(self.nexus_dir / f"VENUS_{2000 + i}.nxs.h5") for i in range(2)]
+                ]
+
+    def test_tag_wins_over_nexus(self):
+        with tempfile.NamedTemporaryFile(suffix=".h5") as f:
+            t = self._run([self.tagged_path], self.ob_paths, Path(f.name))
+            np.testing.assert_allclose(t.coords["IntegratedPCharge"].values, [0.3])
+            with h5py.File(f.name, "r") as hf:
+                assert hf["metadata/proton_charge_source"].asstr()[()] == "mixed"  # sample tag, OB NeXus
+                assert json.loads(hf["metadata/proton_charge_nexus_sample"].asstr()[()]) == [[None]]
+
+    def test_all_tagged_is_recorded_as_tiff(self):
+        with tempfile.NamedTemporaryFile(suffix=".h5") as f:
+            self._run([self.tagged_path], [self.tagged_path], Path(f.name))
+            with h5py.File(f.name, "r") as hf:
+                assert hf["metadata/proton_charge_source"].asstr()[()] == "tiff"
+
+    def test_missing_nexus_is_explained(self):
+        with tempfile.NamedTemporaryFile(suffix=".h5") as f:
+            with pytest.raises(ValueError, match=r"Run_4000.*IntegratedPCharge.*nexus_dir.*background_roi"):
+                self._run([self.orphan_path], self.ob_paths, Path(f.name))
+
+    def test_explicit_nexus_dir(self):
+        with tempfile.NamedTemporaryFile(suffix=".h5") as f:
+            with pytest.raises(ValueError, match="IPTS"):
+                self._run([self.elsewhere_path], self.ob_paths, Path(f.name))
+            t = self._run([self.elsewhere_path], self.ob_paths, Path(f.name), nexus_dir=self.nexus_dir)
+            np.testing.assert_allclose(t.coords["IntegratedPCharge"].values, [self.sample_pc[0]])
+
+    def test_background_roi_reads_no_proton_charge(self):
+        with tempfile.NamedTemporaryFile(suffix=".h5") as f:
+            t = self._run([self.orphan_path], [self.orphan_path], Path(f.name), background_roi=(0, 0, 4, 4))
+            assert "IntegratedPCharge" not in t.coords
+            with h5py.File(f.name, "r") as hf:
+                assert "metadata/proton_charge_source" not in hf
+
+    def test_dark_needs_no_proton_charge(self):
+        with tempfile.NamedTemporaryFile(suffix=".h5") as f:
+            t = self._run(self.sample_paths, self.ob_paths, Path(f.name), dark_paths=[[self.orphan_path]])
+            assert t.shape == (3, 16, 16)

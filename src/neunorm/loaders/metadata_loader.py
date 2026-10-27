@@ -1,7 +1,8 @@
 """Metadata loaders for NeuNorm.
 
 Reads acquisition metadata (proton charge, duration, detector, TOF binning) from
-VENUS NeXus files, plus optional shutter-count and spectra-TOF sidecar text files.
+VENUS NeXus files, plus optional shutter-count and spectra-TOF sidecar text files,
+and locates the NeXus file of a VENUS image from the run number in its name.
 """
 
 import glob
@@ -120,6 +121,82 @@ def load_metadata(  # noqa: C901
     logger.debug(f"Loaded metadata: {metadata}")
 
     return metadata
+
+
+#: The TIFF tag the VENUS DAQ writes on each iKon-XL frame: the proton charge delivered during the
+#: exposure, in coulombs. The CCD pipeline reads it as a dimensionless coordinate of that name; the
+#: QHY411 frames do not carry it, which is what :func:`find_nexus_file` is for.
+PROTON_CHARGE_TAG = "IntegratedPCharge"
+
+
+def run_number_in_name(name: Union[str, Path]) -> Optional[int]:
+    """The run number in a VENUS image file name: the digits of its ``_Run_<n>`` token.
+
+    The token ends at the next underscore, at the extension or at the end of the name, so
+    ``20260928_Run_31567_sample_0.tiff`` gives 31567 and a name without the token gives ``None``.
+    A ``_Run_`` not followed by digits is skipped and the search goes on.
+    """
+    stem = Path(name).name
+    marker = "_Run_"
+    start = 0
+    while (pos := stem.find(marker, start)) != -1:
+        rest = stem[pos + len(marker) :]
+        end = 0
+        while end < len(rest) and rest[end].isdigit():
+            end += 1
+        if end and (end == len(rest) or rest[end] in "_."):
+            return int(rest[:end])
+        start = pos + len(marker)
+    return None
+
+
+def find_nexus_file(image_path: Union[str, Path], *, nexus_dir: Optional[Union[str, Path]] = None) -> Optional[Path]:
+    """The NeXus file of the run an image belongs to, or ``None`` when it cannot be located.
+
+    The run number is the ``_Run_<n>`` token of the image name and the file is ``*_<n>.nxs.h5`` in
+    ``nexus_dir``. Without ``nexus_dir`` the ``nexus`` folder of the experiment is used: the
+    ``IPTS-<m>`` directory the image sits under, so an image anywhere below
+    ``/SNS/VENUS/IPTS-38722/`` is matched with ``/SNS/VENUS/IPTS-38722/nexus/VENUS_<n>.nxs.h5``.
+
+    Parameters
+    ----------
+    image_path : str or Path
+        An image file written by the VENUS DAQ (``<date>_Run_<n>_<title>_<i>.tiff``).
+    nexus_dir : str or Path, optional
+        The folder holding the NeXus files, when the images do not live in an ``IPTS-<m>`` tree
+        (copies, a local checkout).
+
+    Returns
+    -------
+    Path or None
+        The NeXus file, or ``None`` when the name has no run number, no ``IPTS-<m>`` directory is
+        above the image and ``nexus_dir`` was not given, or no ``*_<n>.nxs.h5`` exists there.
+    """
+    image_path = Path(image_path)
+    run = run_number_in_name(image_path.name)
+    if run is None:
+        return None
+    if nexus_dir is None:
+        ipts = next((p for p in image_path.resolve().parents if p.name.startswith("IPTS-")), None)
+        if ipts is None:
+            return None
+        nexus_dir = ipts / "nexus"
+    nexus_dir = Path(nexus_dir)
+    if not nexus_dir.is_dir():
+        return None
+    matches = sorted(nexus_dir.glob(f"*_{run}.nxs.h5"))
+    return matches[0] if matches else None
+
+
+def load_proton_charge_coulombs(nexus_path: Union[str, Path]) -> float:
+    """The proton charge of a run from its NeXus file, in coulombs.
+
+    ``entry/proton_charge`` is stored in picocoulombs; the value is converted to coulombs, the unit
+    of the :data:`PROTON_CHARGE_TAG` TIFF tag, so the two sources are interchangeable. Note that the
+    NeXus value covers the whole run while the tag covers the exposure alone: on a 300 s iKon-XL
+    run the two differ by about 0.4 %.
+    """
+    return float(load_metadata(nexus_path)["proton_charge"].to(unit="C").value)
 
 
 def load_shutter_counts(image_path: Union[str, Path]) -> sc.Variable:

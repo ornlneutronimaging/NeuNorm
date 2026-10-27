@@ -23,6 +23,7 @@ from neunorm.data_models.roi import (
 from neunorm.exporters.hdf5_writer import hdf5_export_step_count, write_hdf5
 from neunorm.exporters.tiff_writer import tiff_export_step_count, write_tiff_stack
 from neunorm.filters.gamma_filter import GAMMA_FILTER_STEPS, apply_gamma_filter
+from neunorm.loaders.metadata_loader import PROTON_CHARGE_TAG, find_nexus_file, load_proton_charge_coulombs
 from neunorm.pipelines._output_path import HDF5_SUFFIXES, TIFF_SUFFIXES, resolve_output_path, unsupported_suffix_error
 from neunorm.pipelines._run_loading import FrameSize, combine_owned_runs, load_runs
 from neunorm.processing.air_region_corrector import apply_air_region_correction
@@ -49,6 +50,77 @@ from neunorm.utils.progress import (
 )
 
 
+def _proton_charge_from_nexus(
+    runs: Sequence[sc.DataArray],
+    groups: Sequence[Sequence[str | Path]],
+    *,
+    family: str,
+    nexus_dir: Optional[str | Path],
+) -> list[list[Optional[str]]]:
+    """Give every run of one input family its ``IntegratedPCharge`` coordinate.
+
+    The loader publishes the coordinate when every frame of the run carries the TIFF tag (the
+    iKon-XL files do); a run without it gets one value per frame from the NeXus file of that frame's
+    run, located by :func:`~neunorm.loaders.metadata_loader.find_nexus_file`. The coordinate is the
+    same either way — dimensionless coulombs along the frame dimension, unaligned — so everything
+    downstream is indifferent to the source.
+
+    Returns, per run, the NeXus file read for each frame, or ``None`` for a frame whose tag was used:
+    the provenance recorded in the output metadata.
+
+    Raises
+    ------
+    ValueError
+        A frame carries no tag and no NeXus file was found for it. The message names the frame,
+        where the file was looked for, and the two ways out (``nexus_dir``, ``background_roi``).
+    """
+    provenance: list[list[Optional[str]]] = []
+    for run, paths in zip(runs, groups, strict=True):
+        if PROTON_CHARGE_TAG in run.coords:
+            provenance.append([None] * len(paths))
+            continue
+        values: list[float] = []
+        used: list[Optional[str]] = []
+        for path in paths:
+            nexus = find_nexus_file(path, nexus_dir=nexus_dir)
+            if nexus is None:
+                looked = (
+                    str(Path(nexus_dir))
+                    if nexus_dir is not None
+                    else "the nexus/ folder of the image's IPTS-<n> directory"
+                )
+                raise ValueError(
+                    f"{family} frame {Path(path).name} carries no {PROTON_CHARGE_TAG} TIFF tag and no NeXus file "
+                    f"*_<run>.nxs.h5 of its run was found in {looked}. Pass nexus_dir= to point at the NeXus files "
+                    "of the experiment, or background_roi= to normalize by a sample-free region instead of the "
+                    "proton charge."
+                )
+            values.append(load_proton_charge_coulombs(nexus))
+            used.append(str(nexus))
+        dim = run.dims[0]
+        run.coords[PROTON_CHARGE_TAG] = sc.array(dims=[dim], values=values)
+        run.coords.set_aligned(PROTON_CHARGE_TAG, False)
+        logger.info(
+            "{}: no {} tag in the {} frame(s) — proton charge read from the NeXus files ({} …)",
+            family,
+            PROTON_CHARGE_TAG,
+            len(paths),
+            used[0],
+        )
+        provenance.append(used)
+    return provenance
+
+
+def _proton_charge_source(provenances: Sequence[Sequence[Sequence[Optional[str]]]]) -> str:
+    """``"tiff"``, ``"nexus"`` or ``"mixed"``: where the proton charges of the sample and OB came from."""
+    flags = {nexus is not None for family in provenances for run in family for nexus in run}
+    if flags == {True}:
+        return "nexus"
+    if flags == {False}:
+        return "tiff"
+    return "mixed"
+
+
 def run_venus_ccd_pipeline(  # noqa: C901
     sample_paths: Sequence[Sequence[str | Path]],
     ob_paths: Sequence[Sequence[str | Path]],
@@ -59,13 +131,14 @@ def run_venus_ccd_pipeline(  # noqa: C901
     air_roi: Optional[RegionLike] = None,
     background_roi: Optional[BackgroundROILike] = None,
     *,
+    nexus_dir: Optional[str | Path] = None,
     progress: Progress = False,
 ) -> sc.DataArray:
     """Execute VENUS CCD/CMOS normalization pipeline.
 
     Pipeline Steps (12 total)
     - Load TIFF/FITS (sample, OB, dark [optional]), cropping each frame to the ROI (optional)
-    - Load p_charge metadata
+    - Load p_charge metadata: the ``IntegratedPCharge`` TIFF tag, else the NeXus file of each run
     - Run combine (critical for VENUS)
     - Average dark (optional) / OB
     - Dead pixel detection
@@ -114,6 +187,18 @@ def run_venus_ccd_pipeline(  # noqa: C901
         normalization when proton charge is unavailable. Mutually exclusive with proton-charge
         correction. If ``roi`` is also given the detector is cropped first, so ``background_roi``
         indices are resolved in the post-crop frame.
+    nexus_dir : str or Path, optional
+        Where to find the NeXus files of the runs when a frame carries no ``IntegratedPCharge`` TIFF
+        tag. The proton charge is read from the tag when the DAQ wrote it (iKon-XL frames) and
+        otherwise from ``entry/proton_charge`` of the NeXus file of the frame's run (QHY411 frames),
+        ``*_<run>.nxs.h5`` with the run number taken from the ``_Run_<n>`` token of the file name. By
+        default that file is looked for in the ``nexus`` folder of the experiment the image sits in
+        (``/SNS/VENUS/IPTS-<m>/nexus``); ``nexus_dir`` replaces that folder for images kept elsewhere.
+        A frame with neither source is an error, unless ``background_roi`` is used — then no proton
+        charge is read at all. The dark's proton charge is not used by the normalization and is never
+        required. The source is recorded in the output metadata (``proton_charge_source``:
+        ``"tiff"``, ``"nexus"`` or ``"mixed"``, and the NeXus file of every frame read that way).
+
     progress : bool or callable, optional
         Progress reporting for the whole run, off by default (and free when off). ``True`` lets
         NeuNorm draw one :mod:`tqdm` bar per stage; a callable receives a
@@ -162,6 +247,17 @@ def run_venus_ccd_pipeline(  # noqa: C901
         load_ob = run_progress.for_stage(STAGE_LOAD_OB, total=total_across_groups(ob_paths))
         ob = load_runs(ob_paths, roi=roi, progress=load_ob, family="open-beam", frame_size=frame_size)
 
+        # Proton charge: the TIFF tag when the DAQ wrote it, else the NeXus file of each run. Not
+        # needed at all when a background region stands in for it.
+        proton_charge_provenance: dict[str, list[list[Optional[str]]]] = {}
+        if background_roi is None:
+            proton_charge_provenance["sample"] = _proton_charge_from_nexus(
+                samples, sample_paths, family="sample", nexus_dir=nexus_dir
+            )
+            proton_charge_provenance["ob"] = _proton_charge_from_nexus(
+                ob, ob_paths, family="open-beam", nexus_dir=nexus_dir
+            )
+
         # Combining runs is the largest operation here that no instrumented leaf covers, and VENUS
         # relies on it, so it is reported as named steps rather than left silent.
         combine = run_progress.for_stage(STAGE_COMBINE_RUNS, total=3 if dark_paths else 2)
@@ -199,9 +295,11 @@ def run_venus_ccd_pipeline(  # noqa: C901
             load_dark = run_progress.for_stage(STAGE_LOAD_DARK, total=total_across_groups(dark_paths))
             dark_runs = load_runs(dark_paths, roi=roi, progress=load_dark, family="dark", frame_size=frame_size)
             combine.note(f"combining {len(dark_runs)} dark run(s)")
+            # The dark's proton charge plays no part in the normalization (only the sample's and the
+            # open beam's do), so it is neither required nor aggregated.
             dark = combine_owned_runs(
                 dark_runs,
-                metadata_keys_to_sum=pc_keys,
+                metadata_keys_to_sum=(),
                 metadata_check_match=["ManufacturerStr"],
                 normalize_by_runs=True,
             )
@@ -303,6 +401,11 @@ def run_venus_ccd_pipeline(  # noqa: C901
         # Only record dark_paths when dark correction was actually applied.
         if dark_paths:
             metadata["dark_paths"] = [[str(p) for p in run] for run in dark_paths]
+
+        if proton_charge_provenance:
+            metadata["proton_charge_source"] = _proton_charge_source(list(proton_charge_provenance.values()))
+            metadata["proton_charge_nexus_sample"] = proton_charge_provenance["sample"]
+            metadata["proton_charge_nexus_ob"] = proton_charge_provenance["ob"]
 
         if roi:
             metadata["roi_applied"] = region_provenance(roi)

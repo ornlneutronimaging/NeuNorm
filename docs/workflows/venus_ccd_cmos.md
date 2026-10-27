@@ -140,7 +140,13 @@ flowchart TD
 
 **Metadata** (from files or DAQ):
 - Acquisition time per image
-- p_charge (proton charge - beam intensity proxy)
+- p_charge (proton charge - beam intensity proxy). Read from the `IntegratedPCharge` TIFF tag when
+  the DAQ wrote it (iKon-XL frames); a frame without it (QHY411 frames) gets the `entry/proton_charge`
+  of the NeXus file of its run, `<IPTS>/nexus/*_<run>.nxs.h5` with the run number taken from the
+  `_Run_<n>` token of the file name (pass `nexus_dir=` when the images are kept outside the IPTS
+  tree). Converted from pC to C so both sources read alike. A frame with neither is an error unless
+  `background_roi=` replaces the proton charge. The output metadata records
+  `proton_charge_source` (`tiff`, `nexus`, `mixed`) and the NeXus file read for each frame.
 - Detector gain settings
 
 **Key Differences from MARS CCD/CMOS**:
